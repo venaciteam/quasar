@@ -369,6 +369,8 @@
 }
 
 /* Server menu (popup) */
+.server-menu[hidden] { display: none; }
+
 .server-menu {
     position: absolute;
     top: 100%;
