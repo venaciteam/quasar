@@ -1,6 +1,6 @@
 {
   "name": "quasar-bot",
-  "version": "0.2.6",
+  "version": "3.0.0",
   "description": "Quasar — Bot Discord custom avec dashboard web",
   "main": "index.js",
   "scripts": {

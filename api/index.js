@@ -2,6 +2,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const authRoutes = require('./routes/auth');
+const botRoutes = require('./routes/bot');
 const guildRoutes = require('./routes/guilds');
 const moderationRoutes = require('./routes/moderation');
 const welcomeRoutes = require('./routes/welcome');
@@ -54,6 +55,7 @@ function createApi(discordClient) {
 
     // API routes
     app.use('/auth', authRoutes);
+    app.use('/api/bot', botRoutes);
     app.use('/api/guilds', guildRoutes);
     app.use('/api/guilds/:guildId/moderation', moderationRoutes);
     app.use('/api/guilds/:guildId/welcome', welcomeRoutes);

@@ -60,6 +60,9 @@ function showToast(message, type = 'success') {
 let currentUser = null;
 let currentGuild = null;
 let guilds = [];
+let inviteUrlCache = null;
+let lastGuildsFetch = 0;
+const REFRESH_MIN_INTERVAL = 4000; // anti-spam des refreshes auto
 
 // ═══ Init ═══
 async function init() {
@@ -71,13 +74,69 @@ async function init() {
     renderUserInfo();
 
     guilds = await API.get('/api/guilds') || [];
+    lastGuildsFetch = Date.now();
+
     if (guilds.length === 0) {
         showNoGuilds();
+        renderServerMenu();
+        checkForUpdate();
         return;
     }
 
     selectGuild(guilds[0]);
+    renderServerMenu();
     checkForUpdate();
+}
+
+// ═══ Helpers ═══
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+}
+
+async function getInviteUrl() {
+    if (inviteUrlCache) return inviteUrlCache;
+    try {
+        const res = await fetch('/api/bot/invite');
+        if (!res.ok) return null;
+        const data = await res.json();
+        inviteUrlCache = data.url || null;
+        return inviteUrlCache;
+    } catch {
+        return null;
+    }
+}
+
+async function openInvite() {
+    const url = await getInviteUrl();
+    if (!url) {
+        showToast('Lien d\'invitation indisponible. Réessaie dans un instant.', 'error');
+        return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+async function refreshGuilds({ force = false } = {}) {
+    if (!force && Date.now() - lastGuildsFetch < REFRESH_MIN_INTERVAL) return;
+    lastGuildsFetch = Date.now();
+
+    const fresh = await API.get('/api/guilds');
+    if (!Array.isArray(fresh)) return;
+    guilds = fresh;
+
+    if (currentGuild && !guilds.find(g => g.id === currentGuild.id)) {
+        // Le serveur courant n'est plus accessible — bascule
+        currentGuild = null;
+    }
+
+    if (!currentGuild && guilds.length > 0) {
+        selectGuild(guilds[0]);
+    } else if (!currentGuild && guilds.length === 0) {
+        showNoGuilds();
+    }
+
+    renderServerMenu();
 }
 
 async function checkForUpdate() {
@@ -133,12 +192,150 @@ function selectGuild(guild) {
 }
 
 function showNoGuilds() {
+    // Sidebar — état "aucun serveur"
+    const guildEl = document.getElementById('guild-info');
+    if (guildEl) guildEl.textContent = 'Aucun serveur';
+
     document.getElementById('content').innerHTML = `
-        <div class="main-header">
-            <h1 class="main-title">Aucun serveur</h1>
-            <p class="main-subtitle">Quasar n'est sur aucun serveur où tu es administrateur.</p>
+        <div class="onboarding">
+            <div class="onboarding-icon">🚀</div>
+            <h1 class="onboarding-title">Ajoute Quasar à un de tes serveurs</h1>
+            <p class="onboarding-desc">
+                Quasar n'est encore sur aucun serveur Discord où tu es administrateur. Ajoute-le maintenant pour configurer la modération, les welcome, les tickets et le reste depuis ce dashboard.
+            </p>
+            <button class="onboarding-cta" id="onboarding-add" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Ajouter Quasar à un serveur
+            </button>
+            <button class="onboarding-refresh" id="onboarding-refresh" type="button">J'ai ajouté le bot, actualiser</button>
         </div>
     `;
+
+    document.getElementById('onboarding-add').addEventListener('click', openInvite);
+    document.getElementById('onboarding-refresh').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.classList.add('is-spinning');
+        btn.disabled = true;
+        await refreshGuilds({ force: true });
+        // Si toujours rien, on retourne ici ; le bouton est ré-affiché au prochain render
+        setTimeout(() => {
+            if (btn.isConnected) {
+                btn.classList.remove('is-spinning');
+                btn.disabled = false;
+            }
+        }, 500);
+    });
+}
+
+// ═══ Server menu (popup) ═══
+function renderServerMenu() {
+    const list = document.getElementById('server-menu-list');
+    if (!list) return;
+
+    if (guilds.length === 0) {
+        list.innerHTML = `<div class="server-menu-empty">Quasar n'est sur aucun de tes serveurs admin pour l'instant.</div>`;
+        return;
+    }
+
+    list.innerHTML = guilds.map(g => {
+        const isCurrent = currentGuild && g.id === currentGuild.id;
+        const iconHtml = g.icon
+            ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png?size=32" alt="">`
+            : `<span>${escapeHtml((g.name[0] || '?').toUpperCase())}</span>`;
+        const checkSvg = isCurrent
+            ? '<svg class="server-menu-item-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+            : '';
+        return `
+            <button class="server-menu-item ${isCurrent ? 'is-current' : ''}" data-guild-id="${g.id}" type="button" role="option" aria-selected="${isCurrent ? 'true' : 'false'}">
+                <span class="server-menu-item-icon">${iconHtml}</span>
+                <span class="server-menu-item-name">${escapeHtml(g.name)}</span>
+                ${checkSvg}
+            </button>
+        `;
+    }).join('');
+
+    list.querySelectorAll('.server-menu-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const id = btn.dataset.guildId;
+            const guild = guilds.find(g => g.id === id);
+            if (guild && (!currentGuild || guild.id !== currentGuild.id)) {
+                selectGuild(guild);
+            }
+            closeServerMenu();
+        });
+    });
+}
+
+function openServerMenu() {
+    const menu = document.getElementById('server-menu');
+    const switcher = document.getElementById('guild-switcher');
+    if (!menu || !switcher) return;
+    renderServerMenu();
+    menu.hidden = false;
+    switcher.setAttribute('aria-expanded', 'true');
+}
+
+function closeServerMenu() {
+    const menu = document.getElementById('server-menu');
+    const switcher = document.getElementById('guild-switcher');
+    if (!menu || !switcher) return;
+    menu.hidden = true;
+    switcher.setAttribute('aria-expanded', 'false');
+}
+
+function toggleServerMenu() {
+    const menu = document.getElementById('server-menu');
+    if (!menu) return;
+    if (menu.hidden) openServerMenu();
+    else closeServerMenu();
+}
+
+function bindServerMenuEvents() {
+    const switcher = document.getElementById('guild-switcher');
+    const refreshBtn = document.getElementById('server-menu-refresh');
+    const addBtn = document.getElementById('server-menu-add');
+    const menu = document.getElementById('server-menu');
+
+    if (switcher) {
+        switcher.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleServerMenu();
+        });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            refreshBtn.classList.add('is-spinning');
+            await refreshGuilds({ force: true });
+            setTimeout(() => refreshBtn.classList.remove('is-spinning'), 500);
+        });
+    }
+
+    if (addBtn) {
+        addBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await openInvite();
+        });
+    }
+
+    document.addEventListener('click', (e) => {
+        if (!menu || menu.hidden) return;
+        if (menu.contains(e.target) || (switcher && switcher.contains(e.target))) return;
+        closeServerMenu();
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu && !menu.hidden) closeServerMenu();
+    });
+}
+
+// Refresh auto quand l'onglet reprend le focus (après ajout du bot dans Discord)
+function bindAutoRefresh() {
+    window.addEventListener('focus', () => { refreshGuilds(); });
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshGuilds();
+    });
 }
 
 // ═══ Navigation ═══
@@ -472,6 +669,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.sidebar-link[data-page]').forEach(el => {
         el.addEventListener('click', () => loadPage(el.dataset.page));
     });
+    bindServerMenuEvents();
+    bindAutoRefresh();
     init();
 });
 
