@@ -72,13 +72,13 @@ cp .env.example .env
 | `DISCORD_TOKEN` | Token du bot (onglet Bot du Developer Portal) |
 | `DISCORD_CLIENT_ID` | Client ID (onglet OAuth2) |
 | `DISCORD_CLIENT_SECRET` | Client Secret (onglet OAuth2) |
-| `CALLBACK_URL` | URL de callback OAuth2 — utilise l'IP locale du serveur (ex: `http://192.168.1.100:3050/callback`) |
+| `CALLBACK_URL` | URL de callback OAuth2 — utilise l'IP locale du serveur (ex: `http://192.168.1.100:3000/callback`) |
 | `JWT_SECRET` | Chaîne aléatoire pour signer les JWT (génère avec `openssl rand -hex 32`) |
-| `PORT` | Port du dashboard (défaut: `3050`) |
+| `PORT` | Port du dashboard (défaut: `3000`) |
 | `BOT_OWNER_ID` | Ton ID Discord — active les fonctions admin dans le dashboard (gestion du statut du bot). Pour le trouver : active le mode développeur dans Discord → clic droit sur ton profil → Copier l'identifiant |
 | `FEEDBACK_WEBHOOK_URL` | Webhook Discord pour recevoir les bugs/suggestions (optionnel) |
 
-> **💡 Accès réseau local** — Utilise l'IP de ta machine (ex: `http://192.168.1.100:3050/callback`) pour accéder au dashboard depuis n'importe quel appareil sur ton réseau. L'IP locale est affichée dans les logs au démarrage du bot. N'oublie pas d'ajouter cette URL dans le Developer Portal (OAuth2 → Redirects). Pour un accès distant via Internet, utilise un reverse proxy HTTPS (Cloudflare Tunnel, Nginx, Caddy…).
+> **💡 Accès réseau local** — Utilise l'IP de ta machine (ex: `http://192.168.1.100:3000/callback`) pour accéder au dashboard depuis n'importe quel appareil sur ton réseau. L'IP locale est affichée dans les logs au démarrage du bot. N'oublie pas d'ajouter cette URL dans le Developer Portal (OAuth2 → Redirects). Pour un accès distant via Internet, utilise un reverse proxy HTTPS (Cloudflare Tunnel, Nginx, Caddy…).
 
 #### 3. Configurer le bot Discord
 
@@ -89,7 +89,7 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 
-**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3050/callback`).
+**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3000/callback`).
 
 #### 4. Créer le volume et lancer
 
@@ -111,7 +111,7 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 
-**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3050/callback`).
+**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3000/callback`).
 
 ### Inviter le bot
 

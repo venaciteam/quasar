@@ -4,7 +4,7 @@ services:
     container_name: quasar
     restart: unless-stopped
     ports:
-      - "${PORT:-3050}:${PORT:-3050}"
+      - "${PORT:-3000}:${PORT:-3000}"
     volumes:
       - quasar-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock

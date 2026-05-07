@@ -18,7 +18,7 @@ const { createBot } = require('./bot');
 const { createApi } = require('./api');
 const { startPeriodicCheck } = require('./api/services/updater');
 
-const PORT = process.env.PORT || 3050;
+const PORT = process.env.PORT || 3000;
 
 async function main() {
     const version = require('./package.json').version;

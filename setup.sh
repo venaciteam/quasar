@@ -46,8 +46,8 @@ if [ ! -f .env ]; then
     read -p "   Client ID (OAuth2) : " DISCORD_CLIENT_ID
     read -sp "   Client Secret (OAuth2) : " DISCORD_CLIENT_SECRET
     echo ""
-    read -p "   Port du dashboard [3050] : " PORT
-    PORT=${PORT:-3050}
+    read -p "   Port du dashboard [3000] : " PORT
+    PORT=${PORT:-3000}
     read -p "   Callback URL [http://localhost:${PORT}/callback] : " CALLBACK_URL
     CALLBACK_URL=${CALLBACK_URL:-http://localhost:${PORT}/callback}
 
@@ -99,7 +99,7 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  ✅ Quasar est en ligne !${NC}"
 echo -e "${GREEN}═══════════════════════════════════${NC}"
 echo ""
-echo -e "  Dashboard : ${CYAN}http://localhost:${PORT:-3050}${NC}"
+echo -e "  Dashboard : ${CYAN}http://localhost:${PORT:-3000}${NC}"
 echo -e "  Logs      : ${CYAN}docker logs quasar${NC}"
 echo ""
 echo -e "${YELLOW}  N'oublie pas d'inviter le bot sur ton serveur Discord !${NC}"
