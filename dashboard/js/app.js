@@ -372,6 +372,7 @@ async function loadPage(page) {
         case 'customcmds': await loadCustomCmds(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'tempvoice':  await loadTempVoice(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'tickets':    await loadTickets(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
+        case 'scheduled':  await loadScheduled(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'music':      loadMusic(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'update':     await loadUpdate(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         default:
@@ -599,6 +600,7 @@ async function loadOverview(container) {
         { key: 'customcmds', icon: '⚡', name: 'Commandes Custom', desc: 'Commandes personnalisées avec texte ou embed', page: 'customcmds' },
         { key: 'tempvoice', icon: '🎧', name: 'Vocaux Temp.', desc: 'Salons vocaux créés automatiquement, supprimés quand vides', page: 'tempvoice' },
         { key: 'tickets', icon: '🎫', name: 'Tickets', desc: 'Système de support avec channels privés et transcripts', page: 'tickets' },
+        { key: 'scheduled', icon: '⏰', name: 'Rappels', desc: 'Messages programmés et récurrents avec mentions ciblées', page: 'scheduled' },
         { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music' }
     ];
 

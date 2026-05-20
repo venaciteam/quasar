@@ -13,6 +13,7 @@ const tempvoiceRoutes = require('./routes/tempvoice');
 const ticketsRoutes = require('./routes/tickets');
 const presenceRoutes = require('./routes/presence');
 const updateRoutes = require('./routes/update');
+const scheduledRoutes = require('./routes/scheduled');
 
 function createApi(discordClient) {
     const app = express();
@@ -64,6 +65,7 @@ function createApi(discordClient) {
     app.use('/api/guilds/:guildId/customcmds', customcmdsRoutes);
     app.use('/api/guilds/:guildId/tempvoice', tempvoiceRoutes);
     app.use('/api/guilds/:guildId/tickets', ticketsRoutes);
+    app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
     app.use('/api/presence', presenceRoutes);
     app.use('/api', updateRoutes);
 

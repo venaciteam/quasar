@@ -264,6 +264,14 @@ function createBot() {
         } catch (e) {
             // Tables pas encore créées au premier boot, on ignore
         }
+
+        // Scheduler — Démarrer la boucle d'envoi des rappels programmés
+        try {
+            const scheduler = require('./modules/scheduler');
+            scheduler.start(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur démarrage scheduler:', e.message || e);
+        }
     });
 
     return client;

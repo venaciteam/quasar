@@ -26,6 +26,15 @@
 - [x] Configuration de l'activité (Playing, Streaming, Listening, Watching, Competing)
 - [x] Application en temps réel sur le bot Discord
 
+## v3.1.0 — Rappels programmés
+
+- [x] Table SQLite `scheduled_messages` (récurrence once / daily / weekly / monthly)
+- [x] Scheduler engine (tick 60s, DST-safe, recalcul next_run au boot)
+- [x] Timezone configurable par serveur (colonne `guilds.timezone`, défaut Europe/Paris)
+- [x] Endpoint API `/api/guilds/:guildId/scheduled` (CRUD + toggle)
+- [x] Endpoint API `/api/guilds/:guildId/settings` (lecture/écriture TZ)
+- [x] Page dashboard "Rappels" (sélecteur TZ francophone, builder texte/embed, mentions roles/users/everyone/here)
+
 ## Ideas
 
 - [ ] Systeme de plugins (modules activables/desactivables)

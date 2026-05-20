@@ -20,6 +20,7 @@ function getDb() {
         migrateTempVoice();
         migrateTickets();
         migrateAtomToQuasar();
+        migrateGuildsTimezone();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -227,6 +228,33 @@ function initTables() {
             activity_text TEXT NOT NULL DEFAULT 'atlas.vena.city'
         );
 
+        -- Messages programmés / Rappels
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            content_type TEXT NOT NULL DEFAULT 'text',
+            content_text TEXT,
+            embed_id INTEGER,
+            mention_roles TEXT NOT NULL DEFAULT '[]',
+            mention_users TEXT NOT NULL DEFAULT '[]',
+            mention_everyone INTEGER NOT NULL DEFAULT 0,
+            mention_here INTEGER NOT NULL DEFAULT 0,
+            schedule_type TEXT NOT NULL,
+            schedule_time TEXT NOT NULL,
+            schedule_day INTEGER,
+            schedule_date TEXT,
+            next_run INTEGER,
+            last_run INTEGER,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER DEFAULT (unixepoch()),
+            updated_at INTEGER DEFAULT (unixepoch()),
+            created_by TEXT,
+            FOREIGN KEY (guild_id) REFERENCES guilds(guild_id),
+            FOREIGN KEY (embed_id) REFERENCES embeds(id)
+        );
+
         -- Indexes pour les performances
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild ON sanctions(guild_id);
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild_user ON sanctions(guild_id, user_id);
@@ -237,6 +265,8 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_tickets_guild_closed ON tickets(guild_id, closed_at);
         CREATE INDEX IF NOT EXISTS idx_tempvoice_active_guild ON tempvoice_active(guild_id);
         CREATE INDEX IF NOT EXISTS idx_tempvoice_prefs_updated ON tempvoice_preferences(updated_at);
+        CREATE INDEX IF NOT EXISTS idx_scheduled_guild ON scheduled_messages(guild_id);
+        CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_messages(enabled, next_run);
     `);
 }
 
@@ -291,6 +321,20 @@ function migrateTempVoice() {
             console.log(`[Quasar] TempVoice: ${result.changes} préférence(s) expirée(s) supprimée(s)`);
         }
     } catch {}
+}
+
+// Migration : ajout de la colonne `timezone` à `guilds` (default 'Europe/Paris').
+// Idempotente.
+function migrateGuildsTimezone() {
+    try {
+        const cols = db.pragma('table_info(guilds)').map(c => c.name);
+        if (!cols.includes('timezone')) {
+            db.exec("ALTER TABLE guilds ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Europe/Paris'");
+            console.log('[Quasar] Migration: guilds + timezone (default Europe/Paris)');
+        }
+    } catch (e) {
+        console.error('[Quasar] Erreur migration guilds.timezone:', e.message);
+    }
 }
 
 function migrateTickets() {

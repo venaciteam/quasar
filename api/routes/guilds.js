@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const { isValidTimezone, DEFAULT_TIMEZONE } = require('../../bot/modules/scheduler');
 const router = express.Router();
 
 // Liste des serveurs où l'utilisateur est admin ET où Quasar est présent
@@ -47,6 +48,8 @@ router.get('/:guildId/modules', requireAuth, requireGuildAdmin, (req, res) => {
     try { tvEnabled = !!db.prepare('SELECT 1 FROM tempvoice_triggers WHERE guild_id = ? AND enabled = 1').get(guildId); } catch {} // Table may not exist yet
     let ticketsEnabled = false;
     try { ticketsEnabled = !!db.prepare("SELECT enabled FROM ticket_config WHERE guild_id = ? AND enabled = 1").get(guildId); } catch {} // Table may not exist yet
+    let scheduledEnabled = false;
+    try { scheduledEnabled = !!db.prepare("SELECT 1 FROM scheduled_messages WHERE guild_id = ? AND enabled = 1").get(guildId); } catch {} // Table may not exist yet
 
     res.json({
         moderation: { enabled: !!(modConfig || counts.sanctions > 0) },
@@ -56,6 +59,7 @@ router.get('/:guildId/modules', requireAuth, requireGuildAdmin, (req, res) => {
         customcmds: { enabled: counts.cmds > 0 },
         tempvoice: { enabled: tvEnabled },
         tickets: { enabled: ticketsEnabled },
+        scheduled: { enabled: scheduledEnabled },
         music: { enabled: true }
     });
 });
@@ -137,6 +141,58 @@ router.get('/:guildId/emojis', requireAuth, requireGuildAdmin, async (req, res) 
     } catch {
         res.json([]);
     }
+});
+
+// Settings d'un serveur (timezone, etc.)
+router.get('/:guildId/settings', requireAuth, requireGuildAdmin, (req, res) => {
+    const db = getDb();
+    const row = db.prepare('SELECT timezone FROM guilds WHERE guild_id = ?').get(req.params.guildId);
+    res.json({
+        timezone: row?.timezone || DEFAULT_TIMEZONE
+    });
+});
+
+router.put('/:guildId/settings', requireAuth, requireGuildAdmin, (req, res) => {
+    const db = getDb();
+    const updates = [];
+    const values = [];
+
+    if (typeof req.body.timezone === 'string') {
+        if (!isValidTimezone(req.body.timezone)) {
+            return res.status(400).json({ error: `Timezone IANA invalide : "${req.body.timezone}"` });
+        }
+        updates.push('timezone = ?');
+        values.push(req.body.timezone);
+    }
+
+    if (!updates.length) {
+        return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+    }
+
+    values.push(req.params.guildId);
+    db.prepare(`UPDATE guilds SET ${updates.join(', ')} WHERE guild_id = ?`).run(...values);
+
+    // Recalculer next_run de tous les rappels enabled du guild (la TZ a pu changer)
+    if (req.body.timezone) {
+        try {
+            const { computeNextRun } = require('../../bot/modules/scheduler');
+            const rows = db.prepare(
+                'SELECT * FROM scheduled_messages WHERE guild_id = ? AND enabled = 1'
+            ).all(req.params.guildId);
+            const upd = db.prepare(
+                'UPDATE scheduled_messages SET next_run = ?, updated_at = ? WHERE id = ?'
+            );
+            const nowSec = Math.floor(Date.now() / 1000);
+            for (const row of rows) {
+                const next = computeNextRun(row, Date.now(), req.body.timezone);
+                upd.run(next ? Math.floor(next / 1000) : null, nowSec, row.id);
+            }
+        } catch (e) {
+            console.error('[Quasar] Recalc next_run après changement TZ:', e.message);
+        }
+    }
+
+    res.json({ success: true });
 });
 
 module.exports = router;
