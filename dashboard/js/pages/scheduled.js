@@ -3,6 +3,13 @@
 // ═══════════════════════════════════════════════════════════════
 
 const WEEKDAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const WEEKDAYS_SHORT = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+// Presets weekly : combinaisons fréquentes
+const WEEKDAY_PRESETS = [
+    { label: 'Jours ouvrés', days: [1, 2, 3, 4, 5] },
+    { label: 'Week-end',     days: [0, 6] },
+    { label: 'Tous les jours', days: [0, 1, 2, 3, 4, 5, 6] }
+];
 const SCHEDULE_LABELS = {
     once: 'Une fois',
     daily: 'Quotidien',
@@ -277,10 +284,21 @@ function renderScheduledForm(existing = null) {
             </div>
 
             <div id="sm-weekly-wrap" style="${data.schedule_type === 'weekly' ? '' : 'display:none'}">
-                <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Jour de la semaine</label>
-                <select class="input" id="sm-weekday">
-                    ${WEEKDAYS.map((d, i) => `<option value="${i}" ${Number(data.schedule_day) === i ? 'selected' : ''}>${d}</option>`).join('')}
-                </select>
+                <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Jours de la semaine (un ou plusieurs)</label>
+                <div style="display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.5rem" id="sm-weekday-chips">
+                    ${WEEKDAYS_SHORT.map((short, i) => {
+                        const selectedDays = Array.isArray(data.schedule_days) && data.schedule_days.length
+                            ? data.schedule_days
+                            : (Number.isInteger(Number(data.schedule_day)) ? [Number(data.schedule_day)] : [1]);
+                        const active = selectedDays.includes(i);
+                        return `<button type="button" class="sm-weekday-chip" data-day="${i}" data-active="${active ? '1' : '0'}" onclick="toggleScheduledWeekday(${i})"
+                            style="padding:.4rem .7rem;font-size:.8rem;border-radius:var(--radius-sm);border:1px solid var(--border);cursor:pointer;background:${active ? 'var(--accent)' : 'var(--bg-card)'};color:${active ? '#fff' : 'var(--text-primary)'};font-weight:${active ? '600' : '400'}">${short}</button>`;
+                    }).join('')}
+                </div>
+                <div style="display:flex;gap:.3rem;flex-wrap:wrap">
+                    <span style="font-size:.7rem;color:var(--text-muted);align-self:center">Raccourcis :</span>
+                    ${WEEKDAY_PRESETS.map(p => `<button type="button" class="btn" style="padding:.2rem .55rem;font-size:.7rem" onclick="applyWeekdayPreset(${JSON.stringify(p.days)})">${escapeHtml(p.label)}</button>`).join('')}
+                </div>
             </div>
 
             <div id="sm-monthly-wrap" style="${data.schedule_type === 'monthly' ? '' : 'display:none'}">
@@ -315,6 +333,27 @@ function toggleScheduledSchedule() {
     document.getElementById('sm-monthly-wrap').style.display = type === 'monthly' ? '' : 'none';
 }
 
+function toggleScheduledWeekday(day) {
+    const chip = document.querySelector(`.sm-weekday-chip[data-day="${day}"]`);
+    if (!chip) return;
+    const active = chip.dataset.active === '1';
+    setScheduledWeekdayChip(chip, !active);
+}
+
+function setScheduledWeekdayChip(chip, active) {
+    chip.dataset.active = active ? '1' : '0';
+    chip.style.background = active ? 'var(--accent)' : 'var(--bg-card)';
+    chip.style.color = active ? '#fff' : 'var(--text-primary)';
+    chip.style.fontWeight = active ? '600' : '400';
+}
+
+function applyWeekdayPreset(days) {
+    document.querySelectorAll('.sm-weekday-chip').forEach(chip => {
+        const day = Number(chip.dataset.day);
+        setScheduledWeekdayChip(chip, days.includes(day));
+    });
+}
+
 function cancelScheduledEdit() {
     _scheduledState.editingId = null;
     renderScheduledForm();
@@ -344,7 +383,11 @@ function readScheduledForm() {
     };
 
     if (scheduleType === 'once') payload.schedule_date = document.getElementById('sm-date').value;
-    if (scheduleType === 'weekly') payload.schedule_day = Number(document.getElementById('sm-weekday').value);
+    if (scheduleType === 'weekly') {
+        payload.schedule_days = Array.from(document.querySelectorAll('.sm-weekday-chip[data-active="1"]'))
+            .map(c => Number(c.dataset.day))
+            .sort((a, b) => a - b);
+    }
     if (scheduleType === 'monthly') payload.schedule_day = Number(document.getElementById('sm-monthday').value);
 
     return payload;
@@ -356,6 +399,9 @@ async function saveScheduled() {
     if (payload.content_type === 'text' && !payload.content_text?.trim()) { showToast('Texte requis', 'error'); return; }
     if (payload.content_type === 'embed' && !payload.embed_id) { showToast('Sélectionne un embed', 'error'); return; }
     if (payload.schedule_type === 'once' && !payload.schedule_date) { showToast('Date requise', 'error'); return; }
+    if (payload.schedule_type === 'weekly' && (!payload.schedule_days || !payload.schedule_days.length)) {
+        showToast('Sélectionne au moins un jour de la semaine', 'error'); return;
+    }
 
     const guildId = _scheduledState.guildId;
     const editingId = _scheduledState.editingId;
@@ -439,8 +485,20 @@ function formatRecurrence(r) {
             return `Le ${d}/${m}/${y} à ${time}`;
         case 'daily':
             return `Chaque jour à ${time}`;
-        case 'weekly':
-            return `Chaque ${WEEKDAYS[r.schedule_day] || '?'} à ${time}`;
+        case 'weekly': {
+            const days = Array.isArray(r.schedule_days) && r.schedule_days.length
+                ? [...r.schedule_days].sort((a, b) => a - b)
+                : (Number.isInteger(r.schedule_day) ? [r.schedule_day] : []);
+            if (!days.length) return `Hebdomadaire à ${time}`;
+            // Reconnaître les presets fréquents
+            const key = days.join(',');
+            if (key === '0,1,2,3,4,5,6') return `Tous les jours à ${time}`;
+            if (key === '1,2,3,4,5')     return `Jours ouvrés à ${time}`;
+            if (key === '0,6')           return `Week-end à ${time}`;
+            if (days.length === 1)       return `Chaque ${WEEKDAYS[days[0]]} à ${time}`;
+            // Sinon liste courte
+            return `${days.map(i => WEEKDAYS_SHORT[i]).join(', ')} à ${time}`;
+        }
         case 'monthly':
             return `Le ${r.schedule_day} de chaque mois à ${time}`;
         default:
@@ -515,3 +573,5 @@ window.openTimezoneEditor = openTimezoneEditor;
 window.closeTimezoneEditor = closeTimezoneEditor;
 window.onTimezoneSelectChange = onTimezoneSelectChange;
 window.saveTimezone = saveTimezone;
+window.toggleScheduledWeekday = toggleScheduledWeekday;
+window.applyWeekdayPreset = applyWeekdayPreset;

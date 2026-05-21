@@ -101,13 +101,30 @@ function computeNextRun(row, fromMs = Date.now(), timezone = DEFAULT_TIMEZONE) {
     }
 
     if (row.schedule_type === 'weekly') {
-        const targetDow = Number(row.schedule_day);
-        if (!Number.isInteger(targetDow) || targetDow < 0 || targetDow > 6) return null;
+        // Multi-jours : on lit schedule_days (JSON array) si présent, sinon fallback
+        // sur schedule_day (un seul jour, pour rétro-compat).
+        let targetDows = [];
+        if (row.schedule_days) {
+            try {
+                const parsed = JSON.parse(row.schedule_days);
+                if (Array.isArray(parsed)) {
+                    targetDows = parsed
+                        .map(Number)
+                        .filter(d => Number.isInteger(d) && d >= 0 && d <= 6);
+                }
+            } catch {}
+        }
+        if (targetDows.length === 0 && Number.isInteger(Number(row.schedule_day))) {
+            const d = Number(row.schedule_day);
+            if (d >= 0 && d <= 6) targetDows = [d];
+        }
+        if (targetDows.length === 0) return null;
+
         const p = getZonedParts(fromDate, tz);
         for (let i = 0; i < 8; i++) {
             const probeUtc = new Date(Date.UTC(p.year, p.month - 1, p.day + i, 12));
             const pp = getZonedParts(probeUtc, tz);
-            if (pp.weekday !== targetDow) continue;
+            if (!targetDows.includes(pp.weekday)) continue;
             const t = zonedToUtcMs(pp.year, pp.month, pp.day, hh, mm, tz);
             if (t > fromMs) return t;
         }

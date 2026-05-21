@@ -84,18 +84,36 @@ function parseAndValidate(body) {
             out.schedule_date = body.schedule_date;
         }
         out.schedule_day = null;
+        out.schedule_days = null;
     } else if (out.schedule_type === 'weekly') {
-        const d = Number(body.schedule_day);
-        if (!Number.isInteger(d) || d < 0 || d > 6) errors.push('schedule_day invalide (0-6)');
-        else out.schedule_day = d;
+        // On accepte soit schedule_days (array, mode multi-jours) soit schedule_day (single, rétro-compat)
+        let days = [];
+        if (Array.isArray(body.schedule_days)) {
+            days = body.schedule_days
+                .map(Number)
+                .filter(d => Number.isInteger(d) && d >= 0 && d <= 6);
+            days = Array.from(new Set(days)).sort((a, b) => a - b);
+        } else if (body.schedule_day !== undefined && body.schedule_day !== null) {
+            const d = Number(body.schedule_day);
+            if (Number.isInteger(d) && d >= 0 && d <= 6) days = [d];
+        }
+        if (days.length === 0) {
+            errors.push('schedule_days requis pour weekly (au moins 1 jour entre 0-6)');
+        } else {
+            out.schedule_days = JSON.stringify(days);
+            // schedule_day conservé pour rétro-compat (premier jour de la liste)
+            out.schedule_day = days[0];
+        }
         out.schedule_date = null;
     } else if (out.schedule_type === 'monthly') {
         const d = Number(body.schedule_day);
         if (!Number.isInteger(d) || d < 1 || d > 31) errors.push('schedule_day invalide (1-31)');
         else out.schedule_day = d;
         out.schedule_date = null;
+        out.schedule_days = null;
     } else {
         out.schedule_day = null;
+        out.schedule_days = null;
         out.schedule_date = null;
     }
 
@@ -109,6 +127,9 @@ function serialize(row) {
         ...row,
         mention_roles: safeJson(row.mention_roles, []),
         mention_users: safeJson(row.mention_users, []),
+        schedule_days: row.schedule_days
+            ? safeJson(row.schedule_days, [])
+            : (Number.isInteger(row.schedule_day) && row.schedule_type === 'weekly' ? [row.schedule_day] : []),
         mention_everyone: !!row.mention_everyone,
         mention_here: !!row.mention_here,
         enabled: !!row.enabled
@@ -147,13 +168,13 @@ router.post('/', requireAuth, requireGuildAdmin, (req, res) => {
         INSERT INTO scheduled_messages
         (guild_id, name, channel_id, content_type, content_text, embed_id,
          mention_roles, mention_users, mention_everyone, mention_here,
-         schedule_type, schedule_time, schedule_day, schedule_date,
+         schedule_type, schedule_time, schedule_day, schedule_days, schedule_date,
          next_run, enabled, created_at, updated_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         req.params.guildId, data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
         data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
-        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_date,
+        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
         next ? Math.floor(next / 1000) : null, data.enabled, nowSec, nowSec, req.user?.id || null
     );
 
@@ -189,13 +210,13 @@ router.put('/:id', requireAuth, requireGuildAdmin, (req, res) => {
         UPDATE scheduled_messages SET
             name = ?, channel_id = ?, content_type = ?, content_text = ?, embed_id = ?,
             mention_roles = ?, mention_users = ?, mention_everyone = ?, mention_here = ?,
-            schedule_type = ?, schedule_time = ?, schedule_day = ?, schedule_date = ?,
+            schedule_type = ?, schedule_time = ?, schedule_day = ?, schedule_days = ?, schedule_date = ?,
             next_run = ?, enabled = ?, updated_at = ?
         WHERE id = ? AND guild_id = ?
     `).run(
         data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
         data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
-        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_date,
+        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
         next ? Math.floor(next / 1000) : null, data.enabled, nowSec,
         id, req.params.guildId
     );

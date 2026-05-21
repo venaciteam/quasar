@@ -21,6 +21,7 @@ function getDb() {
         migrateTickets();
         migrateAtomToQuasar();
         migrateGuildsTimezone();
+        migrateScheduledDays();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -244,6 +245,7 @@ function initTables() {
             schedule_type TEXT NOT NULL,
             schedule_time TEXT NOT NULL,
             schedule_day INTEGER,
+            schedule_days TEXT,
             schedule_date TEXT,
             next_run INTEGER,
             last_run INTEGER,
@@ -321,6 +323,35 @@ function migrateTempVoice() {
             console.log(`[Quasar] TempVoice: ${result.changes} préférence(s) expirée(s) supprimée(s)`);
         }
     } catch {}
+}
+
+// Migration : ajout de la colonne `schedule_days` à `scheduled_messages`
+// (JSON array de jours pour les rappels weekly multi-jours).
+// Migre aussi les rappels weekly existants : schedule_day → schedule_days = [schedule_day].
+// Idempotente.
+function migrateScheduledDays() {
+    try {
+        const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='scheduled_messages'").get();
+        if (!tbl) return; // table pas encore créée (cas d'un boot frais)
+        const cols = db.pragma('table_info(scheduled_messages)').map(c => c.name);
+        if (!cols.includes('schedule_days')) {
+            db.exec('ALTER TABLE scheduled_messages ADD COLUMN schedule_days TEXT');
+            console.log('[Quasar] Migration: scheduled_messages + schedule_days');
+        }
+        // Backfill : les weekly avec schedule_day non-NULL et schedule_days NULL → array du seul jour
+        const result = db.prepare(`
+            UPDATE scheduled_messages
+            SET schedule_days = '[' || schedule_day || ']'
+            WHERE schedule_type = 'weekly'
+              AND schedule_days IS NULL
+              AND schedule_day IS NOT NULL
+        `).run();
+        if (result.changes > 0) {
+            console.log(`[Quasar] Migration: ${result.changes} rappel(s) weekly backfillé(s) (schedule_day → schedule_days)`);
+        }
+    } catch (e) {
+        console.error('[Quasar] Erreur migration scheduled_days:', e.message);
+    }
 }
 
 // Migration : ajout de la colonne `timezone` à `guilds` (default 'Europe/Paris').

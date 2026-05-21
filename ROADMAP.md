@@ -35,6 +35,13 @@
 - [x] Endpoint API `/api/guilds/:guildId/settings` (lecture/écriture TZ)
 - [x] Page dashboard "Rappels" (sélecteur TZ francophone, builder texte/embed, mentions roles/users/everyone/here)
 
+## v3.1.1 — Rappels weekly multi-jours
+
+- [x] Colonne `scheduled_messages.schedule_days` (JSON array, migration backward-compatible)
+- [x] Scheduler weekly itère sur N jours par semaine
+- [x] UI : chips toggle 7 jours + presets (Jours ouvrés / Week-end / Tous les jours)
+- [x] Lecture humaine : "Jours ouvrés à 09:00", "Lun, Mer, Ven à 14:30", etc.
+
 ## Ideas
 
 - [ ] Systeme de plugins (modules activables/desactivables)
