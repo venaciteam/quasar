@@ -2,7 +2,7 @@
 //   VNCT Service Worker — Quasar
 //   Bump CACHE_VERSION to force update
 // ═══════════════════════════════════
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const CACHE_NAME = `vnct-v${CACHE_VERSION}`;
 
 const APP_SHELL = [

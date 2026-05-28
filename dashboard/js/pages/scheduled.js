@@ -447,25 +447,25 @@ function renderScheduledList(rows) {
         const contentBadge = r.content_type === 'embed' ? '📝 Embed' : '✏️ Texte';
 
         return `
-            <div class="card" style="padding:.85rem;margin-bottom:.6rem;background:var(--bg-card)">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
-                    <div style="flex:1;min-width:0">
-                        <div style="font-weight:600;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+            <div class="card sched-item">
+                <div class="sched-item-row">
+                    <div class="sched-item-info">
+                        <div class="sched-title">
                             <span>${escapeHtml(r.name)}</span>
                             <span class="badge ${r.enabled ? 'badge-active' : 'badge-inactive'}">${r.enabled ? 'Actif' : 'Inactif'}</span>
                         </div>
-                        <div style="font-size:.78rem;color:var(--text-secondary);margin-top:.3rem;display:flex;flex-wrap:wrap;gap:.6rem">
+                        <div class="sched-meta">
                             <span>📍 #${escapeHtml(channelName)}</span>
                             <span>${contentBadge}</span>
                             <span>🔁 ${recurStr}</span>
                             <span>👥 ${mentionsStr}</span>
                         </div>
-                        <div style="font-size:.75rem;color:var(--text-muted);margin-top:.2rem">⏭️ Prochain : ${nextStr}</div>
+                        <div class="sched-next">⏭️ Prochain : ${nextStr}</div>
                     </div>
-                    <div style="display:flex;gap:.3rem;flex-shrink:0">
-                        <button class="btn" style="padding:.3rem .55rem;font-size:.75rem" onclick="toggleScheduled(${r.id})" title="${r.enabled ? 'Désactiver' : 'Activer'}">${r.enabled ? '⏸' : '▶'}</button>
-                        <button class="btn" style="padding:.3rem .55rem;font-size:.75rem" onclick="editScheduled(${r.id})">✏️</button>
-                        <button class="btn" style="padding:.3rem .55rem;font-size:.75rem" onclick="deleteScheduled(${r.id})">🗑</button>
+                    <div class="sched-actions">
+                        <button class="btn" onclick="toggleScheduled(${r.id})" title="${r.enabled ? 'Désactiver' : 'Activer'}">${r.enabled ? '⏸' : '▶'}</button>
+                        <button class="btn" onclick="editScheduled(${r.id})" title="Modifier">✏️</button>
+                        <button class="btn" onclick="deleteScheduled(${r.id})" title="Supprimer">🗑</button>
                     </div>
                 </div>
             </div>

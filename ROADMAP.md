@@ -42,6 +42,12 @@
 - [x] UI : chips toggle 7 jours + presets (Jours ouvrés / Week-end / Tous les jours)
 - [x] Lecture humaine : "Jours ouvrés à 09:00", "Lun, Mer, Ven à 14:30", etc.
 
+## v3.1.2 — Lisibilité mobile des rappels
+
+- [x] Cartes de la liste des rappels passées en classes dédiées (sorties des règles responsive fourre-tout)
+- [x] Sur mobile : infos empilées + actions ⏸/✏️/🗑 en barre horizontale tappable (au lieu de boutons empilés verticalement)
+- [x] Rendu desktop inchangé
+
 ## Ideas
 
 - [ ] Systeme de plugins (modules activables/desactivables)
