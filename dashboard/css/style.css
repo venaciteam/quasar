@@ -994,6 +994,7 @@
 }
 
 .btn-primary:hover {
+    background: var(--accent);
     filter: brightness(1.1);
     box-shadow: var(--neon-shadow-md);
 }
