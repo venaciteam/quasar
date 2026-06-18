@@ -354,7 +354,7 @@ async function loadPage(page) {
     const content = document.getElementById('content');
 
     // Loading state
-    if (page !== 'overview' && page !== 'music') {
+    if (page !== 'overview') {
         content.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;padding:4rem;color:var(--text-muted)">
             <div style="text-align:center">
                 <div style="width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 1rem"></div>
@@ -373,7 +373,8 @@ async function loadPage(page) {
         case 'tempvoice':  await loadTempVoice(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'tickets':    await loadTickets(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'scheduled':  await loadScheduled(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'music':      loadMusic(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
+        // Musique désactivée — réactiver en décommentant (+ entrée moduleList, fonction loadMusic, lien sidebar app.html)
+        // case 'music':      loadMusic(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         case 'update':     await loadUpdate(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
         default:
             content.innerHTML = `<div class="main-header"><h1 class="main-title">${page}</h1><p class="main-subtitle">Module en construction 🔧</p></div>`;
@@ -600,8 +601,9 @@ async function loadOverview(container) {
         { key: 'customcmds', icon: '⚡', name: 'Commandes Custom', desc: 'Commandes personnalisées avec texte ou embed', page: 'customcmds' },
         { key: 'tempvoice', icon: '🎧', name: 'Vocaux Temp.', desc: 'Salons vocaux créés automatiquement, supprimés quand vides', page: 'tempvoice' },
         { key: 'tickets', icon: '🎫', name: 'Tickets', desc: 'Système de support avec channels privés et transcripts', page: 'tickets' },
-        { key: 'scheduled', icon: '⏰', name: 'Rappels', desc: 'Messages programmés et récurrents avec mentions ciblées', page: 'scheduled' },
-        { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music' }
+        { key: 'scheduled', icon: '⏰', name: 'Rappels', desc: 'Messages programmés et récurrents avec mentions ciblées', page: 'scheduled' }
+        // Musique désactivée — réactiver en décommentant (remettre la virgule ci-dessus)
+        // { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music' }
     ];
 
     container.innerHTML = `
@@ -634,6 +636,9 @@ async function loadOverview(container) {
     bindPresenceEvents();
 }
 
+// Musique désactivée (YouTube/Google bloquent la lecture) — réactiver en décommentant ce bloc
+// (+ entrée moduleList, case routing, lien sidebar app.html, et les commandes bot via disabledCommands.js)
+/*
 function loadMusic(container) {
     container.innerHTML = `
         <div class="main-header">
@@ -665,6 +670,7 @@ function loadMusic(container) {
         </div>
     `;
 }
+*/
 
 // ═══ Event Listeners ═══
 document.addEventListener('DOMContentLoaded', () => {

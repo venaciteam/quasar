@@ -31,7 +31,8 @@ const LOG_CATEGORIES = {
     'ticket_close': { label: '🎫 Ticket fermé', category: 'Tickets' },
     // Quasar
     'quasar_command': { label: '⚡ Commande utilisée', category: 'Quasar' },
-    'quasar_music': { label: '🎵 Musique jouée', category: 'Quasar' },
+    // Musique désactivée — réactiver en décommentant
+    // 'quasar_music': { label: '🎵 Musique jouée', category: 'Quasar' },
 };
 
 function getLogConfig(guildId) {

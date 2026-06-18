@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { getDb } = require('../api/services/database');
 const { deployCommands } = require('./utils/deploy-commands');
+const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
 
 function createBot() {
     const client = new Client({
@@ -26,7 +27,7 @@ function createBot() {
 
     // Charger les commandes
     const commandsPath = path.join(__dirname, 'commands');
-    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f));
 
     for (const file of commandFiles) {
         const mod = require(path.join(commandsPath, file));

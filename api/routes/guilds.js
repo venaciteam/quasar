@@ -59,8 +59,9 @@ router.get('/:guildId/modules', requireAuth, requireGuildAdmin, (req, res) => {
         customcmds: { enabled: counts.cmds > 0 },
         tempvoice: { enabled: tvEnabled },
         tickets: { enabled: ticketsEnabled },
-        scheduled: { enabled: scheduledEnabled },
-        music: { enabled: true }
+        scheduled: { enabled: scheduledEnabled }
+        // Musique désactivée — réactiver en décommentant (remettre la virgule ci-dessus)
+        // music: { enabled: true }
     });
 });
 

@@ -1,11 +1,12 @@
 const { REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { DISABLED_COMMAND_FILES } = require('./disabledCommands');
 
 async function deployCommands(client) {
     const commands = [];
     const commandsPath = path.join(__dirname, '..', 'commands');
-    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js'));
+    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f));
 
     for (const file of commandFiles) {
         const mod = require(path.join(commandsPath, file));

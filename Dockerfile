@@ -1,8 +1,11 @@
 FROM node:22-alpine
 
-# ffmpeg + python + yt-dlp + git + docker (cli + compose plugin)
-RUN apk add --no-cache ffmpeg python3 py3-pip make g++ git docker-cli docker-cli-compose \
-    && pip install --break-system-packages yt-dlp
+# python3 + make + g++ : build des modules natifs (better-sqlite3, @discordjs/opus, sodium-native)
+# git + docker (cli + compose plugin) : self-updater
+RUN apk add --no-cache python3 make g++ git docker-cli docker-cli-compose
+# Musique désactivée — deps de lecture retirées pour alléger l'image.
+# Réactiver en décommentant (ffmpeg + yt-dlp), et réajouter py3-pip à la ligne apk ci-dessus :
+# RUN apk add --no-cache ffmpeg py3-pip && pip install --break-system-packages yt-dlp
 
 WORKDIR /app
 
