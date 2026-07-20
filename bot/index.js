@@ -171,32 +171,9 @@ function createBot() {
         console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
         console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
 
-        // Stats — Heartbeat vers le hub central
-        if (process.env.STATS_URL && process.env.STATS_ENABLED !== 'false') {
-            const crypto = require('crypto');
-            const db = getDb();
-            // Générer un ID instance unique au premier boot
-            let row = db.prepare("SELECT name FROM guilds WHERE guild_id = '__quasar_instance_id'").get();
-            if (!row) {
-                const id = crypto.randomUUID();
-                db.prepare("INSERT OR IGNORE INTO guilds (guild_id, name) VALUES ('__quasar_instance_id', ?)").run(id);
-                row = { name: id };
-            }
-            const instanceId = row.name;
-
-            const sendHeartbeat = () => {
-                const guilds = client.guilds.cache.size;
-                fetch(`${process.env.STATS_URL}/api/stats/heartbeat`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instance_id: instanceId, guilds })
-                }).catch(() => {});
-            };
-
-            sendHeartbeat();
-            setInterval(sendHeartbeat, 10 * 60 * 1000);
-            console.log('[Quasar] Stats heartbeat activé');
-        }
+        // Aucune télémétrie. Le heartbeat vers un hub central (identifiant d'instance
+        // persistant + nombre de serveurs) a été retiré en v3.3.0 : Quasar ne contacte
+        // aucun service tiers, rien ne sort de la machine qui l'héberge.
 
         // Enregistrer les guilds en DB
         const db = getDb();
