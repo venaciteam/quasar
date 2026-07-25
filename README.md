@@ -331,6 +331,21 @@ La durée de conservation des sanctions sert aussi de fenêtre aux sanctions aut
 
 Le transcript est donc **remis dans Discord** — dans le salon de logs, ou en message privé au modérateur qui ferme — et **rien n'est écrit en base**. Si aucune des deux voies n'aboutit, la fermeture est refusée : mieux vaut un ticket qui reste ouvert qu'une conversation perdue.
 
+### Garder le signalement accessible
+
+`/signaler` est ouverte à tous les membres, sans permission particulière. Mais son accès dépend de la permission Discord **« Utiliser les commandes d'application »**, que l'administrateur du serveur contrôle — au niveau du rôle `@everyone`, du salon, ou dans Paramètres du serveur → Intégrations.
+
+Autrement dit : **le canal de signalement peut être coupé par la personne même qu'on voudrait pouvoir signaler.** C'est une limite de la plateforme, pas quelque chose que le bot peut empêcher.
+
+Le contournement tient en une ligne, à mettre dans la **description de ton application** sur le Developer Portal (onglet General Information). Elle s'affiche sur le profil du bot depuis n'importe quel serveur, et aucun administrateur ne peut la masquer :
+
+```
+Un problème avec ce bot, ou avec l'usage qui en est fait sur un serveur ?
+Utilise /signaler, ou écris à <ton contact> si la commande n'est pas accessible.
+```
+
+Remplace `<ton contact>` par une adresse que tu relèves réellement. Sans ça, un membre dont le serveur a bloqué les commandes n'a plus aucun moyen de te joindre.
+
 ### Où partent les signalements
 
 `/signaler` distingue deux cas, parce qu'ils ne concernent pas les mêmes personnes :
