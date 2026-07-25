@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -66,7 +67,11 @@ module.exports = {
                 .run(interaction.guild.id, channel.id);
 
             if (deleted.changes === 0) {
-                return interaction.reply({ content: '❌ Aucun rôle vocal configuré pour ce salon.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Aucun rôle vocal pour ce salon',
+                    cause: 'Ce salon vocal n\'a pas de rôle associé : personne ne reçoit de rôle en le rejoignant.',
+                    action: 'Consulte la configuration avec `/voicerole list`, ou ajoute une règle avec `/voicerole set`.',
+                });
             }
 
             await interaction.reply({

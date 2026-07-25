@@ -1,5 +1,6 @@
 const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 // Vérifie que l'utilisateur est owner du vocal
 function checkOwner(interaction, channelId) {
@@ -23,12 +24,20 @@ async function handleTempVoiceInteraction(interaction) {
 
         const active = checkOwner(interaction, channelId);
         if (!active) {
-            return interaction.reply({ content: '❌ Seul le propriétaire du vocal peut utiliser ces boutons.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Tu n\'es pas propriétaire de ce salon',
+                cause: 'Seule la personne qui a créé ce salon vocal temporaire peut en modifier les réglages.',
+                action: 'Demande-lui de faire la modification, ou crée ton propre salon en rejoignant le salon d\'accueil.',
+            });
         }
 
         const channel = interaction.guild.channels.cache.get(channelId);
         if (!channel) {
-            return interaction.reply({ content: '❌ Ce salon n\'existe plus.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Ce salon n\'existe plus',
+                cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
+                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+            });
         }
 
         if (action === 'rename') {
@@ -98,7 +107,11 @@ async function handleTempVoiceInteraction(interaction) {
             // Lister les membres du vocal (sauf l'owner)
             const members = channel.members.filter(m => m.id !== interaction.user.id);
             if (members.size === 0) {
-                return interaction.reply({ content: '❌ Personne d\'autre dans le salon.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Personne d\'autre dans le salon',
+                    cause: 'Tu es seul ici : il n\'y a personne à qui transférer la propriété.',
+                    action: 'Attends que quelqu\'un rejoigne, puis réessaie.',
+                });
             }
 
             const row = new ActionRowBuilder().addComponents(
@@ -130,26 +143,42 @@ async function handleTempVoiceInteraction(interaction) {
 
         const active = checkOwner(interaction, channelId);
         if (!active) {
-            return interaction.reply({ content: '❌ Seul le propriétaire peut faire ça.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Tu n\'es pas propriétaire de ce salon',
+                cause: 'Seule la personne qui a créé ce salon vocal peut effectuer cette action.',
+                action: 'Demande-lui, ou crée ton propre salon depuis le salon d\'accueil.',
+            });
         }
 
         const channel = interaction.guild.channels.cache.get(channelId);
         if (!channel) {
-            return interaction.reply({ content: '❌ Ce salon n\'existe plus.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Ce salon n\'existe plus',
+                cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
+                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+            });
         }
 
         const targetId = interaction.values[0];
         const target = await interaction.guild.members.fetch(targetId).catch(() => null);
 
         if (action === 'permit') {
-            if (!target) return interaction.update({ content: '❌ Utilisateur introuvable.', components: [] });
+            if (!target) {
+                return interaction.update({
+                    content: '❌ **Membre introuvable** — cette personne a quitté le serveur entre-temps.',
+                    components: [],
+                });
+            }
             await channel.permissionOverwrites.edit(targetId, { Connect: true, ViewChannel: true });
             return interaction.update({ content: `✅ ${target} peut maintenant rejoindre ton salon.`, components: [] });
         }
 
         if (action === 'kick') {
             if (!target || target.voice.channelId !== channelId) {
-                return interaction.update({ content: '❌ Cet utilisateur n\'est pas dans ton salon.', components: [] });
+                return interaction.update({
+                    content: '❌ **Cette personne n\'est pas dans ton salon** — elle l\'a quitté, ou n\'y est jamais entrée.',
+                    components: [],
+                });
             }
             await target.voice.disconnect('Expulsé par le propriétaire du vocal');
             return interaction.update({ content: `✅ ${target} a été expulsé.`, components: [] });
@@ -167,12 +196,20 @@ async function handleTempVoiceInteraction(interaction) {
 
         const active = checkOwner(interaction, channelId);
         if (!active) {
-            return interaction.reply({ content: '❌ Seul le propriétaire peut faire ça.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Tu n\'es pas propriétaire de ce salon',
+                cause: 'Seule la personne qui a créé ce salon vocal peut effectuer cette action.',
+                action: 'Demande-lui, ou crée ton propre salon depuis le salon d\'accueil.',
+            });
         }
 
         const channel = interaction.guild.channels.cache.get(channelId);
         if (!channel) {
-            return interaction.reply({ content: '❌ Ce salon n\'existe plus.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Ce salon n\'existe plus',
+                cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
+                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+            });
         }
 
         const db = getDb();
@@ -197,7 +234,11 @@ async function handleTempVoiceInteraction(interaction) {
             const limit = parseInt(raw, 10);
 
             if (isNaN(limit) || limit < 0 || limit > 99) {
-                return interaction.reply({ content: '❌ Nombre invalide (0-99).', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Nombre de places invalide',
+                    cause: 'La limite doit être un nombre entre 0 et 99. Discord n\'accepte rien d\'autre.',
+                    action: 'Saisis un nombre entre 1 et 99, ou 0 pour ne mettre aucune limite.',
+                });
             }
 
             await channel.setUserLimit(limit);

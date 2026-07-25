@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { sendModLog } = require('../utils/modlog');
+const { reportIncident, userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -18,7 +19,11 @@ module.exports = {
         const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
         if (member && !member.bannable) {
-            return interaction.reply({ content: '❌ Impossible de bannir ce membre (permissions).', ephemeral: true });
+            return userError(interaction, {
+                title: 'Je ne peux pas bannir ce membre',
+                cause: 'Soit il me manque la permission **Bannir des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
+                action: 'Vérifie mes permissions, et place mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
+            });
         }
 
         try {
@@ -27,7 +32,8 @@ module.exports = {
                 deleteMessageSeconds: deleteDays * 86400
             });
         } catch (e) {
-            return interaction.reply({ content: '❌ Erreur lors du bannissement.', ephemeral: true });
+            // Vraie exception : code d'incident pour retrouver la trace.
+            return reportIncident(interaction, e, { command: '/ban' });
         }
 
         const db = getDb();

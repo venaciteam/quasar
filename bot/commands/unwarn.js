@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,11 +18,19 @@ module.exports = {
         `).get(sanctionId, interaction.guild.id);
 
         if (!sanction) {
-            return interaction.reply({ content: '❌ Sanction introuvable.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Avertissement introuvable',
+                cause: 'Aucun avertissement ne porte cet identifiant sur ce serveur. Il a peut-être été supprimé, ou l\'identifiant appartient à un autre serveur.',
+                action: 'Retrouve le bon identifiant avec `/warns @membre` — il est affiché à côté de chaque avertissement.',
+            });
         }
 
         if (!sanction.active) {
-            return interaction.reply({ content: '❌ Cette sanction est déjà inactive.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Avertissement déjà retiré',
+                cause: 'Cet avertissement a déjà été retiré : il ne compte plus dans le total du membre.',
+                action: 'Aucune action nécessaire. `/warns @membre` affiche les avertissements encore actifs.',
+            });
         }
 
         db.prepare('UPDATE sanctions SET active = 0 WHERE id = ?').run(sanctionId);

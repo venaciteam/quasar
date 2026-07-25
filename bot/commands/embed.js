@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -70,7 +71,11 @@ module.exports = {
             const thumbnail = interaction.options.getString('thumbnail');
 
             if (!titre && !description) {
-                return interaction.reply({ content: '❌ L\'embed doit avoir au moins un titre ou une description.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Embed vide',
+                    cause: 'Un embed sans titre ni description n\'affiche rien : Discord le refuserait.',
+                    action: 'Renseigne au moins le titre ou la description.',
+                });
             }
 
             const data = { couleur };
@@ -101,7 +106,11 @@ module.exports = {
             const channel = interaction.options.getChannel('channel');
 
             const embedRow = db.prepare('SELECT data FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
-            if (!embedRow) return interaction.reply({ content: `❌ Embed **${nom}** introuvable.`, ephemeral: true });
+            if (!embedRow) return userError(interaction, {
+                title: 'Embed introuvable',
+                cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
+                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+            });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
             await channel.send({ embeds: [embed] });
@@ -114,19 +123,31 @@ module.exports = {
             const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
 
             const embedRow = db.prepare('SELECT data FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
-            if (!embedRow) return interaction.reply({ content: `❌ Embed **${nom}** introuvable.`, ephemeral: true });
+            if (!embedRow) return userError(interaction, {
+                title: 'Embed introuvable',
+                cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
+                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+            });
 
             try {
                 const msg = await targetChannel.messages.fetch(messageId);
                 if (msg.author.id !== interaction.client.user.id) {
-                    return interaction.reply({ content: '❌ Je ne peux modifier que mes propres messages.', ephemeral: true });
+                    return userError(interaction, {
+                        title: 'Je ne peux pas modifier ce message',
+                        cause: 'Discord n\'autorise un bot à modifier que les messages qu\'il a lui-même envoyés.',
+                        action: 'Pour modifier cet embed, supprime le message et renvoie-le avec `/embed send`.',
+                    });
                 }
 
                 const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
                 await msg.edit({ embeds: [embed] });
                 await interaction.reply({ content: '✅ Message modifié avec succès.', ephemeral: true });
             } catch (e) {
-                await interaction.reply({ content: '❌ Message introuvable.', ephemeral: true });
+                await userError(interaction, {
+                    title: 'Message introuvable',
+                    cause: 'Aucun message ne correspond à cet identifiant dans ce salon. Il a peut-être été supprimé, ou se trouve ailleurs.',
+                    action: 'Vérifie l\'identifiant (clic droit sur le message → Copier l\'identifiant) et lance la commande depuis le bon salon.',
+                });
             }
 
         } else if (sub === 'list') {
@@ -152,14 +173,22 @@ module.exports = {
             const nom = interaction.options.getString('nom');
             const result = db.prepare('DELETE FROM embeds WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
 
-            if (result.changes === 0) return interaction.reply({ content: `❌ Embed **${nom}** introuvable.`, ephemeral: true });
+            if (result.changes === 0) return userError(interaction, {
+                title: 'Embed introuvable',
+                cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
+                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+            });
             await interaction.reply({ content: `🗑️ Embed **${nom}** supprimé.`, ephemeral: true });
 
         } else if (sub === 'preview') {
             const nom = interaction.options.getString('nom');
             const embedRow = db.prepare('SELECT data FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
 
-            if (!embedRow) return interaction.reply({ content: `❌ Embed **${nom}** introuvable.`, ephemeral: true });
+            if (!embedRow) return userError(interaction, {
+                title: 'Embed introuvable',
+                cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
+                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+            });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
             await interaction.reply({ content: `👁️ Aperçu de **${nom}** :`, embeds: [embed], ephemeral: true });

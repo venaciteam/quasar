@@ -1,3 +1,4 @@
+const { buildErrorEmbed, newIncidentCode } = require('../utils/errors');
 const {
     SlashCommandBuilder, EmbedBuilder, ModalBuilder,
     TextInputBuilder, TextInputStyle, ActionRowBuilder,
@@ -142,7 +143,11 @@ async function handleReportModal(interaction) {
     const relayUrl = isAbuse ? getAbuseRelayUrl() : getBugRelayUrl();
     if (!relayUrl) {
         return interaction.editReply({
-            content: '❌ Aucune destination de signalement n\'est configurée sur cette instance.',
+            embeds: [buildErrorEmbed({
+                title: 'Signalement impossible',
+                cause: 'Cette instance de Quasar n\'a pas de destination de signalement configurée.',
+                action: 'Préviens directement l\'équipe du serveur, ou la personne qui héberge ce bot.',
+            })],
         });
     }
 
@@ -159,11 +164,20 @@ async function handleReportModal(interaction) {
     });
 
     if (!result.ok) {
-        console.error(`[Quasar] Signalement non transmis (${result.error})`);
+        // Le relais est injoignable ou refuse la soumission : on trace avec un code
+        // pour que l'administrateur puisse relier le retour de l'utilisateur au log.
+        const incidentCode = newIncidentCode();
+        console.error(
+            `[Quasar] ❌ ${incidentCode} | /signaler ${isAbuse ? 'abus' : 'bug'} | ` +
+            `relais=${relayUrl} | ${result.status ? `HTTP ${result.status}` : result.error}`
+        );
         return interaction.editReply({
-            content:
-                '❌ Le signalement n\'a pas pu être transmis. Réessaie dans quelques minutes — ' +
-                'et si le problème persiste, préviens directement l\'équipe du serveur.',
+            embeds: [buildErrorEmbed({
+                title: 'Signalement non transmis',
+                cause: 'Le service qui reçoit les signalements n\'a pas répondu. Il est peut-être momentanément indisponible.',
+                action: 'Réessaie dans quelques minutes. Si le problème persiste, préviens directement l\'équipe du serveur.',
+                code: incidentCode,
+            })],
         });
     }
 

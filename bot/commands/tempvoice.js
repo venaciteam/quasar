@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -82,7 +83,11 @@ module.exports = {
                 .run(guildId, channel.id);
 
             if (deleted.changes === 0) {
-                return interaction.reply({ content: '❌ Ce salon n\'est pas un trigger.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Ce salon n\'est pas un salon d\'accueil',
+                    cause: 'Ce salon vocal ne déclenche pas la création de salons temporaires.',
+                    action: 'Consulte les salons d\'accueil configurés avec `/tempvoice list`.',
+                });
             }
 
             return interaction.reply({ embeds: [
@@ -97,7 +102,11 @@ module.exports = {
         if (sub === 'disable') {
             const result = db.prepare('UPDATE tempvoice_triggers SET enabled = 0 WHERE guild_id = ?').run(guildId);
             if (result.changes === 0) {
-                return interaction.reply({ content: '❌ Aucun trigger configuré.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Aucun salon d\'accueil configuré',
+                    cause: 'Les salons vocaux temporaires ne sont pas encore activés sur ce serveur.',
+                    action: 'Configure un salon d\'accueil avec `/tempvoice setup`.',
+                });
             }
             return interaction.reply({ embeds: [
                 new EmbedBuilder()
@@ -111,7 +120,11 @@ module.exports = {
         if (sub === 'enable') {
             const result = db.prepare('UPDATE tempvoice_triggers SET enabled = 1 WHERE guild_id = ?').run(guildId);
             if (result.changes === 0) {
-                return interaction.reply({ content: '❌ Aucun trigger configuré. Utilise `/tempvoice setup` pour en ajouter.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Aucun salon d\'accueil configuré',
+                    cause: 'Les salons vocaux temporaires ne sont pas encore activés sur ce serveur.',
+                    action: 'Configure un salon d\'accueil avec `/tempvoice setup`.',
+                });
             }
             return interaction.reply({ embeds: [
                 new EmbedBuilder()

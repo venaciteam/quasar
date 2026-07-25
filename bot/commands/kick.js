@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { sendModLog } = require('../utils/modlog');
+const { reportIncident, userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,13 +16,26 @@ module.exports = {
         const reason = interaction.options.getString('raison') || 'Aucune raison spécifiée';
         const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
-        if (!member) return interaction.reply({ content: '❌ Membre introuvable.', ephemeral: true });
-        if (!member.kickable) return interaction.reply({ content: '❌ Impossible d\'expulser ce membre (permissions).', ephemeral: true });
+        if (!member) {
+            return userError(interaction, {
+                title: 'Membre introuvable',
+                cause: 'Cette personne n\'est plus sur le serveur — elle est peut-être déjà partie.',
+                action: 'Vérifie la liste des membres du serveur.',
+            });
+        }
+        if (!member.kickable) {
+            return userError(interaction, {
+                title: 'Je ne peux pas expulser ce membre',
+                cause: 'Soit il me manque la permission **Expulser des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
+                action: 'Vérifie mes permissions, et place mon rôle au-dessus du sien dans Paramètres du serveur → Rôles.',
+            });
+        }
 
         try {
             await member.kick(reason);
         } catch (e) {
-            return interaction.reply({ content: '❌ Erreur lors de l\'expulsion.', ephemeral: true });
+            // Vraie exception : code d'incident pour retrouver la trace.
+            return reportIncident(interaction, e, { command: '/kick' });
         }
 
         const db = getDb();

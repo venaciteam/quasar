@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -29,7 +30,11 @@ module.exports = {
             const role = interaction.options.getRole('role');
 
             if (role.managed) {
-                return interaction.reply({ content: '❌ Ce rôle est géré par une intégration externe.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Ce rôle ne peut pas être attribué',
+                    cause: 'Il est géré automatiquement par une intégration (bot, abonnement Twitch, boost du serveur…). Discord interdit à un autre bot d\'y toucher.',
+                    action: 'Crée un rôle classique et utilise celui-ci à la place.',
+                });
             }
 
             db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)')
@@ -49,7 +54,11 @@ module.exports = {
                 .run(interaction.guild.id, role.id);
 
             if (result.changes === 0) {
-                return interaction.reply({ content: '❌ Ce rôle n\'est pas dans les autoroles.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Ce rôle n\'est pas un autorôle',
+                    cause: 'Il ne fait pas partie des rôles attribués automatiquement à l\'arrivée.',
+                    action: 'Consulte la liste avec `/autorole list`.',
+                });
             }
 
             await interaction.reply({

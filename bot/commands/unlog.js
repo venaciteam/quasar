@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,7 +16,11 @@ module.exports = {
         `).get(interaction.guild.id);
 
         if (!existing) {
-            return interaction.reply({ content: '❌ Aucun channel de logs configuré.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Aucun salon de logs configuré',
+                cause: 'Il n\'y a rien à retirer : aucun salon de logs n\'est défini sur ce serveur.',
+                action: 'Pour en définir un, utilise `/log #salon`.',
+            });
         }
 
         const config = JSON.parse(existing.config || '{}');

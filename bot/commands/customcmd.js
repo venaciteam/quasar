@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -40,20 +41,36 @@ module.exports = {
             const embedNom = interaction.options.getString('embed');
 
             if (!reponse && !embedNom) {
-                return interaction.reply({ content: '❌ Il faut au moins une réponse ou un embed.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Commande sans contenu',
+                    cause: 'Une commande personnalisée doit répondre quelque chose : un texte, ou un embed enregistré.',
+                    action: 'Renseigne le champ `reponse`, ou indique un embed existant avec `embed`.',
+                });
             }
 
             // Vérifier que l'embed existe si fourni
             let embedId = null;
             if (embedNom) {
                 const embedRow = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, embedNom);
-                if (!embedRow) return interaction.reply({ content: `❌ Embed **${embedNom}** introuvable. Crée-le d'abord avec \`/embed create\`.`, ephemeral: true });
+                if (!embedRow) {
+                    return userError(interaction, {
+                        title: 'Embed introuvable',
+                        cause: `Aucun embed enregistré ne s'appelle **${embedNom}** sur ce serveur.`,
+                        action: 'Crée-le d\'abord avec `/embed create`, ou consulte les embeds existants avec `/embed list`.',
+                    });
+                }
                 embedId = embedRow.id;
             }
 
             if (sub === 'create') {
                 const existing = db.prepare('SELECT name FROM custom_commands WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
-                if (existing) return interaction.reply({ content: `❌ La commande **/${nom}** existe déjà. Utilise \`/cmd edit\`.`, ephemeral: true });
+                if (existing) {
+                    return userError(interaction, {
+                        title: 'Cette commande existe déjà',
+                        cause: `Une commande personnalisée **/${nom}** est déjà enregistrée sur ce serveur.`,
+                        action: 'Modifie-la avec `/cmd edit`, ou choisis un autre nom.',
+                    });
+                }
 
                 db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id) VALUES (?, ?, ?, ?)')
                     .run(interaction.guild.id, nom, reponse || null, embedId);
@@ -79,7 +96,11 @@ module.exports = {
                 const result = db.prepare('UPDATE custom_commands SET response = ?, embed_id = ? WHERE guild_id = ? AND name = ?')
                     .run(reponse || null, embedId, interaction.guild.id, nom);
 
-                if (result.changes === 0) return interaction.reply({ content: `❌ Commande **/${nom}** introuvable.`, ephemeral: true });
+                if (result.changes === 0) return userError(interaction, {
+                    title: 'Commande introuvable',
+                    cause: `Aucune commande personnalisée **/${nom}** n'existe sur ce serveur.`,
+                    action: 'Consulte la liste avec `/cmd list`.',
+                });
 
                 await interaction.reply({ content: `✅ Commande \`/${nom}\` mise à jour.`, ephemeral: true });
             }
@@ -88,7 +109,11 @@ module.exports = {
             const nom = interaction.options.getString('nom').toLowerCase();
             const result = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
 
-            if (result.changes === 0) return interaction.reply({ content: `❌ Commande **/${nom}** introuvable.`, ephemeral: true });
+            if (result.changes === 0) return userError(interaction, {
+                    title: 'Commande introuvable',
+                    cause: `Aucune commande personnalisée **/${nom}** n'existe sur ce serveur.`,
+                    action: 'Consulte la liste avec `/cmd list`.',
+                });
 
             // Retirer la commande slash de la guild
             await removeCustomCommand(interaction.client, interaction.guild.id, nom);

@@ -4,6 +4,7 @@ const path = require('path');
 const { getDb } = require('../api/services/database');
 const { deployCommands } = require('./utils/deploy-commands');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
+const { reportIncident } = require('./utils/errors');
 
 function createBot() {
     const client = new Client({
@@ -90,20 +91,14 @@ function createBot() {
         if (interaction.isButton() || interaction.isUserSelectMenu() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
             if (interaction.customId.startsWith('tv_')) {
                 try { await handleTempVoiceInteraction(interaction); } catch (e) {
-                    console.error('[Quasar] Erreur interaction TempVoice:', e);
-                    if (!interaction.replied && !interaction.deferred) {
-                        interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true }).catch(() => {});
-                    }
+                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
                 }
                 return;
             }
 
             if (interaction.customId.startsWith('ticket_')) {
                 try { await handleTicketInteraction(interaction); } catch (e) {
-                    console.error('[Quasar] Erreur interaction Ticket:', e);
-                    if (!interaction.replied && !interaction.deferred) {
-                        interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true }).catch(() => {});
-                    }
+                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
                 }
                 return;
             }
@@ -113,10 +108,7 @@ function createBot() {
                     const { handleReportModal } = require('./commands/signaler');
                     await handleReportModal(interaction);
                 } catch (e) {
-                    console.error('[Quasar] Erreur interaction Signalement:', e);
-                    if (!interaction.replied && !interaction.deferred) {
-                        interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true }).catch(() => {});
-                    }
+                    reportIncident(interaction, e, { command: `formulaire ${interaction.customId}` });
                 }
                 return;
             }
@@ -147,11 +139,21 @@ function createBot() {
                         return interaction.reply({ content: customCmd.response });
                     }
                 } catch (err) {
-                    console.error('[Quasar] Erreur commande custom:', err);
+                    reportIncident(interaction, err, { command: `commande personnalisée /${interaction.commandName}` });
                 }
             }
             return;
         }
+
+        // Trace d'entrée. Sans elle, impossible de savoir si une commande a seulement
+        // atteint le bot : une interaction rejetée par Discord en amont et une
+        // commande qui échoue en silence laissent exactement les mêmes journaux — un
+        // incident réel a coûté une demi-heure de diagnostic pour cette raison.
+        const sub = interaction.options?.getSubcommand?.(false);
+        console.log(
+            `[Quasar] → /${interaction.commandName}${sub ? ' ' + sub : ''} ` +
+            `| guild=${interaction.guild?.id || 'MP'} | user=${interaction.user?.id}`
+        );
 
         try {
             await command.execute(interaction);
@@ -170,13 +172,9 @@ function createBot() {
                 .setTimestamp();
             sendLog(interaction.guild, 'quasar_command', cmdEmbed).catch(() => {});
         } catch (error) {
-            console.error(`[Quasar] Erreur commande /${interaction.commandName}:`, error);
-            const reply = { content: '❌ Une erreur est survenue.', ephemeral: true };
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(reply);
-            } else {
-                await interaction.reply(reply);
-            }
+            reportIncident(interaction, error, {
+                command: `/${interaction.commandName}${sub ? ' ' + sub : ''}`,
+            });
         }
     });
 
