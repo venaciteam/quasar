@@ -17,7 +17,7 @@
 | 🔊 **Rôles vocaux** | Rôle donné en vocal, retiré à la déconnexion |
 | 📝 **Embeds Custom** | Créer, sauvegarder et envoyer des embeds personnalisés |
 | ⚡ **Commandes Custom** | Commandes personnalisées avec texte ou embed |
-| 🎫 **Tickets** | Système de tickets avec transcripts, panel personnalisable |
+| 🎫 **Tickets** | Système de tickets, panel personnalisable — transcript envoyé dans Discord à la fermeture, jamais stocké en base |
 | 🎵 **Musique** | Play depuis YouTube, Spotify, Apple Music, Deezer et + |
 | 🔊 **TempVoice** | Salons vocaux temporaires avec boutons interactifs |
 | 🌐 **Dashboard Web** | Tout configurer depuis un navigateur — thème clair/sombre |
@@ -72,13 +72,28 @@ cp .env.example .env
 | `DISCORD_TOKEN` | Token du bot (onglet Bot du Developer Portal) |
 | `DISCORD_CLIENT_ID` | Client ID (onglet OAuth2) |
 | `DISCORD_CLIENT_SECRET` | Client Secret (onglet OAuth2) |
-| `CALLBACK_URL` | URL de callback OAuth2 — utilise l'IP locale du serveur (ex: `http://192.168.1.100:3000/callback`) |
+| `CALLBACK_URL` | URL de callback OAuth2 — `http://localhost:3000/callback` par défaut. Si tu ouvres le dashboard au réseau, mets l'IP du serveur (ex: `http://192.168.1.100:3000/callback`) |
 | `JWT_SECRET` | Chaîne aléatoire pour signer les JWT (génère avec `openssl rand -hex 32`) |
 | `PORT` | Port du dashboard (défaut: `3000`) |
+| `BIND_ADDRESS` | **Exposition du dashboard en Docker** — `127.0.0.1` (défaut) = accessible seulement depuis la machine hôte, `0.0.0.0` = ouvert au réseau |
+| `DASHBOARD_HOST` | Équivalent hors Docker (lancement direct par `node index.js`). Ne pas y toucher en conteneur : le Dockerfile le force à `0.0.0.0` |
 | `BOT_OWNER_ID` | Ton ID Discord — active les fonctions admin dans le dashboard (gestion du statut du bot). Pour le trouver : active le mode développeur dans Discord → clic droit sur ton profil → Copier l'identifiant |
-| `FEEDBACK_WEBHOOK_URL` | Webhook Discord pour recevoir les bugs/suggestions (optionnel) |
+| `INSTANCE_OPERATOR_NAME` | Qui héberge cette instance — affiché dans le dashboard (optionnel) |
+| `INSTANCE_LEGAL_URL` | Lien vers tes mentions légales (optionnel) |
+| `INSTANCE_SOURCE_URL` | Code source de ta version — **requis par l'AGPL si tu as modifié Quasar et que ton dashboard est accessible à d'autres** |
+| `ABUSE_REPORT_URL` | Où reçois-tu les signalements d'abus (`/signaler abus`). **Vide par défaut** : sans ça, aucun signalement d'abus ne quitte ton instance |
+| `INSTANCE_ABUSE_CONTACT` | Contact affiché pour signaler un abus quand `ABUSE_REPORT_URL` est vide (e-mail ou URL) |
+| `REPORT_RELAY_URL` | Où partent les bugs du logiciel (`/signaler bug`). Défaut : `https://sema.vena.city` |
+| `GUILD_PURGE_GRACE_DAYS` | Délai avant suppression des données d'un serveur quitté (défaut : `7` jours, `0` = immédiat) |
 
-> **💡 Accès réseau local** — Utilise l'IP de ta machine (ex: `http://192.168.1.100:3000/callback`) pour accéder au dashboard depuis n'importe quel appareil sur ton réseau. L'IP locale est affichée dans les logs au démarrage du bot. N'oublie pas d'ajouter cette URL dans le Developer Portal (OAuth2 → Redirects). Pour un accès distant via Internet, utilise un reverse proxy HTTPS (Cloudflare Tunnel, Nginx, Caddy…).
+> **🔒 Le dashboard est fermé par défaut** — Il n'écoute que sur la machine qui l'héberge. C'est volontaire : le dashboard donne accès à toute la configuration du bot et aux données de tes serveurs (sanctions, tickets, configs). Tant que tu n'y touches pas, personne d'autre sur ton réseau ne peut l'atteindre.
+>
+> **Pour l'ouvrir au réseau local**, en connaissance de cause :
+> 1. `BIND_ADDRESS=0.0.0.0` dans le `.env` (ou `DASHBOARD_HOST=0.0.0.0` si tu lances sans Docker)
+> 2. `CALLBACK_URL=http://<ip-de-ton-serveur>:3000/callback` — l'IP est affichée dans les logs au démarrage
+> 3. Ajoute cette même URL dans le Developer Portal (OAuth2 → Redirects)
+>
+> **Pour un accès depuis Internet**, ne publie jamais le port directement : passe par un reverse proxy HTTPS (Cloudflare Tunnel, Nginx, Caddy…) et laisse `BIND_ADDRESS=127.0.0.1` — le proxy tourne sur la même machine et atteint le dashboard en local.
 
 #### 3. Configurer le bot Discord
 
@@ -200,7 +215,14 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar-discord/main/insta
 ### Utilitaire
 | Commande | Description |
 |----------|-------------|
+| `/help` | Aide, liste des commandes et moyens de signalement |
 | `/ping` | Latence du bot |
+
+### Signalement — accessible à tous les membres
+| Commande | Description |
+|----------|-------------|
+| `/signaler bug` | Quasar dysfonctionne — part chez qui développe le bot |
+| `/signaler abus` | Le bot est utilisé de façon abusive — reste chez l'hébergeur de l'instance |
 
 </details>
 
@@ -251,14 +273,61 @@ quasar-discord/
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
+├── LICENSE               # AGPL-3.0
 └── data/                 # Volume Docker (SQLite)
 ```
 
 ---
 
+## 🔐 Données et conservation
+
+Quasar manipule des données personnelles : identifiants Discord, motifs de sanction, conversations de tickets. Voici ce qu'il en fait — et ce qu'il n'en fait pas.
+
+### Qui est responsable de quoi
+
+Si tu héberges Quasar, **tu es responsable des données** qu'il stocke sur ta machine. Venacity écrit le logiciel, elle n'a accès à rien : Quasar ne contacte aucun service tiers pour fonctionner, et la télémétrie a été retirée en v3.3.0.
+
+Sur une instance ouverte à des serveurs tiers, chaque administrateur de serveur reste responsable des données de son propre serveur ; l'hébergeur de l'instance agit pour son compte.
+
+### Ce qui est conservé, et combien de temps
+
+| Donnée | Conservation |
+|--------|--------------|
+| Sanctions (membre, modérateur, motif) | **12 mois par défaut**, réglable par serveur dans le dashboard. Les bannissements encore en vigueur ne sont jamais supprimés |
+| Conversations de tickets | **Jamais stockées.** Le transcript est envoyé en pièce jointe dans Discord à la fermeture, puis oublié |
+| Configurations, embeds, rôles, rappels | Tant que le bot est sur le serveur |
+| Préférences de salons vocaux temporaires | 90 jours après la dernière utilisation |
+| Toutes les données d'un serveur | **Supprimées 7 jours après le retrait du bot** (délai réglable). Réinviter le bot avant l'échéance annule la suppression |
+
+La durée de conservation des sanctions sert aussi de fenêtre aux sanctions automatiques : un avertissement trop ancien pour être conservé ne compte plus dans le déclenchement d'un mute, kick ou ban automatique. Un seul réglage commande les deux, pour éviter qu'une sanction supprimée continue à produire ses effets.
+
+### Les transcripts de tickets
+
+À la fermeture d'un ticket, le salon Discord est supprimé. Si Quasar gardait le transcript en base, sa base deviendrait la seule copie subsistante d'une conversation privée.
+
+Le transcript est donc **remis dans Discord** — dans le salon de logs, ou en message privé au modérateur qui ferme — et **rien n'est écrit en base**. Si aucune des deux voies n'aboutit, la fermeture est refusée : mieux vaut un ticket qui reste ouvert qu'une conversation perdue.
+
+### Où partent les signalements
+
+`/signaler` distingue deux cas, parce qu'ils ne concernent pas les mêmes personnes :
+
+- **Bug du logiciel** → chez qui développe Quasar (`REPORT_RELAY_URL`, par défaut Venacity). Contenu transmis : ta description, le contact que tu indiques si tu en donnes un, la version du bot.
+- **Abus d'usage** → chez l'hébergeur de l'instance (`ABUSE_REPORT_URL`). **Vide par défaut** : sans configuration explicite, aucun signalement d'abus ne quitte ton instance, et la commande oriente vers les administrateurs du serveur, vers toi, et vers Discord.
+
+Un abus commis sur l'instance de quelqu'un d'autre ne remonte donc jamais chez Venacity — elle n'aurait aucun moyen d'agir dessus, et ça ne la regarde pas.
+
+---
+
 ## 📝 Licence
 
-MIT — fais-en ce que tu veux.
+**GNU Affero General Public License v3.0** (AGPL-3.0) — texte intégral dans [LICENSE](LICENSE).
+
+Tu peux utiliser, modifier et redistribuer Quasar librement. En contrepartie, deux obligations :
+
+- Si tu redistribues Quasar, modifié ou non, tu le fais sous la même licence, code source inclus.
+- **Si tu héberges Quasar et que des personnes utilisent son dashboard à distance, tu dois leur proposer le code source de ta version** — y compris tes modifications. C'est la clause réseau (article 13), la différence entre l'AGPL et la GPL classique.
+
+Concrètement, pour un auto-hébergeur : si ton dashboard n'est accessible qu'à toi sur ta machine, tu n'as rien à faire. Si tu l'ouvres à d'autres et que tu as modifié le code, publie ton dépôt et mets le lien dans le dashboard.
 
 ---
 

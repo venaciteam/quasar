@@ -600,7 +600,7 @@ async function loadOverview(container) {
         { key: 'embeds', icon: '📝', name: 'Embeds Custom', desc: 'Constructeur d\'embeds avec preview live', page: 'embeds' },
         { key: 'customcmds', icon: '⚡', name: 'Commandes Custom', desc: 'Commandes personnalisées avec texte ou embed', page: 'customcmds' },
         { key: 'tempvoice', icon: '🎧', name: 'Vocaux Temp.', desc: 'Salons vocaux créés automatiquement, supprimés quand vides', page: 'tempvoice' },
-        { key: 'tickets', icon: '🎫', name: 'Tickets', desc: 'Système de support avec channels privés et transcripts', page: 'tickets' },
+        { key: 'tickets', icon: '🎫', name: 'Tickets', desc: 'Système de support avec salons privés — transcript remis dans Discord à la fermeture', page: 'tickets' },
         { key: 'scheduled', icon: '⏰', name: 'Rappels', desc: 'Messages programmés et récurrents avec mentions ciblées', page: 'scheduled' }
         // Musique désactivée — réactiver en décommentant (remettre la virgule ci-dessus)
         // { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music' }

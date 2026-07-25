@@ -195,23 +195,9 @@ router.get('/list', requireAuth, requireGuildAdmin, (req, res) => {
     });
 });
 
-// GET /api/guilds/:guildId/tickets/:id/transcript
-router.get('/:id/transcript', requireAuth, requireGuildAdmin, (req, res) => {
-    const db = getDb();
-    const ticket = db.prepare('SELECT * FROM tickets WHERE id = ? AND guild_id = ?').get(req.params.id, req.params.guildId);
-
-    if (!ticket) return res.status(404).json({ error: 'Ticket introuvable.' });
-    if (!ticket.closed_at) return res.status(400).json({ error: 'Ce ticket est encore ouvert.' });
-
-    res.json({
-        id: ticket.id,
-        user_id: ticket.user_id,
-        opened_at: ticket.opened_at,
-        closed_at: ticket.closed_at,
-        closed_by: ticket.closed_by,
-        close_reason: ticket.close_reason,
-        transcript: ticket.transcript || ''
-    });
-});
+// La route GET /:id/transcript a été retirée : Quasar ne conserve plus le contenu
+// des conversations de tickets. Le transcript est remis en pièce jointe dans Discord
+// à la fermeture du ticket (voir bot/utils/transcriptArchive.js) et relève ensuite
+// de l'administrateur du serveur.
 
 module.exports = router;

@@ -107,6 +107,19 @@ function createBot() {
                 }
                 return;
             }
+
+            if (interaction.customId.startsWith('signaler_')) {
+                try {
+                    const { handleReportModal } = require('./commands/signaler');
+                    await handleReportModal(interaction);
+                } catch (e) {
+                    console.error('[Quasar] Erreur interaction Signalement:', e);
+                    if (!interaction.replied && !interaction.deferred) {
+                        interaction.reply({ content: '❌ Une erreur est survenue.', ephemeral: true }).catch(() => {});
+                    }
+                }
+                return;
+            }
         }
 
         if (!interaction.isChatInputCommand()) return;
@@ -249,6 +262,14 @@ function createBot() {
             scheduler.start(client);
         } catch (e) {
             console.error('[Quasar] Erreur démarrage scheduler:', e.message || e);
+        }
+
+        // Rétention — Purge des serveurs quittés et des sanctions expirées
+        try {
+            const retention = require('./modules/retention');
+            retention.start(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
         }
     });
 

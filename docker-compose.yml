@@ -4,7 +4,11 @@ services:
     container_name: quasar
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      # Publié sur la boucle locale par défaut : le dashboard n'est joignable que
+      # depuis la machine hôte. Pour l'ouvrir au réseau, mettre BIND_ADDRESS=0.0.0.0
+      # dans le .env — décision délibérée (le dashboard donne accès à toute la config
+      # du bot et aux données des serveurs).
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}"
     volumes:
       - quasar-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock

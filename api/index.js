@@ -14,6 +14,7 @@ const ticketsRoutes = require('./routes/tickets');
 const presenceRoutes = require('./routes/presence');
 const updateRoutes = require('./routes/update');
 const scheduledRoutes = require('./routes/scheduled');
+const instanceRoutes = require('./routes/instance');
 
 function createApi(discordClient) {
     const app = express();
@@ -25,10 +26,13 @@ function createApi(discordClient) {
     // Rendre le client Discord accessible aux routes
     app.set('discordClient', discordClient);
 
-    // Feedback relay → DevPortal (dev.vena.city)
-    // Reçoit le multipart/form-data du FAB et le forward tel quel au DevPortal.
+    // Feedback relay → Sema (sema.vena.city)
+    // Reçoit le multipart/form-data du FAB et le forward tel quel.
     // Pas besoin de parser le body côté Quasar — on pipe les chunks bruts.
-    const DEVREPORT_URL = 'https://dev.vena.city';
+    //
+    // Le domaine dev.vena.city utilisé jusqu'ici n'a jamais existé : tous les
+    // signalements partaient dans le vide. Le backend réel est Sema.
+    const DEVREPORT_URL = process.env.REPORT_RELAY_URL || 'https://sema.vena.city';
     app.post(['/api/feedback', '/api/feedback/vnct'], (req, res) => {
         const chunks = [];
         req.on('data', chunk => chunks.push(chunk));
@@ -68,6 +72,7 @@ function createApi(discordClient) {
     app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
     app.use('/api/presence', presenceRoutes);
     app.use('/api', updateRoutes);
+    app.use('/api', instanceRoutes);
 
     // Dashboard static files (ETag + no-cache for mutable assets)
     app.use('/dashboard', express.static(path.join(__dirname, '..', 'dashboard'), {

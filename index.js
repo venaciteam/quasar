@@ -20,6 +20,17 @@ const { startPeriodicCheck } = require('./api/services/updater');
 
 const PORT = process.env.PORT || 3000;
 
+// Interface d'écoute du dashboard. Défaut volontairement restrictif : le dashboard
+// n'est joignable que depuis la machine qui l'héberge. L'ouvrir au réseau est une
+// décision délibérée, à prendre en connaissance de cause (le dashboard donne accès
+// à la configuration complète du bot et aux données des serveurs).
+//
+// ⚠️ En conteneur, cette valeur doit rester '0.0.0.0' : elle désigne l'interface
+// INTERNE au conteneur, pas son exposition. Le Dockerfile force donc DASHBOARD_HOST=0.0.0.0.
+// Ce qui détermine l'exposition réelle, c'est la publication du port côté hôte
+// (variable BIND_ADDRESS dans docker-compose.yml, elle aussi sur 127.0.0.1 par défaut).
+const HOST = process.env.DASHBOARD_HOST || '127.0.0.1';
+
 async function main() {
     const version = require('./package.json').version;
     console.log('╔══════════════════════════════════╗');
@@ -32,17 +43,25 @@ async function main() {
 
     // Créer et démarrer l'API + dashboard
     const app = createApi(client);
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, HOST, () => {
         console.log(`[Quasar] Dashboard: http://localhost:${PORT}`);
 
-        // Afficher l'URL réseau local
-        const nets = require('os').networkInterfaces();
-        for (const iface of Object.values(nets)) {
-            for (const addr of iface) {
-                if (addr.family === 'IPv4' && !addr.internal) {
-                    console.log(`[Quasar] Réseau local: http://${addr.address}:${PORT}`);
+        const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+
+        if (isLoopback) {
+            console.log('[Quasar] Écoute restreinte à cette machine (DASHBOARD_HOST=127.0.0.1).');
+            console.log('[Quasar] Pour ouvrir le dashboard au réseau : DASHBOARD_HOST=0.0.0.0 dans le .env.');
+        } else {
+            // Afficher l'URL réseau local
+            const nets = require('os').networkInterfaces();
+            for (const iface of Object.values(nets)) {
+                for (const addr of iface) {
+                    if (addr.family === 'IPv4' && !addr.internal) {
+                        console.log(`[Quasar] Réseau local: http://${addr.address}:${PORT}`);
+                    }
                 }
             }
+            console.log(`[Quasar] ⚠️  Écoute sur ${HOST} — le dashboard est joignable au-delà de cette machine.`);
         }
 
         // Check de mise à jour en arrière-plan (30s après le boot)

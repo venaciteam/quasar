@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getDb } = require('../../api/services/database');
-const { sendLog } = require('../utils/logger');
+const { buildTranscriptFile, deliverTranscript } = require('../utils/transcriptArchive');
 
 const ACCENT_COLOR = 0xDE3163;
 
@@ -225,25 +225,15 @@ async function closeTicket(interaction, reason) {
         return interaction.reply({ content: '❌ Ce salon n\'est pas un ticket ouvert.', ephemeral: true });
     }
 
-    await interaction.reply({
-        embeds: [
-            new EmbedBuilder()
-                .setTitle('🎫 Ticket fermé')
-                .setDescription(`Fermé par ${interaction.user}\n**Raison :** ${reason}`)
-                .setColor(ACCENT_COLOR)
-                .setTimestamp()
-        ]
-    });
+    // La collecte des messages puis l'envoi du fichier prennent plus de 3 secondes
+    // sur un ticket fourni : on prend le délai avant de commencer.
+    await interaction.deferReply();
 
-    // Collecter le transcript
-    const transcript = await collectTranscript(interaction.channel);
+    // L'ordre compte. Le salon Discord va être supprimé et la conversation n'est
+    // plus conservée en base : tant que le transcript n'a pas été remis à
+    // l'administrateur, la fermeture ne doit pas avoir lieu.
+    const { transcript, messageCount } = await collectTranscript(interaction.channel);
 
-    db.prepare(`
-        UPDATE tickets SET closed_at = datetime('now'), closed_by = ?, close_reason = ?, transcript = ?
-        WHERE id = ?
-    `).run(interaction.user.id, reason, transcript, ticket.id);
-
-    // Log
     const logEmbed = new EmbedBuilder()
         .setTitle('🎫 Ticket fermé')
         .setColor(ACCENT_COLOR)
@@ -255,7 +245,72 @@ async function closeTicket(interaction, reason) {
         )
         .setTimestamp();
 
-    sendLog(interaction.guild, 'ticket_close', logEmbed).catch(() => {});
+    const file = buildTranscriptFile({
+        ticketId: ticket.id,
+        guild: interaction.guild,
+        ticket,
+        closedBy: interaction.user.id,
+        reason,
+        transcript,
+        messageCount,
+    });
+
+    const delivery = await deliverTranscript({
+        guild: interaction.guild,
+        moderator: interaction.user,
+        embed: logEmbed,
+        file,
+    });
+
+    // Échec des deux destinations : on refuse de fermer plutôt que de supprimer le
+    // salon avec la conversation dedans. Le ticket reste ouvert, rien n'est perdu.
+    if (!delivery.ok) {
+        console.error(`[Quasar] Fermeture du ticket #${ticket.id} refusée — transcript non remis : ${delivery.error}`);
+        return interaction.editReply({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle('❌ Fermeture annulée — transcript non archivé')
+                    .setDescription(
+                        'Quasar ne conserve pas les conversations de tickets : le transcript doit être ' +
+                        'remis avant que le salon soit supprimé. Ici, aucune des deux voies n\'a fonctionné.\n\n' +
+                        '**Pour débloquer, au choix :**\n' +
+                        '• configurer un salon de logs auquel Quasar peut écrire (`/log`) ;\n' +
+                        '• ou ouvrir tes messages privés pour ce serveur, puis relancer la fermeture.\n\n' +
+                        '_Le ticket reste ouvert, aucun message n\'a été perdu._'
+                    )
+                    .setColor(0xED4245)
+                    .setTimestamp()
+            ]
+        });
+    }
+
+    // Archivage acquis : on peut clore. Le transcript n'est PAS écrit en base.
+    db.prepare(`
+        UPDATE tickets SET closed_at = datetime('now'), closed_by = ?, close_reason = ?
+        WHERE id = ?
+    `).run(interaction.user.id, reason, ticket.id);
+
+    const notices = [];
+    if (delivery.via === 'dm') {
+        notices.push('📄 Le transcript t\'a été envoyé en message privé (aucun salon de logs disponible).');
+    } else {
+        notices.push('📄 Le transcript a été archivé dans le salon de logs.');
+    }
+    if (delivery.truncated) {
+        notices.push('⚠️ La conversation était trop longue : le transcript a été tronqué.');
+    }
+
+    await interaction.editReply({
+        embeds: [
+            new EmbedBuilder()
+                .setTitle('🎫 Ticket fermé')
+                .setDescription(
+                    `Fermé par ${interaction.user}\n**Raison :** ${reason}\n\n${notices.join('\n')}`
+                )
+                .setColor(ACCENT_COLOR)
+                .setTimestamp()
+        ]
+    });
 
     // Supprimer le channel après 5 secondes
     setTimeout(async () => {
@@ -267,6 +322,8 @@ async function closeTicket(interaction, reason) {
     }, 5000);
 }
 
+// Collecte les messages du salon pour en faire un transcript remis à l'administrateur.
+// Le résultat n'est jamais persisté : il part directement en pièce jointe.
 async function collectTranscript(channel) {
     const messages = [];
     let lastId;
@@ -300,7 +357,7 @@ async function collectTranscript(channel) {
         return line;
     });
 
-    return lines.join('\n');
+    return { transcript: lines.join('\n'), messageCount: messages.length };
 }
 
 module.exports.closeTicket = closeTicket;

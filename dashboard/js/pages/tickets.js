@@ -2,7 +2,7 @@ async function loadTickets(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">🎫 Tickets</h1>
-            <p class="main-subtitle">Système de support avec channels privés et transcripts</p>
+            <p class="main-subtitle">Système de support avec salons privés — transcript remis dans Discord à la fermeture</p>
         </div>
         <div id="tickets-content"><p style="color:var(--text-secondary)">Chargement...</p></div>
     `;
@@ -235,7 +235,6 @@ async function loadTickets(container, guildId) {
                                 <span style="color:var(--text-muted);font-size:.8rem;margin-left:.5rem">fermé ${_formatDate(t.closed_at)}</span>
                                 ${t.close_reason ? `<span style="color:var(--text-secondary);font-size:.8rem;margin-left:.5rem">— ${_escapeHtml(t.close_reason)}</span>` : ''}
                             </div>
-                            <button class="btn btn-sm" onclick="viewTranscript('${guildId}', ${t.id})" style="flex-shrink:0">📄 Transcript</button>
                         </div>
                     `).join('')}
             </div>
@@ -310,34 +309,10 @@ function buildCommandsCard() {
     `;
 }
 
-async function viewTranscript(guildId, ticketId) {
-    const data = await API.get(`/api/guilds/${guildId}/tickets/${ticketId}/transcript`);
-    if (data.error) { showToast(data.error, 'error'); return; }
-
-    const transcript = data.transcript || '(Aucun transcript disponible)';
-
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:1rem';
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-    overlay.innerHTML = `
-        <div style="background:var(--bg-main);border:1px solid var(--border);border-radius:var(--radius);max-width:700px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
-            <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-                <div>
-                    <h3 style="color:var(--text-primary);font-size:1rem;font-weight:600">📄 Transcript — Ticket #${data.id}</h3>
-                    <p style="color:var(--text-muted);font-size:.8rem;margin-top:.25rem">
-                        Ouvert ${_formatDate(data.opened_at)} — Fermé ${_formatDate(data.closed_at)}
-                        ${data.close_reason ? ` — ${_escapeHtml(data.close_reason)}` : ''}
-                    </p>
-                </div>
-                <button onclick="this.closest('div[style]').parentElement.parentElement.remove()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1.2rem">✕</button>
-            </div>
-            <pre style="padding:1rem 1.25rem;overflow-y:auto;flex:1;font-size:.8rem;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-family:monospace;margin:0">${_escapeHtml(transcript)}</pre>
-        </div>
-    `;
-
-    document.body.appendChild(overlay);
-}
+// La consultation des transcripts depuis le dashboard a été retirée : Quasar ne
+// conserve plus le contenu des conversations de tickets. Le transcript est remis
+// en pièce jointe dans Discord au moment de la fermeture, et sa conservation
+// relève ensuite de l'administrateur du serveur.
 
 function _formatDate(dateStr) {
     if (!dateStr) return '—';
@@ -353,4 +328,3 @@ function _escapeHtml(str) {
 }
 
 window.loadTickets = loadTickets;
-window.viewTranscript = viewTranscript;

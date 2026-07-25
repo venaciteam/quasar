@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quasar — Dashboard</title>
-    <link rel="stylesheet" href="/dashboard/css/vnct-design-system.css?v=3.3.1">
-    <link rel="stylesheet" href="/dashboard/css/style.css?v=3.3.1">
-    <link rel="stylesheet" href="/dashboard/css/vnct-fab-only.css?v=3.3.1">
+    <link rel="stylesheet" href="/dashboard/css/vnct-design-system.css?v=4.0.0">
+    <link rel="stylesheet" href="/dashboard/css/style.css?v=4.0.0">
+    <link rel="stylesheet" href="/dashboard/css/vnct-fab-only.css?v=4.0.0">
     <link rel="icon" type="image/x-icon" href="/dashboard/icon.ico">
     <link rel="icon" type="image/png" href="/dashboard/icon.png">
     <link rel="apple-touch-icon" href="/dashboard/icon.png">
@@ -122,16 +122,20 @@
         <p style="margin-top: var(--space-3); color: var(--text-secondary);">
             Ce dashboard te permet de tout configurer sans toucher à une seule commande.
         </p>
-        <p style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
-            Cette instance de Quasar est hébergée par la personne qui l'a installée — pas par Venacity.
+        <p data-instance-operator style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
+            Cette instance est hébergée par la personne ou l'organisation qui l'a installée.
         </p>
         <hr style="margin-top: var(--space-5); border: none; border-top: 1px solid var(--border-default);">
         <p style="margin-top: var(--space-4); color: var(--text-secondary); font-weight: var(--font-medium);">🔍 Pour les curieux</p>
         <p style="margin-top: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed);">
             Quasar tourne sur un serveur privé, sans dépendance à un service tiers payant. Les données (sanctions, configs, embeds) sont stockées localement dans une base SQLite. L'authentification passe par Discord OAuth2 — aucun mot de passe n'est stocké, on vérifie juste que tu es admin du serveur.
         </p>
-        <p style="margin-top: var(--space-4); color: var(--text-muted); font-size: var(--text-sm);">
-            Ce service fait partie de l'écosystème
+        <p data-instance-source style="margin-top: var(--space-4); color: var(--text-muted); font-size: var(--text-sm);">
+            Quasar est un logiciel libre sous licence AGPL-3.0 —
+            <a href="https://github.com/venaciteam/quasar-discord" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">code source de cette instance</a>.
+        </p>
+        <p style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
+            Ce logiciel est développé par
             <a href="https://vena.city" style="color: var(--accent);">Venacity</a>.
         </p>
         <div style="margin-top: var(--space-5); display: flex; justify-content: center;">
@@ -139,25 +143,26 @@
         </div>
     </template>
 
-    <script src="/dashboard/js/vnct-common.js?v=3.3.1"></script>
+    <script src="/dashboard/js/vnct-common.js?v=4.0.0"></script>
     <script>
         VNCT.config.serviceName = 'Quasar';
-        VNCT.config.serviceVersion = '3.3.0';
-        VNCT.config.devReportUrl = 'https://dev.vena.city';
+        VNCT.config.serviceVersion = '4.0.0';
+        VNCT.config.devReportUrl = 'https://sema.vena.city';
         VNCT.config.discordWebhookUrl = '/api/feedback/vnct';
     </script>
-    <script src="/dashboard/js/utils.js?v=3.3.1"></script>
-    <script src="/dashboard/js/commandsBlock.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/moderation.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/welcome.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/reactionroles.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/embeds.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/customcmds.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/tempvoice.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/tickets.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/scheduled.js?v=3.3.1"></script>
-    <script src="/dashboard/js/pages/update.js?v=3.3.1"></script>
-    <script src="/dashboard/js/app.js?v=3.3.1"></script>
+    <script src="/dashboard/js/instance.js?v=4.0.0"></script>
+    <script src="/dashboard/js/utils.js?v=4.0.0"></script>
+    <script src="/dashboard/js/commandsBlock.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/moderation.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/welcome.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/reactionroles.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/embeds.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/customcmds.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/tempvoice.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/tickets.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/scheduled.js?v=4.0.0"></script>
+    <script src="/dashboard/js/pages/update.js?v=4.0.0"></script>
+    <script src="/dashboard/js/app.js?v=4.0.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/dashboard/sw.js').then(function(reg) {
