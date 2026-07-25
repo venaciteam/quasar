@@ -344,6 +344,15 @@ async function closeTicket(interaction, reason) {
         WHERE id = ?
     `).run(interaction.user.id, reason, ticket.id);
 
+    // Tracer aussi le succès : un échec journalisé et un silence ne doivent pas
+    // être les deux seuls états observables. On note la destination et le volume,
+    // jamais le contenu de la conversation.
+    console.log(
+        `[Quasar] Ticket #${ticket.id} fermé — transcript remis ` +
+        `(${delivery.via === 'dm' ? 'message privé' : 'salon de logs'}, ` +
+        `${messageCount} message(s)${file.truncated ? ', tronqué' : ''})`
+    );
+
     const notices = [];
     if (delivery.via === 'dm') {
         notices.push('📄 Le transcript t\'a été envoyé en message privé (aucun salon de logs disponible).');

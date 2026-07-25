@@ -89,6 +89,16 @@ function createBot() {
 
         // TempVoice : boutons, select menus, modals
         if (interaction.isButton() || interaction.isUserSelectMenu() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
+            // Même trace que pour les commandes. Les tickets et les salons vocaux
+            // passent presque entièrement par des boutons : sans cette ligne, la
+            // moitié de l'usage réel du bot resterait invisible dans les journaux.
+            const kind = interaction.isModalSubmit() ? 'formulaire'
+                : interaction.isButton() ? 'bouton' : 'menu';
+            console.log(
+                `[Quasar] → ${kind} ${interaction.customId} ` +
+                `| guild=${interaction.guild?.id || 'MP'} | user=${interaction.user?.id}`
+            );
+
             if (interaction.customId.startsWith('tv_')) {
                 try { await handleTempVoiceInteraction(interaction); } catch (e) {
                     reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
