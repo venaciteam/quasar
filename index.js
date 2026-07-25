@@ -47,10 +47,19 @@ async function main() {
         console.log(`[Quasar] Dashboard: http://localhost:${PORT}`);
 
         const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
+        // En conteneur, écouter sur 0.0.0.0 ne dit rien de l'exposition réelle :
+        // l'adresse désigne les interfaces internes au conteneur, et c'est la
+        // publication du port qui décide qui peut joindre le dashboard. Avertir ici
+        // serait un faux positif — et pousserait à poser DASHBOARD_HOST=127.0.0.1,
+        // ce qui rendrait le conteneur injoignable.
+        const inContainer = fs.existsSync('/.dockerenv');
 
         if (isLoopback) {
             console.log('[Quasar] Écoute restreinte à cette machine (DASHBOARD_HOST=127.0.0.1).');
             console.log('[Quasar] Pour ouvrir le dashboard au réseau : DASHBOARD_HOST=0.0.0.0 dans le .env.');
+        } else if (inContainer) {
+            console.log(`[Quasar] Écoute sur ${HOST} à l'intérieur du conteneur (normal).`);
+            console.log('[Quasar] L\'accès depuis le réseau dépend de la publication du port : voir BIND_ADDRESS.');
         } else {
             // Afficher l'URL réseau local
             const nets = require('os').networkInterfaces();
