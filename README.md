@@ -97,14 +97,7 @@ cp .env.example .env
 
 #### 3. Configurer le bot Discord
 
-Sur le [Developer Portal](https://discord.com/developers/applications) :
-
-**Onglet Bot** — Active les 3 Privileged Gateway Intents :
-- ✅ Presence Intent
-- ✅ Server Members Intent
-- ✅ Message Content Intent
-
-**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3000/callback`).
+Voir [Configurer le bot Discord](#configurer-le-bot-discord) juste après ce bloc — intents à activer, réglages à laisser tranquilles.
 
 #### 4. Créer le volume et lancer
 
@@ -121,12 +114,21 @@ Le bot est en ligne. L'adresse du dashboard (locale + réseau) s'affiche dans le
 
 Sur le [Developer Portal](https://discord.com/developers/applications) :
 
-**Onglet Bot** — Active les 3 Privileged Gateway Intents :
+**Onglet Bot — à activer.** Les 3 Privileged Gateway Intents. Quasar les demande tous les trois au démarrage : s'il en manque un, Discord refuse la connexion et le bot ne démarre pas.
 - ✅ Presence Intent
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 
-**Onglet OAuth2 → Redirects** — Ajoute ton callback URL (la même que dans `.env`, ex: `http://192.168.1.100:3000/callback`).
+**Onglet Bot — à désactiver.**
+- ❌ **Public Bot** — sauf si tu veux que n'importe qui puisse inviter ton bot sur son serveur
+- ❌ **Requires OAuth2 Code Grant** — activé, l'invitation du bot échoue
+
+**Onglet OAuth2 → Redirects.** Ajoute ton callback URL, identique au caractère près à `CALLBACK_URL` dans ton `.env` (ex: `http://localhost:3000/callback`). Discord rejette la connexion à la moindre différence, slash final compris.
+
+**Onglet Installation.** Garde **Guild Install**, décoche **User Install** : Quasar est un bot de serveur. Mets *Install Link* sur **None**, l'invitation se fait avec l'URL ci-dessous.
+
+> [!warning]
+> **Ne remplis jamais « Interactions Endpoint URL »** (onglet General Information). Ce champ bascule Discord en mode HTTP : il cesse d'envoyer les interactions par la passerelle, et **plus aucune commande slash ne répond** — alors que le bot semble connecté et que rien n'apparaît dans les logs. Quasar écoute la passerelle, ce champ doit rester vide.
 
 ### Inviter le bot
 
@@ -134,6 +136,10 @@ Sur le Developer Portal → **OAuth2 → URL Generator** :
 - Scopes : `bot` + `applications.commands`
 - Permissions : `Administrator`
 - Copie l'URL et ouvre-la pour inviter le bot sur ton serveur
+
+Le dashboard génère aussi cette URL pour toi, une fois le bot lancé.
+
+> Pourquoi Administrator : ça évite de revenir ajuster les permissions à chaque module activé. Si tu préfères le principe du moindre privilège, le bot a besoin au minimum de gérer les salons (tickets et vocaux temporaires), gérer les rôles (autoroles, reaction roles), expulser et bannir (modération), gérer les messages (purge), et **bannir des membres** — cette dernière sert aussi à vérifier quels bannissements sont encore en vigueur avant de purger d'anciennes sanctions.
 
 ---
 
