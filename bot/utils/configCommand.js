@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { resolveVariables, buildEmbed } = require('./welcomeMessage');
+const { userError } = require('./errors');
 
 /**
  * Factory pour créer une commande de config welcome/leave
@@ -94,11 +95,21 @@ function createConfigCommand(opts) {
                 const config = db.prepare('SELECT * FROM welcome_config WHERE guild_id = ?').get(interaction.guild.id);
 
                 if (!config?.[channelCol]) {
-                    return interaction.reply({ content: `❌ Aucun channel configuré. Utilise \`/${name} channel\` d'abord.`, ephemeral: true });
+                    return userError(interaction, {
+                        title: 'Aucun salon configuré',
+                        cause: `Le module **${name}** n'a pas encore de salon de destination.`,
+                        action: `Définis-le avec \`/${name} channel #salon\`.`,
+                    });
                 }
 
                 const channel = interaction.guild.channels.cache.get(config[channelCol]);
-                if (!channel) return interaction.reply({ content: '❌ Channel introuvable.', ephemeral: true });
+                if (!channel) {
+                    return userError(interaction, {
+                        title: 'Salon introuvable',
+                        cause: 'Le salon configuré a été supprimé, ou je n\'y ai plus accès.',
+                        action: `Reconfigure-le avec \`/${name} channel\`.`,
+                    });
+                }
 
                 const embed = buildEmbed(config[embedCol], interaction.member);
                 const content = config[messageCol] ? resolveVariables(config[messageCol], interaction.member) : null;

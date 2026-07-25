@@ -14,6 +14,8 @@ const ticketsRoutes = require('./routes/tickets');
 const presenceRoutes = require('./routes/presence');
 const updateRoutes = require('./routes/update');
 const scheduledRoutes = require('./routes/scheduled');
+const instanceRoutes = require('./routes/instance');
+const assetVersion = require('./services/assetVersion');
 
 function createApi(discordClient) {
     const app = express();
@@ -25,10 +27,13 @@ function createApi(discordClient) {
     // Rendre le client Discord accessible aux routes
     app.set('discordClient', discordClient);
 
-    // Feedback relay → DevPortal (dev.vena.city)
-    // Reçoit le multipart/form-data du FAB et le forward tel quel au DevPortal.
+    // Feedback relay → Sema (sema.vena.city)
+    // Reçoit le multipart/form-data du FAB et le forward tel quel.
     // Pas besoin de parser le body côté Quasar — on pipe les chunks bruts.
-    const DEVREPORT_URL = 'https://dev.vena.city';
+    //
+    // Le domaine dev.vena.city utilisé jusqu'ici n'a jamais existé : tous les
+    // signalements partaient dans le vide. Le backend réel est Sema.
+    const DEVREPORT_URL = process.env.REPORT_RELAY_URL || 'https://sema.vena.city';
     app.post(['/api/feedback', '/api/feedback/vnct'], (req, res) => {
         const chunks = [];
         req.on('data', chunk => chunks.push(chunk));
@@ -68,6 +73,20 @@ function createApi(discordClient) {
     app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
     app.use('/api/presence', presenceRoutes);
     app.use('/api', updateRoutes);
+    app.use('/api', instanceRoutes);
+
+    // Fichiers porteurs de références versionnées : la version y est injectée à la
+    // volée depuis package.json (voir services/assetVersion.js). Doit passer AVANT
+    // express.static, sinon le fichier brut avec ses __VERSION__ est servi tel quel.
+    const DASHBOARD_DIR = path.join(__dirname, '..', 'dashboard');
+    const VERSIONED_FILES = {
+        '/dashboard/index.html': path.join(DASHBOARD_DIR, 'index.html'),
+        '/dashboard/app.html': path.join(DASHBOARD_DIR, 'app.html'),
+        '/dashboard/sw.js': path.join(DASHBOARD_DIR, 'sw.js'),
+    };
+    for (const [route, filePath] of Object.entries(VERSIONED_FILES)) {
+        app.get(route, (req, res) => assetVersion.send(res, filePath));
+    }
 
     // Dashboard static files (ETag + no-cache for mutable assets)
     app.use('/dashboard', express.static(path.join(__dirname, '..', 'dashboard'), {
@@ -84,7 +103,7 @@ function createApi(discordClient) {
 
     // Page d'accueil (landing)
     app.get('/', (req, res) => {
-        res.sendFile(path.join(__dirname, '..', 'dashboard', 'index.html'));
+        assetVersion.send(res, path.join(DASHBOARD_DIR, 'index.html'));
     });
 
     // Redirect /callback vers auth

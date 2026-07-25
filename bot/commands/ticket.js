@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getDb } = require('../../api/services/database');
-const { sendLog } = require('../utils/logger');
+const { buildTranscriptFile, deliverTranscript } = require('../utils/transcriptArchive');
+const { userError } = require('../utils/errors');
 
 const ACCENT_COLOR = 0xDE3163;
 
@@ -74,13 +75,46 @@ module.exports = {
 
         if (sub === 'setup') {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-                return interaction.reply({ content: '❌ Tu as besoin de la permission **Gérer le serveur**.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Permission insuffisante',
+                    cause: 'Configurer les tickets demande la permission **Gérer le serveur**, que tu n\'as pas sur ce serveur.',
+                    action: 'Demande à un administrateur de lancer cette commande, ou de t\'accorder cette permission.',
+                });
             }
 
             const channel = interaction.options.getChannel('salon');
             const staffRole = interaction.options.getRole('staff');
             const category = interaction.options.getChannel('categorie');
             const welcomeMessage = interaction.options.getString('message') || null;
+
+            // Vérifier les permissions AVANT d'écrire en base : sans ça, un salon
+            // inaccessible laisse une configuration enregistrée mais inutilisable,
+            // et le message d'erreur ne dit pas laquelle des deux étapes a échoué.
+            const me = interaction.guild.members.me;
+            const perms = channel.permissionsFor(me);
+            const missing = [];
+            if (!perms?.has(PermissionFlagsBits.ViewChannel)) missing.push('Voir le salon');
+            if (!perms?.has(PermissionFlagsBits.SendMessages)) missing.push('Envoyer des messages');
+            if (!perms?.has(PermissionFlagsBits.EmbedLinks)) missing.push('Intégrer des liens');
+
+            if (missing.length > 0) {
+                return userError(interaction, {
+                    title: 'Je ne peux pas écrire dans ce salon',
+                    cause: `Il me manque ${missing.length > 1 ? 'ces permissions' : 'cette permission'} sur ${channel} : **${missing.join('**, **')}**.`,
+                    action: `Ouvre les paramètres de ${channel} → Permissions, accorde-les à mon rôle, puis relance la commande. Tu peux aussi choisir un autre salon.`,
+                });
+            }
+
+            if (category) {
+                const catPerms = category.permissionsFor(me);
+                if (!catPerms?.has(PermissionFlagsBits.ManageChannels)) {
+                    return userError(interaction, {
+                        title: 'Je ne peux pas créer de tickets dans cette catégorie',
+                        cause: `Il me manque la permission **Gérer les salons** sur la catégorie **${category.name}**, nécessaire pour y créer les salons de ticket.`,
+                        action: 'Accorde-moi cette permission sur la catégorie, ou laisse le champ vide pour créer les tickets à la racine du serveur.',
+                    });
+                }
+            }
 
             db.prepare(`
                 INSERT INTO ticket_config (guild_id, channel_id, category_id, staff_role_id, welcome_message, enabled)
@@ -139,7 +173,11 @@ module.exports = {
                 .get(guildId, interaction.channel.id);
 
             if (!ticket) {
-                return interaction.reply({ content: '❌ Cette commande ne peut être utilisée que dans un ticket.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Ce salon n\'est pas un ticket',
+                    cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
+                    action: 'Va dans le salon du ticket concerné, puis relance la commande.',
+                });
             }
 
             const member = interaction.options.getUser('membre');
@@ -163,7 +201,11 @@ module.exports = {
                 .get(guildId, interaction.channel.id);
 
             if (!ticket) {
-                return interaction.reply({ content: '❌ Cette commande ne peut être utilisée que dans un ticket.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Ce salon n\'est pas un ticket',
+                    cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
+                    action: 'Va dans le salon du ticket concerné, puis relance la commande.',
+                });
             }
 
             const member = interaction.options.getUser('membre');
@@ -180,13 +222,21 @@ module.exports = {
 
         if (sub === 'config') {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-                return interaction.reply({ content: '❌ Tu as besoin de la permission **Gérer le serveur**.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Permission insuffisante',
+                    cause: 'Consulter la configuration des tickets demande la permission **Gérer le serveur**.',
+                    action: 'Demande à un administrateur du serveur.',
+                });
             }
 
             const config = db.prepare('SELECT * FROM ticket_config WHERE guild_id = ?').get(guildId);
 
             if (!config) {
-                return interaction.reply({ content: '🎫 Aucune configuration de tickets. Utilise `/ticket setup` pour commencer.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Les tickets ne sont pas encore configurés',
+                    cause: 'Aucun salon d\'ouverture ni rôle staff n\'a été défini sur ce serveur.',
+                    action: 'Lance `/ticket setup` en indiquant le salon où afficher le bouton et le rôle qui gérera les tickets.',
+                });
             }
 
             const openCount = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE guild_id = ? AND closed_at IS NULL').get(guildId).count;
@@ -222,28 +272,22 @@ async function closeTicket(interaction, reason) {
         .get(guildId, interaction.channel.id);
 
     if (!ticket) {
-        return interaction.reply({ content: '❌ Ce salon n\'est pas un ticket ouvert.', ephemeral: true });
+        return userError(interaction, {
+            title: 'Ce salon n\'est pas un ticket ouvert',
+            cause: 'Soit ce salon n\'est pas un ticket, soit il a déjà été fermé.',
+            action: 'Utilise cette commande dans le salon d\'un ticket encore ouvert.',
+        });
     }
 
-    await interaction.reply({
-        embeds: [
-            new EmbedBuilder()
-                .setTitle('🎫 Ticket fermé')
-                .setDescription(`Fermé par ${interaction.user}\n**Raison :** ${reason}`)
-                .setColor(ACCENT_COLOR)
-                .setTimestamp()
-        ]
-    });
+    // La collecte des messages puis l'envoi du fichier prennent plus de 3 secondes
+    // sur un ticket fourni : on prend le délai avant de commencer.
+    await interaction.deferReply();
 
-    // Collecter le transcript
-    const transcript = await collectTranscript(interaction.channel);
+    // L'ordre compte. Le salon Discord va être supprimé et la conversation n'est
+    // plus conservée en base : tant que le transcript n'a pas été remis à
+    // l'administrateur, la fermeture ne doit pas avoir lieu.
+    const { transcript, messageCount } = await collectTranscript(interaction.channel);
 
-    db.prepare(`
-        UPDATE tickets SET closed_at = datetime('now'), closed_by = ?, close_reason = ?, transcript = ?
-        WHERE id = ?
-    `).run(interaction.user.id, reason, transcript, ticket.id);
-
-    // Log
     const logEmbed = new EmbedBuilder()
         .setTitle('🎫 Ticket fermé')
         .setColor(ACCENT_COLOR)
@@ -255,7 +299,81 @@ async function closeTicket(interaction, reason) {
         )
         .setTimestamp();
 
-    sendLog(interaction.guild, 'ticket_close', logEmbed).catch(() => {});
+    const file = buildTranscriptFile({
+        ticketId: ticket.id,
+        guild: interaction.guild,
+        ticket,
+        closedBy: interaction.user.id,
+        reason,
+        transcript,
+        messageCount,
+    });
+
+    const delivery = await deliverTranscript({
+        guild: interaction.guild,
+        moderator: interaction.user,
+        embed: logEmbed,
+        file,
+    });
+
+    // Échec des deux destinations : on refuse de fermer plutôt que de supprimer le
+    // salon avec la conversation dedans. Le ticket reste ouvert, rien n'est perdu.
+    if (!delivery.ok) {
+        console.error(`[Quasar] Fermeture du ticket #${ticket.id} refusée — transcript non remis : ${delivery.error}`);
+        return interaction.editReply({
+            embeds: [
+                new EmbedBuilder()
+                    .setTitle('❌ Fermeture annulée — transcript non archivé')
+                    .setDescription(
+                        'Quasar ne conserve pas les conversations de tickets : le transcript doit être ' +
+                        'remis avant que le salon soit supprimé. Ici, aucune des deux voies n\'a fonctionné.\n\n' +
+                        '**Pour débloquer, au choix :**\n' +
+                        '• configurer un salon de logs auquel Quasar peut écrire (`/log`) ;\n' +
+                        '• ou ouvrir tes messages privés pour ce serveur, puis relancer la fermeture.\n\n' +
+                        '_Le ticket reste ouvert, aucun message n\'a été perdu._'
+                    )
+                    .setColor(0xED4245)
+                    .setTimestamp()
+            ]
+        });
+    }
+
+    // Archivage acquis : on peut clore. Le transcript n'est PAS écrit en base.
+    db.prepare(`
+        UPDATE tickets SET closed_at = datetime('now'), closed_by = ?, close_reason = ?
+        WHERE id = ?
+    `).run(interaction.user.id, reason, ticket.id);
+
+    // Tracer aussi le succès : un échec journalisé et un silence ne doivent pas
+    // être les deux seuls états observables. On note la destination et le volume,
+    // jamais le contenu de la conversation.
+    console.log(
+        `[Quasar] Ticket #${ticket.id} fermé — transcript remis ` +
+        `(${delivery.via === 'dm' ? 'message privé' : 'salon de logs'}, ` +
+        `${messageCount} message(s)${file.truncated ? ', tronqué' : ''})`
+    );
+
+    const notices = [];
+    if (delivery.via === 'dm') {
+        notices.push('📄 Le transcript t\'a été envoyé en message privé (aucun salon de logs disponible).');
+    } else {
+        notices.push('📄 Le transcript a été archivé dans le salon de logs.');
+    }
+    if (delivery.truncated) {
+        notices.push('⚠️ La conversation était trop longue : le transcript a été tronqué.');
+    }
+
+    await interaction.editReply({
+        embeds: [
+            new EmbedBuilder()
+                .setTitle('🎫 Ticket fermé')
+                .setDescription(
+                    `Fermé par ${interaction.user}\n**Raison :** ${reason}\n\n${notices.join('\n')}`
+                )
+                .setColor(ACCENT_COLOR)
+                .setTimestamp()
+        ]
+    });
 
     // Supprimer le channel après 5 secondes
     setTimeout(async () => {
@@ -267,6 +385,8 @@ async function closeTicket(interaction, reason) {
     }, 5000);
 }
 
+// Collecte les messages du salon pour en faire un transcript remis à l'administrateur.
+// Le résultat n'est jamais persisté : il part directement en pièce jointe.
 async function collectTranscript(channel) {
     const messages = [];
     let lastId;
@@ -300,7 +420,7 @@ async function collectTranscript(channel) {
         return line;
     });
 
-    return lines.join('\n');
+    return { transcript: lines.join('\n'), messageCount: messages.length };
 }
 
 module.exports.closeTicket = closeTicket;

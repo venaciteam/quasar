@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { reportIncident, userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -25,7 +26,16 @@ module.exports = {
 
             await interaction.reply({ embeds: [embed] });
         } catch (e) {
-            await interaction.reply({ content: '❌ Utilisateur non trouvé dans les bans.', ephemeral: true });
+            // Discord renvoie 10026 (Unknown Ban) quand l'identifiant n'est pas banni :
+            // c'est le cas courant, pas un incident. Le reste est un vrai problème.
+            if (e?.code === 10026) {
+                return userError(interaction, {
+                    title: 'Cette personne n\'est pas bannie',
+                    cause: 'Aucun bannissement en cours ne correspond à cet identifiant sur ce serveur.',
+                    action: 'Vérifie l\'identifiant dans Paramètres du serveur → Bannissements. Il s\'agit de l\'identifiant Discord, pas du pseudo.',
+                });
+            }
+            return reportIncident(interaction, e, { command: '/unban' });
         }
     }
 };

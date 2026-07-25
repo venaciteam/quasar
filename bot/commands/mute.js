@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { sendModLog } = require('../utils/modlog');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,19 +18,39 @@ module.exports = {
         const reason = interaction.options.getString('raison') || 'Aucune raison spécifiée';
 
         const member = await interaction.guild.members.fetch(target.id).catch(() => null);
-        if (!member) return interaction.reply({ content: '❌ Membre introuvable.', ephemeral: true });
-        if (target.bot) return interaction.reply({ content: '❌ Tu ne peux pas mute un bot.', ephemeral: true });
+        if (!member) {
+            return userError(interaction, {
+                title: 'Membre introuvable',
+                cause: 'Cette personne n\'est plus sur le serveur.',
+                action: 'Vérifie qu\'elle en est toujours membre.',
+            });
+        }
+        if (target.bot) {
+            return userError(interaction, {
+                title: 'Les bots ne peuvent pas être exclus temporairement',
+                cause: 'Discord n\'applique pas les exclusions temporaires aux bots.',
+                action: 'Retire ses permissions, ou expulse-le du serveur.',
+            });
+        }
 
         // Parser la durée
         const ms = parseDuration(durationStr);
         if (!ms || ms > 28 * 24 * 60 * 60 * 1000) {
-            return interaction.reply({ content: '❌ Durée invalide. Max 28 jours. Ex: `10m`, `2h`, `1d`', ephemeral: true });
+            return userError(interaction, {
+                title: 'Durée invalide',
+                cause: 'Je n\'ai pas compris la durée, ou elle dépasse la limite de 28 jours imposée par Discord.',
+                action: 'Utilise un nombre suivi de `m` (minutes), `h` (heures) ou `d` (jours). Par exemple : `10m`, `2h`, `1d`.',
+            });
         }
 
         try {
             await member.timeout(ms, reason);
         } catch (e) {
-            return interaction.reply({ content: '❌ Impossible de mute ce membre (permissions).', ephemeral: true });
+            return userError(interaction, {
+                title: 'Je ne peux pas exclure ce membre',
+                cause: 'Soit il me manque la permission **Exclure temporairement des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
+                action: 'Vérifie mes permissions, et place mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
+            });
         }
 
         // Enregistrer en DB
@@ -51,7 +72,7 @@ module.exports = {
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
-        await sendModLog(interaction.guild, embed);
+        await sendModLog(interaction.guild, embed, 'mod_mute');
     }
 };
 

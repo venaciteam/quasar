@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { sendLog } = require('../utils/logger');
+const { userError } = require('../utils/errors');
 
 const ACCENT_COLOR = 0xDE3163;
 
@@ -18,7 +19,11 @@ async function handleTicketInteraction(interaction) {
 
         const config = db.prepare('SELECT * FROM ticket_config WHERE guild_id = ? AND enabled = 1').get(guildId);
         if (!config) {
-            return interaction.reply({ content: '❌ Le système de tickets n\'est pas configuré sur ce serveur.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Les tickets ne sont pas configurés',
+                cause: 'Aucun salon d\'ouverture ni rôle staff n\'a été défini sur ce serveur.',
+                action: 'Un administrateur doit lancer `/ticket setup` pour activer le système.',
+            });
         }
 
         // Vérifier si l'utilisateur a déjà un ticket ouvert
@@ -26,7 +31,11 @@ async function handleTicketInteraction(interaction) {
         if (existing) {
             const existingChannel = interaction.guild.channels.cache.get(existing.channel_id);
             if (existingChannel) {
-                return interaction.reply({ content: `❌ Tu as déjà un ticket ouvert : <#${existing.channel_id}>`, ephemeral: true });
+                return userError(interaction, {
+                    title: 'Tu as déjà un ticket ouvert',
+                    cause: `Ton ticket en cours est <#${existing.channel_id}>. Un seul ticket à la fois est autorisé, pour éviter les doublons côté staff.`,
+                    action: 'Poursuis la discussion dans ce salon. S\'il est résolu, ferme-le avec `/ticket close` avant d\'en ouvrir un nouveau.',
+                });
             }
             // Channel supprimé mais ticket pas fermé — nettoyer
             db.prepare("UPDATE tickets SET closed_at = datetime('now'), closed_by = 'system', close_reason = 'Channel supprimé' WHERE id = ?").run(existing.id);
@@ -71,7 +80,11 @@ async function handleTicketInteraction(interaction) {
             ticketChannel = await interaction.guild.channels.create(channelOptions);
         } catch (e) {
             console.error('[Quasar] Erreur création ticket channel:', e);
-            return interaction.reply({ content: '❌ Impossible de créer le ticket. Vérifie mes permissions.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Impossible de créer le ticket',
+                cause: 'Je n\'ai pas pu créer le salon. Il me manque probablement la permission **Gérer les salons**, ou la catégorie configurée a été supprimée.',
+                action: 'Préviens un administrateur : il doit vérifier mes permissions et relancer `/ticket setup` si la catégorie n\'existe plus.',
+            });
         }
 
         // Enregistrer en DB

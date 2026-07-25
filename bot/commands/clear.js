@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { reportIncident, userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -23,7 +24,11 @@ module.exports = {
                     .first(amount);
 
                 if (userMessages.length === 0) {
-                    return interaction.editReply({ content: `❌ Aucun message de ${targetUser} trouvé.` });
+                    return userError(interaction, {
+                        title: 'Aucun message à supprimer',
+                        cause: `Je n'ai trouvé aucun message de ${targetUser} parmi les 100 derniers messages de ce salon.`,
+                        action: 'Cette personne n\'a peut-être rien écrit récemment ici. La recherche ne remonte pas au-delà de 100 messages.',
+                    });
                 }
 
                 const deleted = await interaction.channel.bulkDelete(userMessages, true);
@@ -37,8 +42,16 @@ module.exports = {
                 });
             }
         } catch (e) {
-            console.error('[Quasar] Clear error:', e);
-            await interaction.editReply({ content: '❌ Erreur. Les messages de +14 jours ne peuvent pas être supprimés en masse.' });
+            // 50034 : Discord interdit la suppression groupée au-delà de 14 jours.
+            // C'est une limite de la plateforme, pas un bug — inutile d'alarmer.
+            if (e?.code === 50034) {
+                return userError(interaction, {
+                    title: 'Messages trop anciens',
+                    cause: 'Discord interdit la suppression groupée des messages de plus de 14 jours.',
+                    action: 'Supprime-les manuellement, ou relance la commande avec un nombre plus petit pour ne viser que les messages récents.',
+                });
+            }
+            return reportIncident(interaction, e, { command: '/clear' });
         }
     }
 };

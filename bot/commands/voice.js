@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 // Vérifie que l'utilisateur est dans un vocal temporaire dont il est owner
 function getOwnedChannel(interaction) {
@@ -77,7 +78,11 @@ module.exports = {
 
         const owned = getOwnedChannel(interaction);
         if (!owned) {
-            return interaction.reply({ content: '❌ Tu dois être dans un vocal temporaire dont tu es le propriétaire.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Tu n\'es pas dans un salon vocal temporaire',
+                cause: 'Cette commande ne fonctionne que si tu es connecté à un salon vocal temporaire dont tu es propriétaire.',
+                action: 'Rejoins le salon d\'accueil pour créer ton salon, puis relance la commande depuis celui-ci.',
+            });
         }
 
         const { channel, categoryId } = owned;
@@ -141,11 +146,19 @@ module.exports = {
             const targetMember = await interaction.guild.members.fetch(target.id).catch(() => null);
 
             if (!targetMember || targetMember.voice.channelId !== channel.id) {
-                return interaction.reply({ content: '❌ Cet utilisateur n\'est pas dans ton salon.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Cette personne n\'est pas dans ton salon',
+                    cause: 'Elle a quitté le salon, ou n\'y est jamais entrée.',
+                    action: 'Vérifie qui est connecté à ton salon vocal.',
+                });
             }
 
             if (targetMember.id === userId) {
-                return interaction.reply({ content: '❌ Tu ne peux pas t\'expulser toi-même.', ephemeral: true });
+                return userError(interaction, {
+                    title: 'Tu ne peux pas t\'expulser toi-même',
+                    cause: 'Tu es propriétaire de ce salon.',
+                    action: 'Pour partir, quitte simplement le salon vocal — il se supprimera s\'il devient vide.',
+                });
             }
 
             await targetMember.voice.disconnect('Expulsé par le propriétaire du vocal');

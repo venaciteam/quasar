@@ -1,6 +1,10 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const {
+    normalizeRetentionMonths,
+    DEFAULT_RETENTION_MONTHS,
+} = require('../../bot/modules/retention/sanctions');
 const router = express.Router({ mergeParams: true });
 
 // GET config modération
@@ -10,13 +14,26 @@ router.get('/config', requireAuth, requireGuildAdmin, (req, res) => {
         .get(req.params.guildId, 'moderation');
     let config = {};
     try { config = mod ? JSON.parse(mod.config || '{}') : {}; } catch { config = {}; }
+    // Exposer la valeur effective, pas l'absence de réglage : le dashboard doit
+    // afficher la durée réellement appliquée.
+    config.sanctionRetentionMonths = 'sanctionRetentionMonths' in config
+        ? normalizeRetentionMonths(config.sanctionRetentionMonths)
+        : DEFAULT_RETENTION_MONTHS;
     res.json(config);
 });
 
 // PUT config modération
 router.put('/config', requireAuth, requireGuildAdmin, (req, res) => {
     const db = getDb();
-    const config = JSON.stringify(req.body);
+
+    // La durée de conservation des sanctions commande une suppression définitive
+    // de données : elle est normalisée ici plutôt que d'être écrite telle quelle.
+    const body = { ...req.body };
+    if ('sanctionRetentionMonths' in body) {
+        body.sanctionRetentionMonths = normalizeRetentionMonths(body.sanctionRetentionMonths);
+    }
+
+    const config = JSON.stringify(body);
     db.prepare(`
         INSERT INTO modules (guild_id, module_name, enabled, config) VALUES (?, 'moderation', 1, ?)
         ON CONFLICT(guild_id, module_name) DO UPDATE SET config = ?, enabled = 1

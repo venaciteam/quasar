@@ -22,6 +22,7 @@ function getDb() {
         migrateAtomToQuasar();
         migrateGuildsTimezone();
         migrateScheduledDays();
+        migrateDropTranscripts();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -178,6 +179,9 @@ function initTables() {
         );
 
         -- Tickets : historique des tickets
+        -- Volontairement sans colonne transcript : le contenu des conversations
+        -- est remis à l'administrateur en pièce jointe dans Discord à la fermeture,
+        -- jamais conservé ici (voir bot/utils/transcriptArchive.js).
         CREATE TABLE IF NOT EXISTS tickets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guild_id TEXT NOT NULL,
@@ -187,7 +191,6 @@ function initTables() {
             closed_at TEXT,
             closed_by TEXT,
             close_reason TEXT,
-            transcript TEXT,
             FOREIGN KEY (guild_id) REFERENCES guilds(guild_id)
         );
 
@@ -257,7 +260,19 @@ function initTables() {
             FOREIGN KEY (embed_id) REFERENCES embeds(id)
         );
 
+        -- Purges différées. Quand le bot est retiré d'un serveur, ses données ne
+        -- servent plus à rien : elles sont supprimées après un délai de grâce, annulé
+        -- s'il est réinvité entre-temps (retrait accidentel, migration de serveur).
+        -- Pas de FOREIGN KEY vers guilds : cette ligne doit survivre à la purge de
+        -- la guild elle-même le temps que la transaction se termine.
+        CREATE TABLE IF NOT EXISTS pending_guild_purges (
+            guild_id TEXT PRIMARY KEY,
+            left_at INTEGER NOT NULL,
+            purge_after INTEGER NOT NULL
+        );
+
         -- Indexes pour les performances
+        CREATE INDEX IF NOT EXISTS idx_pending_purges_due ON pending_guild_purges(purge_after);
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild ON sanctions(guild_id);
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild_user ON sanctions(guild_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_embeds_guild ON embeds(guild_id);
@@ -377,6 +392,58 @@ function migrateTickets() {
             console.log('[Quasar] Migration: ticket_config + panel_title, panel_description');
         }
     } catch {}
+}
+
+// --- Migration : suppression des transcripts de tickets (one-shot) ---
+// Les transcripts stockés en base faisaient de Quasar le dernier détenteur de
+// conversations privées, le salon Discord étant supprimé à la fermeture du ticket.
+// Cette migration efface le contenu existant puis retire la colonne.
+//
+// Le VACUUM final n'est pas cosmétique : sans lui, SQLite libère les pages sans les
+// réécrire et le texte des anciennes conversations reste lisible dans le fichier .db.
+// Une donnée « supprimée » mais toujours récupérable n'est pas supprimée.
+//
+// Idempotente : trackée via _migrations.
+function migrateDropTranscripts() {
+    try {
+        db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )`);
+
+        const already = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get('drop_ticket_transcripts_v1');
+        if (already) return;
+
+        const cols = db.pragma('table_info(tickets)').map(c => c.name);
+        if (!cols.includes('transcript')) {
+            // Base neuve : la colonne n'a jamais existé, rien à effacer.
+            db.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+                .run('drop_ticket_transcripts_v1', Date.now());
+            return;
+        }
+
+        const withTranscript = db.prepare(
+            "SELECT COUNT(*) AS c FROM tickets WHERE transcript IS NOT NULL AND transcript != ''"
+        ).get().c;
+
+        const apply = db.transaction(() => {
+            db.prepare('UPDATE tickets SET transcript = NULL').run();
+            db.exec('ALTER TABLE tickets DROP COLUMN transcript');
+            db.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+                .run('drop_ticket_transcripts_v1', Date.now());
+        });
+        apply();
+
+        // Hors transaction : SQLite refuse VACUUM à l'intérieur d'une transaction.
+        db.exec('VACUUM');
+
+        console.log(
+            `[Quasar] Migration drop_ticket_transcripts_v1 appliquée — ` +
+            `${withTranscript} transcript(s) supprimé(s) définitivement de la base.`
+        );
+    } catch (err) {
+        console.error('[Quasar] Erreur migration drop_ticket_transcripts_v1 :', err.message);
+    }
 }
 
 // --- Migration rebranding Atom -> Quasar (v1, one-shot) ---

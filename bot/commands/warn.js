@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { sendModLog } = require('../utils/modlog');
+const { countWarnsInEscalationWindow, getRetentionMonths } = require('../modules/retention/sanctions');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -16,15 +18,27 @@ module.exports = {
         const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
         if (!member) {
-            return interaction.reply({ content: '❌ Membre introuvable.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Membre introuvable',
+                cause: 'Cette personne n\'est plus sur le serveur, ou son compte n\'existe plus.',
+                action: 'Vérifie qu\'elle est toujours membre. Pour sanctionner quelqu\'un qui est parti, utilise `/ban` avec son identifiant.',
+            });
         }
 
         if (target.id === interaction.user.id) {
-            return interaction.reply({ content: '❌ Tu ne peux pas te warn toi-même.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Tu ne peux pas t\'avertir toi-même',
+                cause: 'Un modérateur ne peut pas s\'appliquer une sanction à lui-même.',
+                action: 'Choisis un autre membre.',
+            });
         }
 
         if (target.bot) {
-            return interaction.reply({ content: '❌ Tu ne peux pas warn un bot.', ephemeral: true });
+            return userError(interaction, {
+                title: 'Les bots ne peuvent pas être avertis',
+                cause: 'Un avertissement s\'adresse à une personne : il n\'a aucun effet sur un bot.',
+                action: 'Si un bot pose problème, retire-le du serveur ou contacte la personne qui l\'a ajouté.',
+            });
         }
 
         // Enregistrer le warn
@@ -34,11 +48,18 @@ module.exports = {
             VALUES (?, ?, ?, 'warn', ?)
         `).run(interaction.guild.id, target.id, interaction.user.id, reason);
 
-        // Compter les warns actifs
-        const warnCount = db.prepare(`
-            SELECT COUNT(*) as count FROM sanctions 
-            WHERE guild_id = ? AND user_id = ? AND type = 'warn' AND active = 1
-        `).get(interaction.guild.id, target.id).count;
+        // Compter les warns qui pèsent encore dans l'escalade. Le comptage est borné
+        // par la durée de conservation du serveur : un warn trop ancien pour être
+        // conservé ne peut pas déclencher un auto-kick ou un auto-ban.
+        const warnCount = countWarnsInEscalationWindow(interaction.guild.id, target.id);
+
+        // Le libellé dit explicitement sur quelle période porte le compte : sans ça,
+        // un modérateur qui voit « 2 warns » alors que le membre en a cinq dans
+        // l'historique croit à un bug.
+        const months = getRetentionMonths(interaction.guild.id);
+        const warnCountLabel = months === 0
+            ? 'Warns actifs'
+            : `Warns actifs (${months} mois)`;
 
         const embed = new EmbedBuilder()
             .setTitle('⚠️ Avertissement')
@@ -47,7 +68,7 @@ module.exports = {
                 { name: 'Membre', value: `${target} (${target.tag})`, inline: true },
                 { name: 'Modérateur', value: `${interaction.user}`, inline: true },
                 { name: 'Raison', value: reason },
-                { name: 'Total warns', value: `${warnCount}`, inline: true },
+                { name: warnCountLabel, value: `${warnCount}`, inline: true },
                 { name: 'ID sanction', value: `#${result.lastInsertRowid}`, inline: true }
             )
             .setTimestamp();
@@ -58,7 +79,7 @@ module.exports = {
         await checkAutoSanctions(interaction, target, member, warnCount);
 
         // Log
-        await sendModLog(interaction.guild, embed);
+        await sendModLog(interaction.guild, embed, 'mod_warn');
     }
 };
 

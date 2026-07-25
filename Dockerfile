@@ -25,6 +25,12 @@ RUN addgroup -g ${DOCKER_GID} -S docker \
     && git config --system --add safe.directory '*'
 USER node
 
+# En conteneur, l'écoute doit rester sur toutes les interfaces INTERNES au conteneur,
+# sinon le port publié ne route vers rien. Ce n'est pas une exposition : ce qui décide
+# de l'exposition réelle, c'est la publication du port côté hôte (BIND_ADDRESS dans
+# docker-compose.yml, sur 127.0.0.1 par défaut).
+ENV DASHBOARD_HOST=0.0.0.0
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

@@ -52,6 +52,29 @@ async function loadModeration(container, guildId) {
             </div>
         </div>
 
+        <!-- Conservation des sanctions -->
+        <div class="card">
+            <div class="card-title">🗃️ Conservation des sanctions</div>
+            <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
+                Au-delà de cette durée, les sanctions sont supprimées définitivement de la base.
+                Elles contiennent des données nominatives (membre visé, modérateur, motif) : c'est toi,
+                administrateur de ce serveur, qui décides combien de temps les garder.
+            </p>
+            <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;max-width:500px">
+                <label style="width:140px;font-size:.9rem">Conserver pendant</label>
+                <input class="input" type="number" id="sanction-retention" min="0" max="120"
+                    value="${config.sanctionRetentionMonths ?? 12}" style="width:80px">
+                <span style="color:var(--text-secondary);font-size:.85rem">mois</span>
+                <button class="btn btn-primary" onclick="saveModConfig()">Enregistrer</button>
+            </div>
+            <p style="color:var(--text-muted);font-size:.8rem;margin-top:1rem;line-height:1.5">
+                ⚠️ Cette durée sert aussi de fenêtre aux sanctions automatiques ci-dessus : un warn
+                plus ancien ne compte plus dans le déclenchement d'un mute, kick ou ban automatique.<br>
+                Les bannissements <strong>encore en vigueur</strong> ne sont jamais supprimés, quelle que soit leur ancienneté.<br>
+                <code>0</code> désactive la suppression — les sanctions sont alors conservées sans limite de durée.
+            </p>
+        </div>
+
         <!-- Logs activés -->
         <div class="card">
             <div class="card-title">📋 Types de logs</div>
@@ -96,24 +119,49 @@ async function loadModeration(container, guildId) {
     loadLogToggles(guildId, config);
 }
 
-let _savingMod = false;
-async function saveModConfig() {
-    if (_savingMod) return;
-    _savingMod = true;
-
+// Construit la configuration complète du module modération à partir du formulaire.
+// L'API remplace la config entière : tout champ omis ici serait effacé — c'est ce
+// qui faisait disparaître les types de logs cochés à chaque « Enregistrer ».
+function _buildModConfig() {
     const logChannel = document.getElementById('log-channel').value;
     const muteAt = parseInt(document.getElementById('mute-at').value) || null;
     const muteDuration = parseInt(document.getElementById('mute-duration').value) || 60;
     const kickAt = parseInt(document.getElementById('kick-at').value) || null;
     const banAt = parseInt(document.getElementById('ban-at').value) || null;
 
-    const config = {
+    const retentionField = document.getElementById('sanction-retention');
+    const retentionRaw = retentionField ? retentionField.value : '';
+    const sanctionRetentionMonths = retentionRaw === '' ? 12 : Math.max(0, parseInt(retentionRaw) || 0);
+
+    // Types de logs : depuis les cases si elles sont affichées, sinon depuis la
+    // config déjà chargée. Jamais reconstruits à vide.
+    const checkboxes = document.querySelectorAll('.log-toggle');
+    let enabledLogs;
+    if (checkboxes.length > 0) {
+        enabledLogs = {};
+        checkboxes.forEach(cb => { enabledLogs[cb.dataset.key] = cb.checked; });
+    } else {
+        enabledLogs = (window._modConfig && window._modConfig.enabledLogs) || {};
+    }
+
+    return {
         logChannel: logChannel || null,
-        autoSanctions: { muteAt, muteDuration, kickAt, banAt }
+        autoSanctions: { muteAt, muteDuration, kickAt, banAt },
+        sanctionRetentionMonths,
+        enabledLogs
     };
+}
+
+let _savingMod = false;
+async function saveModConfig() {
+    if (_savingMod) return;
+    _savingMod = true;
+
+    const config = _buildModConfig();
 
     try {
         await API.put(`/api/guilds/${window._guildId}/moderation/config`, config);
+        window._modConfig = config;
         showToast('✅ Modération sauvegardée !');
     } finally { _savingMod = false; }
 }
@@ -185,25 +233,9 @@ async function loadLogToggles(guildId, config) {
 }
 
 async function saveLogToggles() {
-    const checkboxes = document.querySelectorAll('.log-toggle');
-    const enabledLogs = {};
-    checkboxes.forEach(cb => {
-        enabledLogs[cb.dataset.key] = cb.checked;
-    });
-
-    const logChannel = document.getElementById('log-channel').value;
-    const muteAt = parseInt(document.getElementById('mute-at').value) || null;
-    const muteDuration = parseInt(document.getElementById('mute-duration').value) || 60;
-    const kickAt = parseInt(document.getElementById('kick-at').value) || null;
-    const banAt = parseInt(document.getElementById('ban-at').value) || null;
-
-    const config = {
-        logChannel: logChannel || null,
-        autoSanctions: { muteAt, muteDuration, kickAt, banAt },
-        enabledLogs
-    };
-
+    const config = _buildModConfig();
     await API.put(`/api/guilds/${window._guildId}/moderation/config`, config);
+    window._modConfig = config;
     showToast('✅ Logs mis à jour !');
 }
 

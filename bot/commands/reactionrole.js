@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { userError } = require('../utils/errors');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -95,7 +96,11 @@ module.exports = {
                 .get(panelId, interaction.guild.id);
 
             if (!panel) {
-                return interaction.reply({ content: '❌ Panel introuvable.', ephemeral: true });
+                return userError(interaction, {
+                title: 'Panel introuvable',
+                cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
+                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+            });
             }
 
             db.prepare(`
@@ -131,7 +136,11 @@ module.exports = {
             const panel = db.prepare('SELECT * FROM reaction_panels WHERE id = ? AND guild_id = ?')
                 .get(panelId, interaction.guild.id);
 
-            if (!panel) return interaction.reply({ content: '❌ Panel introuvable.', ephemeral: true });
+            if (!panel) return userError(interaction, {
+                title: 'Panel introuvable',
+                cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
+                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+            });
 
             db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji);
 
@@ -149,7 +158,11 @@ module.exports = {
             const panel = db.prepare('SELECT * FROM reaction_panels WHERE id = ? AND guild_id = ?')
                 .get(panelId, interaction.guild.id);
 
-            if (!panel) return interaction.reply({ content: '❌ Panel introuvable.', ephemeral: true });
+            if (!panel) return userError(interaction, {
+                title: 'Panel introuvable',
+                cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
+                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+            });
 
             // Supprimer le message Discord
             try {
