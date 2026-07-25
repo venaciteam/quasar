@@ -1,8 +1,8 @@
 // ═══════════════════════════════════
 //   VNCT Service Worker — Quasar
-//   Bump CACHE_VERSION to force update
+//   CACHE_VERSION suit la version du package.json (injectee au service du fichier)
 // ═══════════════════════════════════
-const CACHE_VERSION = 6;
+const CACHE_VERSION = '__VERSION__';
 const CACHE_NAME = `vnct-v${CACHE_VERSION}`;
 
 const APP_SHELL = [

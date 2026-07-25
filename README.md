@@ -228,6 +228,20 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar-discord/main/insta
 
 ---
 
+## 🏷️ Versionner une release
+
+Une seule chose à changer : le champ `version` de `package.json`.
+
+Les pages du dashboard portent un marqueur `__VERSION__` au lieu d'un numéro figé. Il est remplacé au moment où le fichier est servi ([`api/services/assetVersion.js`](api/services/assetVersion.js)), ce qui couvre d'un coup :
+
+- le cache-busting `?v=` de toutes les feuilles de style et de tous les scripts ;
+- la version affichée et envoyée avec les signalements ;
+- le nom du cache du service worker.
+
+Avant, il fallait tenir 24 références à la main à chaque release. Un oubli ne cassait rien de visible au déploiement : Cloudflare continuait simplement à servir l'ancien CSS aux utilisateurs, ce qui se diagnostique mal.
+
+---
+
 ## ⬆ Mise à jour
 
 Quasar vérifie automatiquement les nouvelles versions sur GitHub. Quand une mise à jour est disponible, un bandeau apparaît dans le dashboard. Clique sur "Mettre à jour" pour lancer le processus avec un terminal temps réel. En cas d'échec, un rollback automatique restaure la version précédente.

@@ -15,6 +15,7 @@ const presenceRoutes = require('./routes/presence');
 const updateRoutes = require('./routes/update');
 const scheduledRoutes = require('./routes/scheduled');
 const instanceRoutes = require('./routes/instance');
+const assetVersion = require('./services/assetVersion');
 
 function createApi(discordClient) {
     const app = express();
@@ -74,6 +75,19 @@ function createApi(discordClient) {
     app.use('/api', updateRoutes);
     app.use('/api', instanceRoutes);
 
+    // Fichiers porteurs de références versionnées : la version y est injectée à la
+    // volée depuis package.json (voir services/assetVersion.js). Doit passer AVANT
+    // express.static, sinon le fichier brut avec ses __VERSION__ est servi tel quel.
+    const DASHBOARD_DIR = path.join(__dirname, '..', 'dashboard');
+    const VERSIONED_FILES = {
+        '/dashboard/index.html': path.join(DASHBOARD_DIR, 'index.html'),
+        '/dashboard/app.html': path.join(DASHBOARD_DIR, 'app.html'),
+        '/dashboard/sw.js': path.join(DASHBOARD_DIR, 'sw.js'),
+    };
+    for (const [route, filePath] of Object.entries(VERSIONED_FILES)) {
+        app.get(route, (req, res) => assetVersion.send(res, filePath));
+    }
+
     // Dashboard static files (ETag + no-cache for mutable assets)
     app.use('/dashboard', express.static(path.join(__dirname, '..', 'dashboard'), {
         etag: true,
@@ -89,7 +103,7 @@ function createApi(discordClient) {
 
     // Page d'accueil (landing)
     app.get('/', (req, res) => {
-        res.sendFile(path.join(__dirname, '..', 'dashboard', 'index.html'));
+        assetVersion.send(res, path.join(DASHBOARD_DIR, 'index.html'));
     });
 
     // Redirect /callback vers auth
