@@ -1,0 +1,60 @@
+NOTICE — Noms et marques
+========================
+
+Quasar est distribué sous licence GNU Affero General Public License v3.0
+(voir le fichier LICENSE). Cette licence porte sur le CODE SOURCE.
+
+Elle n'accorde aucun droit d'usage sur :
+
+  - le nom « Venacity » ;
+  - le nom « Quasar » ;
+  - les logos, chartes graphiques et éléments d'identité visuelle associés.
+
+L'article 7(e) de l'AGPL-3.0 autorise expressément un auteur à ne pas concéder
+de droits au titre du droit des marques. C'est l'objet de cette notice : elle ne
+restreint en rien tes libertés sur le code, elle précise seulement que le nom
+n'en fait pas partie.
+
+
+Ce que tu peux faire
+--------------------
+
+  - Héberger Quasar, l'utiliser, le modifier et le redistribuer, dans les
+    conditions de l'AGPL-3.0.
+  - Indiquer factuellement que ton service fonctionne avec Quasar :
+    « propulsé par Quasar », « basé sur Quasar, développé par Venacity ».
+  - Conserver et afficher le lien vers le dépôt d'origine — l'article 13 de
+    l'AGPL t'oblige d'ailleurs à proposer ton code source aux personnes qui
+    utilisent ton dashboard à distance.
+
+
+Ce que tu ne peux pas faire
+---------------------------
+
+  - Te présenter comme Venacity, ou laisser croire que ton instance est opérée
+    par Venacity. En particulier, ne renseigne INSTANCE_OPERATOR_NAME avec
+    « Venacity » que si tu es effectivement Venacity : ce champ sert à dire aux
+    administrateurs de serveurs à qui ils confient les données de leurs membres.
+  - Utiliser les logos ou l'identité visuelle de Venacity ou de Quasar pour
+    désigner ton propre service ou ta version modifiée.
+  - Laisser entendre que ta version est approuvée, certifiée ou soutenue par
+    Venacity.
+
+Si tu publies une version modifiée, donne-lui ton propre nom. C'est une pratique
+courante dans le logiciel libre, et elle protège tout le monde : tes utilisateurs
+savent à qui s'adresser, et les nôtres ne te confondent pas avec nous.
+
+
+Instance officielle
+-------------------
+
+La seule instance de Quasar opérée par Venacity est accessible à l'adresse
+https://dashboard.vena.city
+
+Toute autre instance est opérée par un tiers, sous sa propre responsabilité.
+
+
+Contact
+-------
+
+Pour toute question relative à ces noms et marques : https://vena.city

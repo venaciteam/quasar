@@ -288,6 +288,7 @@ quasar-discord/
 ├── docker-compose.yml
 ├── .env.example
 ├── LICENSE               # AGPL-3.0
+├── NOTICE                # Noms et marques (non couverts par la licence)
 └── data/                 # Volume Docker (SQLite)
 ```
 
@@ -342,6 +343,16 @@ Tu peux utiliser, modifier et redistribuer Quasar librement. En contrepartie, de
 - **Si tu héberges Quasar et que des personnes utilisent son dashboard à distance, tu dois leur proposer le code source de ta version** — y compris tes modifications. C'est la clause réseau (article 13), la différence entre l'AGPL et la GPL classique.
 
 Concrètement, pour un auto-hébergeur : si ton dashboard n'est accessible qu'à toi sur ta machine, tu n'as rien à faire. Si tu l'ouvres à d'autres et que tu as modifié le code, publie ton dépôt et mets le lien dans le dashboard.
+
+### Noms et logos
+
+L'AGPL couvre le **code**, pas le **nom**. Les noms « Venacity » et « Quasar », ainsi que les logos associés, ne sont pas concédés par la licence — l'article 7(e) de l'AGPL-3.0 prévoit expressément cette réserve.
+
+Tu peux dire que ton service fonctionne avec Quasar. Tu ne peux pas te présenter comme Venacity, ni laisser croire que ton instance est opérée par Venacity : le champ `INSTANCE_OPERATOR_NAME` existe précisément pour dire aux administrateurs de serveurs à qui ils confient les données de leurs membres.
+
+Si tu publies une version modifiée, donne-lui ton propre nom. Détail dans [NOTICE](NOTICE).
+
+> La seule instance opérée par Venacity est [dashboard.vena.city](https://dashboard.vena.city). Toute autre instance est opérée par un tiers, sous sa propre responsabilité.
 
 ---
 
