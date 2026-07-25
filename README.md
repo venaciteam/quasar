@@ -119,13 +119,16 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 
-**Onglet Bot — à désactiver.**
+**Onglet Installation.** Garde **Guild Install**, décoche **User Install** : Quasar est un bot de serveur. Mets *Install Link* sur **None** — l'invitation se fait avec l'URL de la section suivante.
+
+**Onglet Bot — à désactiver.** Dans cet ordre, après l'onglet Installation :
 - ❌ **Public Bot** — sauf si tu veux que n'importe qui puisse inviter ton bot sur son serveur
 - ❌ **Requires OAuth2 Code Grant** — activé, l'invitation du bot échoue
 
-**Onglet OAuth2 → Redirects.** Ajoute ton callback URL, identique au caractère près à `CALLBACK_URL` dans ton `.env` (ex: `http://localhost:3000/callback`). Discord rejette la connexion à la moindre différence, slash final compris.
+> [!tip]
+> Si Discord refuse de décocher *Public Bot* avec le message *« Private application cannot have a default authorization link »*, c'est que *Install Link* n'est pas encore sur **None** : il faut passer par l'onglet Installation d'abord, enregistrer, puis revenir. La mention *« Verified apps must be public »* ne concerne que les applications vérifiées par Discord.
 
-**Onglet Installation.** Garde **Guild Install**, décoche **User Install** : Quasar est un bot de serveur. Mets *Install Link* sur **None**, l'invitation se fait avec l'URL ci-dessous.
+**Onglet OAuth2 → Redirects.** Ajoute ton callback URL, identique au caractère près à `CALLBACK_URL` dans ton `.env` (ex: `http://localhost:3000/callback`). Discord rejette la connexion à la moindre différence, slash final compris.
 
 > [!warning]
 > **Ne remplis jamais « Interactions Endpoint URL »** (onglet General Information). Ce champ bascule Discord en mode HTTP : il cesse d'envoyer les interactions par la passerelle, et **plus aucune commande slash ne répond** — alors que le bot semble connecté et que rien n'apparaît dans les logs. Quasar écoute la passerelle, ce champ doit rester vide.
