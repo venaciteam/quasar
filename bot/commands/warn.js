@@ -79,7 +79,7 @@ module.exports = {
         await checkAutoSanctions(interaction, target, member, warnCount);
 
         // Log
-        await sendModLog(interaction.guild, embed);
+        await sendModLog(interaction.guild, embed, 'mod_warn');
     }
 };
 

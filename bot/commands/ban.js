@@ -54,6 +54,6 @@ module.exports = {
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
-        await sendModLog(interaction.guild, embed);
+        await sendModLog(interaction.guild, embed, 'mod_ban');
     }
 };
