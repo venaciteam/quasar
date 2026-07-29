@@ -23,6 +23,7 @@ function getDb() {
         migrateGuildsTimezone();
         migrateScheduledDays();
         migrateDropTranscripts();
+        migrateLot2Compliance();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -284,6 +285,91 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_tempvoice_prefs_updated ON tempvoice_preferences(updated_at);
         CREATE INDEX IF NOT EXISTS idx_scheduled_guild ON scheduled_messages(guild_id);
         CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_messages(enabled, next_run);
+
+        -- =====================================================================
+        -- Lot 2 : conformité RGPD (contrat de sous-traitance art. 28)
+        -- Tables créées ici en CREATE TABLE IF NOT EXISTS (comme les tables
+        -- ci-dessus) ; les seules colonnes ajoutées à une table existante
+        -- (guilds.suspended*) passent par migrateLot2Compliance().
+        -- =====================================================================
+
+        -- Acceptation du contrat de sous-traitance (une ligne par admin et par version acceptée)
+        CREATE TABLE IF NOT EXISTS contract_acceptances (
+            admin_id TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            accepted_at INTEGER NOT NULL,          -- unixepoch
+            PRIMARY KEY (admin_id, contract_version)
+        );
+
+        -- Violations : un incident regroupe une notification initiale + ses compléments
+        CREATE TABLE IF NOT EXISTS breach_incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,                            -- libellé interne court
+            status TEXT NOT NULL DEFAULT 'open',   -- open | closed
+            created_at INTEGER NOT NULL,
+            created_by TEXT NOT NULL               -- Discord id du propriétaire (BOT_OWNER_ID)
+        );
+
+        -- Messages phasés rattachés à un incident (art. 33.4 : notification progressive)
+        CREATE TABLE IF NOT EXISTS breach_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL,
+            phase INTEGER NOT NULL,                -- 1 = initiale, 2+ = compléments
+            body TEXT NOT NULL,                    -- texte libre rédigé par l'opératrice
+            created_at INTEGER NOT NULL,
+            created_by TEXT NOT NULL,
+            FOREIGN KEY (incident_id) REFERENCES breach_incidents(id) ON DELETE CASCADE
+        );
+
+        -- Traçabilité d'envoi : une ligne par destinataire et par message (art. 33.5)
+        CREATE TABLE IF NOT EXISTS breach_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            guild_id TEXT NOT NULL,
+            recipient_id TEXT,                     -- Discord id admin (DM) ; NULL si repli salon
+            channel TEXT NOT NULL,                 -- 'dm' | 'guild_channel'
+            status TEXT NOT NULL DEFAULT 'pending',-- pending | sent | failed
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at INTEGER,
+            delivered_at INTEGER,
+            error TEXT,
+            FOREIGN KEY (message_id) REFERENCES breach_messages(id) ON DELETE CASCADE
+        );
+
+        -- Prise de connaissance de la bannière dashboard (canal indépendant de Discord)
+        CREATE TABLE IF NOT EXISTS breach_banner_ack (
+            incident_id INTEGER NOT NULL,
+            admin_id TEXT NOT NULL,
+            ack_at INTEGER NOT NULL,
+            PRIMARY KEY (incident_id, admin_id),
+            FOREIGN KEY (incident_id) REFERENCES breach_incidents(id) ON DELETE CASCADE
+        );
+
+        -- Demandes d'exercice du droit à l'effacement, routées à l'admin responsable
+        CREATE TABLE IF NOT EXISTS erasure_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,              -- Discord id de la personne concernée
+            category TEXT NOT NULL,                -- active_sanction | expired_sanction | non_moderation | mixed
+            details TEXT,                          -- précisions éventuelles de la demande
+            requested_at INTEGER NOT NULL,
+            due_at INTEGER NOT NULL,               -- requested_at + 1 mois (art. 12.3)
+            status TEXT NOT NULL DEFAULT 'pending',-- pending | decided | executed | refused | no_response
+            decision TEXT,                         -- erase | refuse
+            decision_reason TEXT,                  -- motivation (obligatoire si refusé)
+            decided_by TEXT,                       -- Discord id admin
+            decided_at INTEGER,
+            executed_at INTEGER,
+            source TEXT NOT NULL DEFAULT 'manual', -- manual (contact@) | command (/mes-donnees)
+            FOREIGN KEY (guild_id) REFERENCES guilds(guild_id)
+        );
+
+        -- Indexes Lot 2
+        CREATE INDEX IF NOT EXISTS idx_breach_msg_incident ON breach_messages(incident_id);
+        CREATE INDEX IF NOT EXISTS idx_breach_deliv_status ON breach_deliveries(status);
+        CREATE INDEX IF NOT EXISTS idx_breach_deliv_message ON breach_deliveries(message_id);
+        CREATE INDEX IF NOT EXISTS idx_erasure_guild ON erasure_requests(guild_id);
+        CREATE INDEX IF NOT EXISTS idx_erasure_status_due ON erasure_requests(status, due_at);
     `);
 }
 
@@ -508,6 +594,52 @@ function migrateAtomToQuasar() {
         console.log('[Quasar] Migration atom_to_quasar_v1 appliquee');
     } catch (err) {
         console.error('[Quasar] Erreur migration atom_to_quasar_v1 :', err.message);
+    }
+}
+
+// --- Migration Lot 2 : conformité RGPD (v1, one-shot) ---
+// Ajoute les colonnes de coupure ciblée à la table existante `guilds` :
+//   - suspended        (INTEGER NOT NULL DEFAULT 0) : serveur suspendu ou non
+//   - suspended_at     (INTEGER)                    : horodatage unixepoch de la suspension
+//   - suspended_reason (TEXT)                        : motif libre de la suspension
+//
+// Les nouvelles TABLES du lot 2 sont créées dans initTables() en CREATE TABLE
+// IF NOT EXISTS ; seules ces colonnes sur une table préexistante nécessitent un
+// ALTER, d'où cette migration dédiée.
+//
+// Doublement idempotente : gardée par _migrations (clé lot2_compliance_v1, comme
+// migrateAtomToQuasar/migrateDropTranscripts) ET vérification PRAGMA table_info
+// avant chaque ADD COLUMN (comme migrateGuildsTimezone). Un ALTER n'est jamais
+// rejoué, même si la ligne _migrations venait à manquer.
+function migrateLot2Compliance() {
+    try {
+        db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )`);
+
+        const already = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get('lot2_compliance_v1');
+        if (already) return;
+
+        const cols = db.pragma('table_info(guilds)').map(c => c.name);
+        if (!cols.includes('suspended')) {
+            db.exec('ALTER TABLE guilds ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0');
+            console.log('[Quasar] Migration: guilds + suspended (default 0)');
+        }
+        if (!cols.includes('suspended_at')) {
+            db.exec('ALTER TABLE guilds ADD COLUMN suspended_at INTEGER');
+            console.log('[Quasar] Migration: guilds + suspended_at');
+        }
+        if (!cols.includes('suspended_reason')) {
+            db.exec('ALTER TABLE guilds ADD COLUMN suspended_reason TEXT');
+            console.log('[Quasar] Migration: guilds + suspended_reason');
+        }
+
+        db.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+            .run('lot2_compliance_v1', Date.now());
+        console.log('[Quasar] Migration lot2_compliance_v1 appliquée');
+    } catch (err) {
+        console.error('[Quasar] Erreur migration lot2_compliance_v1 :', err.message);
     }
 }
 
