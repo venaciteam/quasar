@@ -13,7 +13,8 @@
 //  exception qui remonte jusqu'à la boucle.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { getLogConfig } = require('../../utils/logger');
 
 // Rouge « alerte », cohérent avec bot/utils/errors.js — une notification de
 // violation n'est pas un message anodin.
@@ -71,6 +72,25 @@ function buildBreachEmbed(incident, message) {
 }
 
 /**
+ * Embed du REPLI SALON : un pointeur NEUTRE, sans aucun détail de la violation
+ * (ni le corps du message, ni les catégories, ni la nature). Un salon — même un
+ * salon de logs — reste plus exposé qu'un MP : le contenu sensible ne doit y
+ * apparaître à aucun moment. Il redirige simplement vers les MP et le dashboard,
+ * où la notification complète est disponible.
+ */
+function buildBreachPointerEmbed() {
+    return new EmbedBuilder()
+        .setTitle('⚠️ Notification importante')
+        .setColor(COLOR_BREACH)
+        .setDescription(
+            'Une notification de sécurité vous attend.\n\n' +
+            'Consultez vos messages privés ainsi que le tableau de bord Quasar.'
+        )
+        .setFooter({ text: `Point de contact : ${CONTACT} — Venacity, sous-traitant (RGPD art. 28)` })
+        .setTimestamp();
+}
+
+/**
  * Réduit une exception à une chaîne courte et exploitable, stockée dans
  * breach_deliveries.error. On garde le code Discord/SQLite quand il existe : il
  * suffit à comprendre pourquoi un destinataire n'a pas reçu (MP fermés = 50007,
@@ -98,11 +118,19 @@ async function sendDM(client, userId, embed) {
 }
 
 /**
- * Repli salon : poste l'embed dans le salon système du serveur s'il est
- * écrivable, sinon dans le premier salon texte où le bot peut écrire.
+ * Repli salon : poste un POINTEUR NEUTRE (jamais le contenu de la violation) dans
+ * le salon de LOGS de modération du serveur — un salon admin, pas un salon de
+ * discussion. La cible est résolue via la config du module 'moderation'
+ * (`getLogConfig(guildId).logChannel`).
+ *
+ * Si aucun salon de logs n'est configuré, introuvable dans le cache, ou non
+ * écrivable par le bot : on N'ÉCRIT nulle part ailleurs (ni salon système, ni
+ * premier salon venu) et on renvoie un échec, pour que la boucle le trace
+ * (art. 33.5 — qui n'a pas reçu). La bannière dashboard reste le filet indépendant.
+ *
  * @returns {Promise<{ ok: boolean, error: string|null }>}
  */
-async function sendToGuildChannel(client, guildId, embed) {
+async function sendToGuildChannel(client, guildId) {
     if (!client || !guildId) return { ok: false, error: 'client ou serveur indisponible' };
 
     const guild = client.guilds?.cache?.get(guildId);
@@ -111,28 +139,30 @@ async function sendToGuildChannel(client, guildId, embed) {
     const me = guild.members?.me;
     if (!me) return { ok: false, error: 'membre bot introuvable sur le serveur' };
 
-    const canWrite = (ch) => {
-        const perms = ch?.permissionsFor?.(me);
-        return !!(perms
-            && perms.has(PermissionFlagsBits.ViewChannel)
-            && perms.has(PermissionFlagsBits.SendMessages));
-    };
+    // Cible imposée : le salon de logs de modération. Aucun repli vers un salon
+    // de discussion. Les trois cas d'indisponibilité partagent la même issue :
+    // échec tracé, rien de posté.
+    const NO_LOG_CHANNEL = 'aucun salon de logs configure pour le repli';
 
-    // 1. Salon système si écrivable ; 2. sinon premier salon texte écrivable.
-    let target = null;
-    if (guild.systemChannel && canWrite(guild.systemChannel)) {
-        target = guild.systemChannel;
-    } else {
-        target = guild.channels.cache
-            .filter(c => c.type === ChannelType.GuildText && canWrite(c))
-            .sort((a, b) => a.rawPosition - b.rawPosition)
-            .first();
+    let logChannelId = null;
+    try {
+        logChannelId = getLogConfig(guildId)?.logChannel || null;
+    } catch {
+        logChannelId = null;
     }
+    if (!logChannelId) return { ok: false, error: NO_LOG_CHANNEL };
 
-    if (!target) return { ok: false, error: 'aucun salon texte écrivable trouvé sur ce serveur' };
+    const channel = guild.channels?.cache?.get(logChannelId);
+    if (!channel) return { ok: false, error: NO_LOG_CHANNEL };
+
+    const perms = channel.permissionsFor?.(me);
+    const canWrite = !!(perms
+        && perms.has(PermissionFlagsBits.ViewChannel)
+        && perms.has(PermissionFlagsBits.SendMessages));
+    if (!canWrite) return { ok: false, error: NO_LOG_CHANNEL };
 
     try {
-        await target.send({ embeds: [embed] });
+        await channel.send({ embeds: [buildBreachPointerEmbed()] });
         return { ok: true, error: null };
     } catch (err) {
         return { ok: false, error: describeError(err) };
@@ -145,6 +175,7 @@ module.exports = {
     CONTACT,
     truncate,
     buildBreachEmbed,
+    buildBreachPointerEmbed,
     describeError,
     sendDM,
     sendToGuildChannel,

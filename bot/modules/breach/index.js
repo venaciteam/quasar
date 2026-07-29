@@ -116,16 +116,18 @@ async function processPending(client) {
                 processed++;
                 continue;
             }
-            const incident = db.prepare('SELECT * FROM breach_incidents WHERE id = ?').get(message.incident_id);
-            const embed = buildBreachEmbed(incident, message);
-
             // Étalement entre deux envois réels (pas avant le premier).
             if (processed > 0) await sleep(SPREAD_MS);
 
             let res;
             if (row.channel === 'guild_channel') {
-                res = await sendToGuildChannel(client, row.guild_id, embed);
+                // Repli salon : POINTEUR NEUTRE dans le salon de logs de modération.
+                // Jamais le contenu de la violation — il reste en MP + bannière dashboard.
+                res = await sendToGuildChannel(client, row.guild_id);
             } else {
+                // MP : embed COMPLET (contenu de la notification).
+                const incident = db.prepare('SELECT * FROM breach_incidents WHERE id = ?').get(message.incident_id);
+                const embed = buildBreachEmbed(incident, message);
                 res = await sendDM(client, row.recipient_id, embed);
             }
 
