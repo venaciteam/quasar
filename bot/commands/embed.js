@@ -1,6 +1,11 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { buildMentionPayload, silentMentions, hasMentions } = require('../../api/services/mentions');
 const { userError } = require('../utils/errors');
+
+// Colonnes de mention de l'embed (configurées dans le builder du dashboard).
+// Elles sont postées en contenu du message, au-dessus de l'embed.
+const MENTION_COLUMNS = 'mention_roles, mention_users, mention_everyone, mention_here';
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -105,7 +110,8 @@ module.exports = {
             const nom = interaction.options.getString('nom');
             const channel = interaction.options.getChannel('channel');
 
-            const embedRow = db.prepare('SELECT data FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
+            const embedRow = db.prepare(`SELECT data, ${MENTION_COLUMNS} FROM embeds WHERE guild_id = ? AND name = ?`)
+                .get(interaction.guild.id, nom);
             if (!embedRow) return userError(interaction, {
                 title: 'Embed introuvable',
                 cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
@@ -113,9 +119,18 @@ module.exports = {
             });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
-            await channel.send({ embeds: [embed] });
+            // Mentions configurées sur l'embed : postées comme contenu du message,
+            // avec un allowedMentions verrouillé sur ces seuls IDs.
+            const { content: mentionsStr, allowedMentions } = buildMentionPayload(embedRow);
+            const payload = { embeds: [embed], allowedMentions };
+            if (mentionsStr) payload.content = mentionsStr;
+            await channel.send(payload);
 
-            await interaction.reply({ content: `✅ Embed **${nom}** envoyé dans ${channel}.`, ephemeral: true });
+            await interaction.reply({
+                content: `✅ Embed **${nom}** envoyé dans ${channel}.${mentionsStr ? ` Mentions : ${mentionsStr}` : ''}`,
+                allowedMentions: silentMentions(), // le récap ne doit pinger personne
+                ephemeral: true
+            });
 
         } else if (sub === 'edit') {
             const messageId = interaction.options.getString('message_id');
@@ -140,8 +155,13 @@ module.exports = {
                 }
 
                 const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
-                await msg.edit({ embeds: [embed] });
-                await interaction.reply({ content: '✅ Message modifié avec succès.', ephemeral: true });
+                // Seul l'embed est remplacé : la ligne de mentions du message d'origine
+                // est laissée telle quelle. Discord ne notifie personne sur une édition,
+                // donc réappliquer les mentions n'aurait aucun effet de ping — ça ne
+                // ferait qu'écraser du contenu (ex. les mentions propres à un rappel).
+                // allowedMentions verrouillé par sécurité : une édition ne peut rien pinger.
+                await msg.edit({ embeds: [embed], allowedMentions: silentMentions() });
+                await interaction.reply({ content: '✅ Message modifié avec succès (embed uniquement, les mentions du message d\'origine sont conservées).', ephemeral: true });
             } catch (e) {
                 await userError(interaction, {
                     title: 'Message introuvable',
@@ -151,20 +171,22 @@ module.exports = {
             }
 
         } else if (sub === 'list') {
-            const embeds = db.prepare('SELECT name, updated_at FROM embeds WHERE guild_id = ? ORDER BY updated_at DESC').all(interaction.guild.id);
+            const embeds = db.prepare(`SELECT name, updated_at, ${MENTION_COLUMNS} FROM embeds WHERE guild_id = ? ORDER BY updated_at DESC`)
+                .all(interaction.guild.id);
 
             if (embeds.length === 0) return interaction.reply({ content: 'Aucun embed sauvegardé.', ephemeral: true });
 
             const lines = embeds.map(e => {
                 const date = new Date(e.updated_at + 'Z').toLocaleDateString('fr-FR');
-                return `📝 **${e.name}** — modifié le ${date}`;
+                // 👥 signale les embeds qui pingent à l'envoi (cf. builder du dashboard)
+                return `📝 **${e.name}** — modifié le ${date}${hasMentions(e) ? ' 👥' : ''}`;
             });
 
             await interaction.reply({
                 embeds: [new EmbedBuilder()
                     .setTitle('📝 Embeds sauvegardés')
                     .setColor(0x6e8ec8)
-                    .setDescription(lines.join('\n'))
+                    .setDescription(lines.join('\n') + (embeds.some(hasMentions) ? '\n\n👥 = mentions configurées (pingées à chaque `/embed send`)' : ''))
                     .setTimestamp()],
                 ephemeral: true
             });
@@ -182,7 +204,8 @@ module.exports = {
 
         } else if (sub === 'preview') {
             const nom = interaction.options.getString('nom');
-            const embedRow = db.prepare('SELECT data FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
+            const embedRow = db.prepare(`SELECT data, ${MENTION_COLUMNS} FROM embeds WHERE guild_id = ? AND name = ?`)
+                .get(interaction.guild.id, nom);
 
             if (!embedRow) return userError(interaction, {
                 title: 'Embed introuvable',
@@ -191,7 +214,18 @@ module.exports = {
             });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
-            await interaction.reply({ content: `👁️ Aperçu de **${nom}** :`, embeds: [embed], ephemeral: true });
+            // L'aperçu MONTRE la ligne de mentions telle qu'elle sera postée, mais
+            // allowedMentions est totalement verrouillé : rien ne notifie personne.
+            const { content: previewMentions } = buildMentionPayload(embedRow);
+            const header = `👁️ Aperçu de **${nom}** :`;
+            await interaction.reply({
+                content: previewMentions
+                    ? `${header}\n${previewMentions}\n-# ☝️ Ces mentions pingeront à l'envoi réel (aucune notification depuis cet aperçu).`
+                    : header,
+                embeds: [embed],
+                allowedMentions: silentMentions(),
+                ephemeral: true
+            });
         }
     }
 };

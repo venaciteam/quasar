@@ -196,6 +196,9 @@ function showNoGuilds() {
     const guildEl = document.getElementById('guild-info');
     if (guildEl) guildEl.textContent = 'Aucun serveur';
 
+    // Écran racine hors loadPage() : pas de retour possible (il n'y a plus de vue d'ensemble).
+    setMobileBackVisible(false);
+
     document.getElementById('content').innerHTML = `
         <div class="onboarding">
             <div class="onboarding-icon">🚀</div>
@@ -339,11 +342,35 @@ function bindAutoRefresh() {
 }
 
 // ═══ Navigation ═══
-function getMobileBackHtml() {
-    return `<button class="mobile-back" onclick="loadPage('overview')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        Retour
-    </button>`;
+
+// Le bouton retour mobile est monté dans .main, juste avant #content, et non
+// dedans : les pages réécrivent intégralement #content à chaque rafraîchissement
+// (création, édition, suppression) et emporteraient un bouton inséré à
+// l'intérieur. Le placer à côté du conteneur le rend insensible à ces re-rendus.
+function setMobileBackVisible(visible) {
+    const main = document.querySelector('.main');
+    const content = document.getElementById('content');
+    if (!main || !content) return;
+
+    let backBtn = document.getElementById('mobile-back');
+
+    if (!visible) {
+        backBtn?.remove();
+        return;
+    }
+
+    if (!backBtn) {
+        backBtn = document.createElement('button');
+        backBtn.id = 'mobile-back';
+        backBtn.className = 'mobile-back';
+        backBtn.type = 'button';
+        backBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Retour`;
+        backBtn.addEventListener('click', () => loadPage('overview'));
+    }
+
+    // Toujours repositionné juste avant #content : le bandeau de mise à jour
+    // s'insère au même endroit et pourrait passer devant.
+    if (backBtn.nextElementSibling !== content) main.insertBefore(backBtn, content);
 }
 
 async function loadPage(page) {
@@ -352,6 +379,9 @@ async function loadPage(page) {
     });
 
     const content = document.getElementById('content');
+
+    // 'overview' est la destination du bouton retour : pas de retour vers soi-même.
+    setMobileBackVisible(page !== 'overview');
 
     // Loading state
     if (page !== 'overview') {
@@ -365,17 +395,17 @@ async function loadPage(page) {
 
     switch (page) {
         case 'overview':   await loadOverview(content); break;
-        case 'moderation': await loadModeration(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'welcome':    await loadWelcome(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'reactionroles': await loadReactionRoles(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'embeds':     await loadEmbeds(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'customcmds': await loadCustomCmds(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'tempvoice':  await loadTempVoice(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'tickets':    await loadTickets(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'scheduled':  await loadScheduled(content, currentGuild.id); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
+        case 'moderation': await loadModeration(content, currentGuild.id); break;
+        case 'welcome':    await loadWelcome(content, currentGuild.id); break;
+        case 'reactionroles': await loadReactionRoles(content, currentGuild.id); break;
+        case 'embeds':     await loadEmbeds(content, currentGuild.id); break;
+        case 'customcmds': await loadCustomCmds(content, currentGuild.id); break;
+        case 'tempvoice':  await loadTempVoice(content, currentGuild.id); break;
+        case 'tickets':    await loadTickets(content, currentGuild.id); break;
+        case 'scheduled':  await loadScheduled(content, currentGuild.id); break;
         // Musique désactivée — réactiver en décommentant (+ entrée moduleList, fonction loadMusic, lien sidebar app.html)
-        // case 'music':      loadMusic(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
-        case 'update':     await loadUpdate(content); content.insertAdjacentHTML('afterbegin', getMobileBackHtml()); break;
+        // case 'music':      loadMusic(content); break;
+        case 'update':     await loadUpdate(content); break;
         default:
             content.innerHTML = `<div class="main-header"><h1 class="main-title">${page}</h1><p class="main-subtitle">Module en construction 🔧</p></div>`;
     }

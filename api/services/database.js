@@ -22,6 +22,7 @@ function getDb() {
         migrateAtomToQuasar();
         migrateGuildsTimezone();
         migrateScheduledDays();
+        migrateEmbedsMentions();
         migrateDropTranscripts();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
@@ -136,11 +137,18 @@ function initTables() {
         );
 
         -- Embeds sauvegardés
+        -- data = JSON de l'embed lui-même (titre, description, couleur...).
+        -- Les mentions vivent dans leurs propres colonnes : elles sont postées
+        -- au-dessus de l'embed, elles n'en font pas partie.
         CREATE TABLE IF NOT EXISTS embeds (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             guild_id TEXT NOT NULL,
             name TEXT NOT NULL,
             data TEXT NOT NULL,
+            mention_roles TEXT NOT NULL DEFAULT '[]',
+            mention_users TEXT NOT NULL DEFAULT '[]',
+            mention_everyone INTEGER NOT NULL DEFAULT 0,
+            mention_here INTEGER NOT NULL DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (guild_id) REFERENCES guilds(guild_id)
@@ -366,6 +374,32 @@ function migrateScheduledDays() {
         }
     } catch (e) {
         console.error('[Quasar] Erreur migration scheduled_days:', e.message);
+    }
+}
+
+// Migration : ajout des colonnes de mention à `embeds`.
+// Un embed personnalisé peut désormais pinger des rôles / utilisateurs /
+// @everyone / @here à chaque envoi, exactement comme un rappel programmé.
+// Les embeds existants héritent des valeurs par défaut (aucune mention), donc
+// leur comportement ne change pas. Idempotente.
+function migrateEmbedsMentions() {
+    try {
+        const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='embeds'").get();
+        if (!tbl) return; // table pas encore créée (cas d'un boot frais)
+        const cols = db.pragma('table_info(embeds)').map(c => c.name);
+        const columns = [
+            ['mention_roles', "TEXT NOT NULL DEFAULT '[]'"],
+            ['mention_users', "TEXT NOT NULL DEFAULT '[]'"],
+            ['mention_everyone', 'INTEGER NOT NULL DEFAULT 0'],
+            ['mention_here', 'INTEGER NOT NULL DEFAULT 0']
+        ];
+        for (const [name, definition] of columns) {
+            if (cols.includes(name)) continue;
+            db.exec(`ALTER TABLE embeds ADD COLUMN ${name} ${definition}`);
+            console.log(`[Quasar] Migration: embeds + ${name}`);
+        }
+    } catch (e) {
+        console.error('[Quasar] Erreur migration embeds mentions:', e.message);
     }
 }
 
