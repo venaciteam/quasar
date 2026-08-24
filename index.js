@@ -14,11 +14,44 @@ if (fs.existsSync(envPath)) {
     });
 }
 
-const { createBot } = require('./bot');
-const { createApi } = require('./api');
-const { startPeriodicCheck } = require('./api/services/updater');
+// Le module ./api n'a volontairement aucun effet de bord au require : ses routes
+// (et donc la base SQLite et discord.js) ne sont chargées qu'à l'appel de
+// createApi(). C'est ce qui permet au mode `site` de démarrer sans base ni token.
+const { createApi, createSiteApi } = require('./api');
 
 const PORT = process.env.PORT || 3000;
+
+// ═══════════════════════════════════════════════════════════════
+//  Mode de fonctionnement
+//
+//  bot    — auto-hébergement (défaut) : bot Discord + API + dashboard sur '/'.
+//           C'est le mode de toutes les instances auto-hébergées, il ne doit
+//           jamais changer de comportement.
+//  site   — vitrine seule : aucune connexion à Discord, aucune base, aucune
+//           route d'API métier. Sert la vitrine sur '/'. Utilisé par
+//           quasar.vena.city tant que l'instance publique est fermée.
+//  public — instance publique complète : bot + API + dashboard (sous /dashboard)
+//           ET vitrine sur '/'.
+// ═══════════════════════════════════════════════════════════════
+const MODES = {
+    bot: 'auto-hébergement (bot + dashboard)',
+    site: 'vitrine seule (ni bot, ni base)',
+    public: 'instance publique (bot + dashboard + vitrine)',
+};
+const DEFAULT_MODE = 'bot';
+
+function resolveMode() {
+    const raw = (process.env.QUASAR_MODE || '').trim().toLowerCase();
+    if (!raw) return DEFAULT_MODE;
+    if (raw in MODES) return raw;
+
+    // Valeur inconnue : on refuse de deviner l'intention, mais on ne plante pas
+    // pour autant. Repli explicite et bruyant sur le mode par défaut.
+    console.error(`[Quasar] ⚠️  QUASAR_MODE="${process.env.QUASAR_MODE}" est inconnu.`);
+    console.error(`[Quasar]     Valeurs acceptées : ${Object.keys(MODES).join(', ')}.`);
+    console.error(`[Quasar]     Démarrage en mode "${DEFAULT_MODE}" par défaut.`);
+    return DEFAULT_MODE;
+}
 
 // Interface d'écoute du dashboard. Défaut volontairement restrictif : le dashboard
 // n'est joignable que depuis la machine qui l'héberge. L'ouvrir au réseau est une
@@ -33,18 +66,34 @@ const HOST = process.env.DASHBOARD_HOST || '127.0.0.1';
 
 async function main() {
     const version = require('./package.json').version;
+
     console.log('╔══════════════════════════════════╗');
     console.log(`║        🌌  Quasar Bot v${version.padEnd(12)}║`);
     console.log('╚══════════════════════════════════╝');
 
-    // Créer et démarrer le bot Discord
-    const client = createBot();
-    await client.login(process.env.DISCORD_TOKEN);
+    // Résolu après le bandeau : si la valeur est invalide, l'avertissement
+    // apparaît juste au-dessus de la ligne de mode qu'il explique.
+    const mode = resolveMode();
+    console.log(`[Quasar] Mode : ${mode} — ${MODES[mode]}`);
 
-    // Créer et démarrer l'API + dashboard
-    const app = createApi(client);
+    let app;
+
+    if (mode === 'site') {
+        // Vitrine seule : pas de client Discord, pas de scheduler, pas de base.
+        // Les modules correspondants ne sont même pas chargés.
+        app = createSiteApi(mode);
+    } else {
+        // require différé : en mode `site`, discord.js et la chaîne de la base
+        // ne doivent jamais être chargés.
+        const { createBot } = require('./bot');
+        const client = createBot();
+        await client.login(process.env.DISCORD_TOKEN);
+        app = createApi(client, mode);
+    }
+
     app.listen(PORT, HOST, () => {
-        console.log(`[Quasar] Dashboard: http://localhost:${PORT}`);
+        const entryPoint = mode === 'site' ? 'Vitrine' : 'Dashboard';
+        console.log(`[Quasar] ${entryPoint}: http://localhost:${PORT}`);
 
         const isLoopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1';
         // En conteneur, écouter sur 0.0.0.0 ne dit rien de l'exposition réelle :
@@ -73,8 +122,12 @@ async function main() {
             console.log(`[Quasar] ⚠️  Écoute sur ${HOST} — le dashboard est joignable au-delà de cette machine.`);
         }
 
-        // Check de mise à jour en arrière-plan (30s après le boot)
-        setTimeout(() => startPeriodicCheck(), 30000);
+        // Check de mise à jour en arrière-plan (30s après le boot). Sans bot ni
+        // dashboard, l'auto-updater n'a rien à mettre à jour : on ne le charge pas.
+        if (mode !== 'site') {
+            const { startPeriodicCheck } = require('./api/services/updater');
+            setTimeout(() => startPeriodicCheck(), 30000);
+        }
     });
 }
 

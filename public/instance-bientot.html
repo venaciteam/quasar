@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quasar — L'instance publique revient bientôt</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <meta name="theme-color" content="#06060c">
+    <meta name="robots" content="noindex">
+    <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            min-height: 100vh;
+            font-family: var(--font-family);
+            color: var(--text-primary);
+            background: var(--bg-primary);
+        }
+
+        /* <main> et non <div> : le DS v2 élève automatiquement body > main
+           au-dessus du canvas de fond (contrat --z-content: 2). */
+        main {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-6);
+        }
+
+        .soon {
+            width: 100%;
+            max-width: 34rem;
+            text-align: center;
+            padding: var(--space-8) var(--space-6);
+        }
+
+        .soon__symbol {
+            width: 84px;
+            height: 84px;
+            margin: 0 auto var(--space-6);
+            opacity: 0.9;
+        }
+
+        .soon__title {
+            font-family: var(--font-display, var(--font-family));
+            font-size: var(--text-3xl);
+            font-weight: var(--font-semibold);
+            line-height: var(--leading-tight);
+        }
+
+        .soon__text {
+            margin-top: var(--space-4);
+            color: var(--text-secondary);
+            font-size: var(--text-base);
+            line-height: var(--leading-relaxed);
+        }
+
+        .soon__note {
+            margin-top: var(--space-5);
+            padding-top: var(--space-5);
+            border-top: 1px solid var(--border-default);
+            color: var(--text-muted);
+            font-size: var(--text-sm);
+            line-height: var(--leading-relaxed);
+        }
+
+        .soon__actions {
+            margin-top: var(--space-6);
+            display: flex;
+            flex-wrap: wrap;
+            gap: var(--space-3);
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <section class="vnct-card soon">
+            <img class="soon__symbol" src="/quasar-symbol.png" alt="" aria-hidden="true">
+            <h1 class="soon__title vnct-iris-text">L'instance publique revient bientôt</h1>
+            <p class="soon__text">
+                Le dashboard hébergé par Venacity est temporairement fermé, le temps
+                de finaliser sa mise en conformité. Il rouvrira à cette adresse.
+            </p>
+            <p class="soon__note">
+                Quasar reste open source : rien n'empêche d'héberger sa propre instance,
+                dashboard compris.
+            </p>
+            <div class="soon__actions">
+                <a class="vnct-btn vnct-btn--primary" href="/">Retour à l'accueil</a>
+                <a class="vnct-btn vnct-btn--secondary" href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">Code source</a>
+            </div>
+        </section>
+    </main>
+
+    <script src="__VNCT_JS_URL__"></script>
+    <script>
+        VNCT.config.serviceName = 'Quasar';
+        VNCT.config.serviceVersion = '__VERSION__';
+        VNCT.config.devReportUrl = 'https://sema.vena.city';
+    </script>
+</body>
+</html>
