@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { getDb } = require('../../../api/services/database');
+const { buildMentionPayload, hasMentions } = require('../../../api/services/mentions');
 const { buildDiscordEmbed } = require('../../commands/embed');
 
 const DEFAULT_TIMEZONE = 'Europe/Paris';
@@ -160,39 +161,31 @@ async function sendScheduledMessage(row) {
         throw new Error(`channel ${row.channel_id} introuvable ou non textuel`);
     }
 
-    let roles = [];
-    let users = [];
-    try { roles = JSON.parse(row.mention_roles || '[]'); } catch {}
-    try { users = JSON.parse(row.mention_users || '[]'); } catch {}
-    if (!Array.isArray(roles)) roles = [];
-    if (!Array.isArray(users)) users = [];
-
-    const mentionParts = [];
-    if (row.mention_everyone) mentionParts.push('@everyone');
-    if (row.mention_here) mentionParts.push('@here');
-    for (const rid of roles) mentionParts.push(`<@&${rid}>`);
-    for (const uid of users) mentionParts.push(`<@${uid}>`);
-    const mentionsStr = mentionParts.join(' ');
-
-    const payload = {
-        allowedMentions: {
-            parse: [],
-            roles,
-            users
-        }
-    };
-    if (row.mention_everyone || row.mention_here) {
-        payload.allowedMentions.parse.push('everyone');
-    }
+    // Un embed sauvegardé peut lui aussi porter des mentions (cf. builder du
+    // dashboard). Précédence explicite : les mentions du rappel gagnent ; on ne
+    // retombe sur celles de l'embed que si le rappel n'en définit aucune. Sans
+    // cette règle, les deux configurations s'additionneraient = double ping.
+    let mentionSource = row;
+    let discordEmbed = null;
 
     if (row.content_type === 'embed' && row.embed_id) {
         const db = getDb();
-        const embedRow = db.prepare('SELECT data FROM embeds WHERE id = ?').get(row.embed_id);
+        const embedRow = db.prepare(
+            'SELECT data, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE id = ?'
+        ).get(row.embed_id);
         if (!embedRow) throw new Error(`embed ${row.embed_id} introuvable`);
         let embedData;
         try { embedData = JSON.parse(embedRow.data); }
         catch { throw new Error(`embed ${row.embed_id} données invalides`); }
-        payload.embeds = [buildDiscordEmbed(embedData)];
+        discordEmbed = buildDiscordEmbed(embedData);
+        if (!hasMentions(row)) mentionSource = embedRow;
+    }
+
+    const { content: mentionsStr, allowedMentions } = buildMentionPayload(mentionSource);
+    const payload = { allowedMentions };
+
+    if (discordEmbed) {
+        payload.embeds = [discordEmbed];
         if (mentionsStr) payload.content = mentionsStr;
     } else {
         const text = row.content_text || '';

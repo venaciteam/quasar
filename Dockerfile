@@ -33,7 +33,12 @@ ENV DASHBOARD_HOST=0.0.0.0
 
 EXPOSE 3000
 
+# Le healthcheck interroge '/', qui répond 200 dans les trois QUASAR_MODE :
+# page de connexion du dashboard en mode `bot`, vitrine en modes `site` et `public`.
+# res.resume() + timeout explicite : sans drainer la réponse, la socket reste ouverte
+# et le `node -e` traîne jusqu'au timeout Docker, ce qui bascule le conteneur en
+# unhealthy alors que le service répond correctement.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT || 3000), r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+    CMD node -e "const r=require('http').get('http://127.0.0.1:'+(process.env.PORT||3000),{timeout:5000},res=>{res.resume();process.exit(res.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.on('timeout',()=>{r.destroy();process.exit(1)})"
 
 CMD ["node", "index.js"]

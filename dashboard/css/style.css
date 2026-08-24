@@ -1,8 +1,20 @@
 /* ═══════════════════════════════════════════════════════════════════ */
 /*   Quasar Dashboard — Styles specifiques                              */
 /*   Depend de vnct-design-system.css (charge avant ce fichier)       */
-/*   Aucune variable de couleur ici — tout vient du DS                */
+/*   Aucune couleur en dur ici — tout vient du DS (alias ci-dessous)  */
 /* ═══════════════════════════════════════════════════════════════════ */
+
+/* ═══ Alias vers les tokens du design system ═══ */
+/* Les pages du dashboard utilisent historiquement --bg-card et --border, qui
+   n'existent pas dans vnct-design-system.css : les proprietes concernees etaient
+   donc invalides et silencieusement ignorees (fonds et bordures manquants).
+   On les definit ici comme de simples alias vers les tokens reels du DS. Comme
+   ce sont des var() et non des valeurs en dur, ils suivent automatiquement les
+   declinaisons dark et light declarees par le design system. */
+:root {
+    --bg-card: var(--bg-tertiary);
+    --border: var(--border-default);
+}
 
 /* ═══ VNCT Animations (complements) ═══ */
 @keyframes vnct-appear {

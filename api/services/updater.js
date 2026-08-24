@@ -6,13 +6,18 @@ const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const GITHUB_REPO = 'venaciteam/quasar-discord';
+// Dépôt officiel. Il s'appelait 'venaciteam/quasar-discord' jusqu'au regroupement
+// des deux dépôts Quasar : GitHub redirige l'API et les opérations git de l'ancien
+// nom vers celui-ci, donc les instances installées avant le renommage continuent
+// de se mettre à jour sans intervention.
+const GITHUB_REPO = 'venaciteam/quasar';
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000; // 12h
 const GITHUB_TIMEOUT = 10000; // 10s
 
 let versionCache = null;
 let updating = false;
 let periodicTimer = null;
+let releaseCheckFailed = false; // évite de répéter le même avertissement à chaque check
 
 // ═══ Helpers ═══
 
@@ -64,7 +69,12 @@ async function fetchLatestRelease() {
             signal: controller.signal
         });
 
-        if (!res.ok) return null;
+        if (!res.ok) {
+            warnReleaseCheck(`GitHub a répondu ${res.status} pour ${GITHUB_REPO}`);
+            return null;
+        }
+
+        releaseCheckFailed = false;
 
         const data = await res.json();
         return {
@@ -73,11 +83,21 @@ async function fetchLatestRelease() {
             notes: data.body || '',
             date: data.published_at
         };
-    } catch {
+    } catch (err) {
+        warnReleaseCheck(err?.message || String(err));
         return null;
     } finally {
         clearTimeout(timeout);
     }
+}
+
+// La vérification de version échoue en silence côté dashboard (pas de bandeau).
+// On trace la première occurrence dans les journaux : sans ça, une instance qui
+// ne voit plus les mises à jour ne donne aucun indice sur la raison.
+function warnReleaseCheck(reason) {
+    if (releaseCheckFailed) return;
+    releaseCheckFailed = true;
+    console.warn(`[Quasar] Vérification des mises à jour indisponible : ${reason}`);
 }
 
 async function checkVersion(force = false) {

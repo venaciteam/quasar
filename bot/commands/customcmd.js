@@ -1,6 +1,14 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { hasMentions } = require('../../api/services/mentions');
 const { userError } = require('../utils/errors');
+
+// Une commande custom répond à celui qui la tape, à la demande et sans limite de
+// fréquence : y rejouer les mentions de l'embed transformerait n'importe quel
+// membre en déclencheur de ping (@everyone compris). Les mentions d'un embed ne
+// sont donc volontairement PAS appliquées ici — on se contente de le signaler à
+// l'admin au moment où il lie un embed « qui ping » à une commande.
+const MENTIONS_IGNOREES = 'ℹ️ Cet embed a des mentions configurées : elles ne sont **pas** appliquées aux commandes personnalisées (elles ne valent que pour `/embed send` et les rappels).';
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -50,8 +58,11 @@ module.exports = {
 
             // Vérifier que l'embed existe si fourni
             let embedId = null;
+            let embedPing = false;
             if (embedNom) {
-                const embedRow = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, embedNom);
+                const embedRow = db.prepare(
+                    'SELECT id, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE guild_id = ? AND name = ?'
+                ).get(interaction.guild.id, embedNom);
                 if (!embedRow) {
                     return userError(interaction, {
                         title: 'Embed introuvable',
@@ -60,6 +71,7 @@ module.exports = {
                     });
                 }
                 embedId = embedRow.id;
+                embedPing = hasMentions(embedRow);
             }
 
             if (sub === 'create') {
@@ -82,7 +94,7 @@ module.exports = {
                     embeds: [new EmbedBuilder()
                         .setTitle('✅ Commande créée')
                         .setColor(0xc86e8e)
-                        .setDescription(`La commande \`/${nom}\` est disponible sur le serveur.`)
+                        .setDescription(`La commande \`/${nom}\` est disponible sur le serveur.${embedPing ? `\n\n${MENTIONS_IGNOREES}` : ''}`)
                         .addFields(
                             embedNom
                                 ? { name: 'Réponse', value: `Embed: **${embedNom}**` }
@@ -102,7 +114,10 @@ module.exports = {
                     action: 'Consulte la liste avec `/cmd list`.',
                 });
 
-                await interaction.reply({ content: `✅ Commande \`/${nom}\` mise à jour.`, ephemeral: true });
+                await interaction.reply({
+                    content: `✅ Commande \`/${nom}\` mise à jour.${embedPing ? `\n${MENTIONS_IGNOREES}` : ''}`,
+                    ephemeral: true
+                });
             }
 
         } else if (sub === 'delete') {
