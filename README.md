@@ -310,6 +310,8 @@ Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique
 - `site` — vitrine seule, sans bot ni base de données ;
 - `public` — instance publique : bot, dashboard et vitrine.
 
+Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. L'affichage du bouton « Accéder au dashboard » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même.
+
 Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre en mode `bot`.
 
 ---

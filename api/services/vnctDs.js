@@ -99,6 +99,30 @@ function dsUrls() {
     };
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Bloc conditionnel « bouton dashboard »
+//
+//  Le fragment encadré par ces marqueurs n'est envoyé que si le serveur a
+//  décidé de proposer le bouton d'accès au dashboard. Il est RETIRÉ du HTML,
+//  pas seulement masqué en CSS : un lien simplement caché resterait dans la
+//  page servie (source, préchargement, parcours clavier si une règle saute).
+//  Bouton fermé = la vitrine ne contient aucune trace du dashboard, donc
+//  exactement la page d'avant l'ouverture de l'instance publique.
+//
+//  Le marqueur ne porte AUCUNE condition : la décision est prise en amont
+//  (api/index.js). Ne pas y réintroduire de logique de mode.
+// ═══════════════════════════════════════════════════════════════
+const CTA_BLOCK = /[^\S\n]*<!--\s*__DASHBOARD_CTA_ON__\s*-->\n?([\s\S]*?)[^\S\n]*<!--\s*\/__DASHBOARD_CTA_ON__\s*-->\n?/g;
+
+/**
+ * @param {string} html
+ * @param {boolean} isOn — true : on garde le contenu et on retire les marqueurs.
+ *                         false : on retire le bloc entier.
+ */
+function applyDashboardCta(html, isOn) {
+    return html.replace(CTA_BLOCK, (_match, inner) => (isOn ? inner : ''));
+}
+
 /**
  * Rendu d'une page de la vitrine, en deux étages de substitution :
  *
@@ -106,36 +130,45 @@ function dsUrls() {
  *     disque et met le résultat en cache pour la vie du process. C'est correct :
  *     la version du package.json ne bouge pas sans redéploiement, donc sans
  *     redémarrage. Aucune relecture disque par requête.
- *  2. __VNCT_CSS_URL__ / __VNCT_JS_URL__ / __QUASAR_MODE__ — appliqués ici, à
- *     CHAQUE requête, sur la chaîne déjà mise en cache. Indispensable pour les
- *     URLs du DS : leur ?v= change en cours de vie du process (polling), les
- *     mettre en cache figerait le cache-busting jusqu'au prochain redémarrage.
- *     Le mode, lui, est fixe ; il est substitué au même étage pour ne pas avoir
- *     à indexer le cache par (fichier, mode) — un replace de plus sur une chaîne
- *     déjà en mémoire est négligeable.
+ *  2. __VNCT_CSS_URL__ / __VNCT_JS_URL__ / __QUASAR_MODE__ / __DASHBOARD_CTA__ —
+ *     appliqués ici, à CHAQUE requête, sur la chaîne déjà mise en cache.
+ *     Indispensable pour les URLs du DS : leur ?v= change en cours de vie du
+ *     process (polling), les mettre en cache figerait le cache-busting jusqu'au
+ *     prochain redémarrage. Le mode et l'état du bouton, eux, sont fixes ; ils
+ *     sont substitués au même étage pour ne pas avoir à indexer le cache par
+ *     (fichier, mode, cta) — quelques replace de plus sur une chaîne déjà en
+ *     mémoire sont négligeables.
+ *  3. Blocs conditionnels __DASHBOARD_CTA_ON__ — voir applyDashboardCta().
  *
  * L'ordre compte : l'étage caché d'abord, l'étage volatil ensuite. L'inverse
  * ferait entrer les URLs du DS dans le cache de assetVersion.
  *
+ * @param {string} filePath
+ * @param {{mode: string, dashboardCta: 'on'|'off'}} context — état déjà tranché
+ *        par le serveur (cf. api/index.js). Le rendu ne décide de rien lui-même ;
+ *        un contexte absent retombe sur le défaut sûr : bouton fermé.
  * @returns {string|null} null si le fichier est illisible
  */
-function render(filePath, mode) {
+function render(filePath, { mode = '', dashboardCta = 'off' } = {}) {
     const base = assetVersion.render(filePath);
     if (base === null) return null;
 
     const { css, js } = dsUrls();
-    return base
+    return applyDashboardCta(base, dashboardCta === 'on')
         .replaceAll('__VNCT_CSS_URL__', css)
         .replaceAll('__VNCT_JS_URL__', js)
-        .replaceAll('__QUASAR_MODE__', mode);
+        .replaceAll('__QUASAR_MODE__', mode)
+        .replaceAll('__DASHBOARD_CTA__', dashboardCta);
 }
 
 /**
  * Envoie une page de la vitrine, tous placeholders substitués. Le code de statut
  * déjà posé sur la réponse est conservé (cf. la page « bientôt de retour », en 503).
+ *
+ * @param {{mode: string, dashboardCta: 'on'|'off'}} context
  */
-function send(res, filePath, mode) {
-    const content = render(filePath, mode);
+function send(res, filePath, context) {
+    const content = render(filePath, context);
     if (content === null) {
         return res.status(500).send('Erreur de lecture du fichier.');
     }
