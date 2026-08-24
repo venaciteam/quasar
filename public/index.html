@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__">
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -95,43 +95,26 @@
         .btn:active { transform:scale(0.96); }
 
         /* Appel à l'action principal.
-           Le rôle d'action principale n'est pas figé dans le HTML : il suit le mode
-           servi (attribut data-quasar-mode posé sur <html> par le serveur).
-           - mode `public` : l'instance publique est ouverte, c'est elle l'action
-             principale, le code source repasse en secondaire ;
-           - tout autre cas (`site`, `bot`, placeholder non substitué) : l'instance
-             n'est pas ouverte, le code source reste l'action principale. */
+           Le rôle d'action principale n'est pas figé dans le HTML : il suit l'état
+           du bouton dashboard, tranché par le serveur et posé sur <html> dans
+           l'attribut data-dashboard-cta.
+           - cta « on » : le bouton dashboard est proposé, c'est lui l'action
+             principale et le code source repasse en secondaire (deux boutons
+             accentués pleins côte à côte se disputeraient l'attention) ;
+           - tout autre cas (bouton fermé, mode `bot`/`site`, placeholder non
+             substitué) : le code source reste l'action principale, exactement
+             comme sur la vitrine d'origine.
+           La page ne recalcule rien à partir du mode : le serveur a déjà tranché
+           (cf. api/index.js, dashboardCtaState). */
         .btn-primary,
-        [data-quasar-mode="public"] .btn-instance,
-        html:not([data-quasar-mode="public"]) .btn-source { background:var(--accent); color:#fff; border-color:var(--accent); }
+        [data-dashboard-cta="on"] .btn-dashboard,
+        html:not([data-dashboard-cta="on"]) .btn-source { background:var(--accent); color:#fff; border-color:var(--accent); }
         .btn-primary:hover,
-        [data-quasar-mode="public"] .btn-instance:hover,
-        html:not([data-quasar-mode="public"]) .btn-source:hover { background:var(--accent); border-color:var(--accent); box-shadow:var(--neon-shadow-md); filter:brightness(0.9); }
+        [data-dashboard-cta="on"] .btn-dashboard:hover,
+        html:not([data-dashboard-cta="on"]) .btn-source:hover { background:var(--accent); border-color:var(--accent); box-shadow:var(--neon-shadow-md); filter:brightness(0.9); }
         .btn-primary:active,
-        [data-quasar-mode="public"] .btn-instance:active,
-        html:not([data-quasar-mode="public"]) .btn-source:active { filter:brightness(0.8); transform:scale(0.96); }
-
-        /* Bouton « Instance publique ».
-           Deux éléments distincts plutôt qu'un seul retouché en CSS : quand
-           l'instance est fermée, il ne doit être ni un lien ni un contrôle
-           focusable — un <a href> neutralisé au pointeur resterait activable au
-           clavier. Le bon élément est révélé par le mode, donc dès le premier octet
-           du HTML : pas de clignotement ni de saut de contenu, aucun JS impliqué.
-           En mode `bot` (vitrine non servie) ou si le placeholder n'a pas été
-           substitué, aucun des deux ne s'affiche : on n'en montre jamais deux. */
-        .btn-instance, .btn-instance-soon, .actions-hint { display:none; }
-        [data-quasar-mode="public"] .btn-instance { display:inline-flex; }
-        [data-quasar-mode="site"] .btn-instance-soon { display:inline-flex; }
-        [data-quasar-mode="site"] .actions-hint { display:block; }
-        /* État inactif : bordure tiretée + badge texte, pour que l'indisponibilité
-           reste lisible sans dépendre de la couleur seule. */
-        .btn-instance-soon { cursor:default; color:var(--text-muted); border-style:dashed; }
-        .btn-instance-soon:hover { background:transparent; border-color:var(--border); }
-        .btn-instance-soon:active { transform:none; }
-        .btn-badge { font-size:.68rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:.15rem .45rem; border-radius:999px; color:var(--accent); background:hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.12); border:1px solid hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.25); }
-        /* flex-basis:100% : la phrase passe seule sous la rangée de boutons, sans
-           casser le flex-wrap déjà en place sur mobile. */
-        .actions-hint { flex-basis:100%; text-align:center; font-size:.78rem; color:var(--text-muted); }
+        [data-dashboard-cta="on"] .btn-dashboard:active,
+        html:not([data-dashboard-cta="on"]) .btn-source:active { filter:brightness(0.8); transform:scale(0.96); }
 
         /* Features grid */
         .features { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; max-width:740px; width:100%; margin:2.5rem 0; }
@@ -331,32 +314,28 @@
             <p class="install-hint">Une commande, et Quasar tourne chez toi. Docker suffit — même sur un Raspberry Pi.</p>
         </div>
 
-        <!-- L'ordre du DOM porte la hiérarchie : l'instance publique ouverte passe
-             avant le code source, sa version fermée passe après. Aucune règle
-             d'ordonnancement CSS n'est donc nécessaire. -->
         <div class="actions">
-            <!-- Instance publique ouverte (mode `public`) : le dashboard est servi
-                 par ce site même, sur /dashboard — plus de domaine séparé. -->
-            <a href="/dashboard" class="btn btn-instance">
+            <!-- __DASHBOARD_CTA_ON__ -->
+            <!-- Bouton d'accès au dashboard de l'instance publique.
+                 Sa présence est décidée par le serveur (PUBLIC_INSTANCE_OPEN ET
+                 mode `public`, cf. api/index.js) : quand le bouton est fermé, tout
+                 ce bloc — commentaire compris — est retiré du HTML servi, et la
+                 rangée redevient exactement celle d'avant l'ouverture : code
+                 source en action principale, guide d'installation en secondaire.
+                 Le dashboard, lui, reste joignable en direct sur /dashboard : ce
+                 bouton ne conditionne que son affichage ici. -->
+            <a href="/dashboard" class="btn btn-dashboard">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-                Instance publique
+                Accéder au dashboard
             </a>
+            <!-- /__DASHBOARD_CTA_ON__ -->
             <a href="https://github.com/venaciteam/quasar" class="btn btn-source" target="_blank" rel="noopener">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                 Voir le code source
             </a>
-            <!-- Instance publique fermée (mode `site`) : élément non interactif et
-                 hors du parcours clavier, exposé comme un lien désactivé. Le badge
-                 porte l'état en toutes lettres, la phrase ci-dessous l'explique. -->
-            <span class="btn btn-instance-soon" role="link" aria-disabled="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-                Instance publique
-                <span class="btn-badge">Bientôt</span>
-            </span>
             <a href="https://github.com/venaciteam/quasar#-quick-start" class="btn" target="_blank" rel="noopener">
                 Guide d'installation
             </a>
-            <p class="actions-hint">L'instance publique hébergée par Venacity rouvrira ici, une fois sa mise en conformité terminée.</p>
         </div>
 
         <!-- Privacy banner -->

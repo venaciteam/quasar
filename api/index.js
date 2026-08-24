@@ -92,6 +92,52 @@ function mountFeedbackRelay(app) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  Ouverture de l'instance publique — volontairement DÉCOUPLÉE du mode
+//
+//  PUBLIC_INSTANCE_OPEN ne décide QUE d'une chose : proposer ou non, aux
+//  visiteurs de la vitrine, le bouton d'accès au dashboard. Elle ne conditionne
+//  ni le démarrage du bot, ni le montage des routes, ni l'accessibilité réelle
+//  de /dashboard — qui reste joignable en direct partout où le dashboard est
+//  monté, bouton affiché ou non.
+//
+//  Pourquoi une variable dédiée : la v4.1.0 pilotait ce bouton avec QUASAR_MODE,
+//  ce qui liait deux choses indépendantes. Une instance dont le bot tourne en
+//  permanence a besoin du mode `public`, mais peut ne pas vouloir encore ouvrir
+//  le dashboard aux visiteurs (mise en conformité en cours). Cette combinaison
+//  — vitrine + bot qui tourne + bouton éteint — n'existait pas. Ne pas
+//  recoupler les deux.
+//
+//  Défaut sûr : fermé. Seule la chaîne "true" (casse et espaces indifférents)
+//  ouvre le bouton ; toute autre valeur ("1", "oui", vide, absente) le laisse
+//  fermé. On ne devine jamais une intention d'ouverture.
+// ═══════════════════════════════════════════════════════════════
+
+function isPublicInstanceOpen() {
+    return (process.env.PUBLIC_INSTANCE_OPEN || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * État du bouton d'accès au dashboard, tranché ici et injecté tel quel dans la
+ * page (placeholder __DASHBOARD_CTA__). Deux conditions, toutes deux nécessaires :
+ *  - le dashboard est réellement servi (mode `public`) : en mode `site` il
+ *    n'existe pas, et un bouton menant à la page « bientôt de retour » serait un
+ *    piège à clic ;
+ *  - l'instance publique est déclarée ouverte (PUBLIC_INSTANCE_OPEN).
+ * La page ne recalcule rien à partir du mode : elle reçoit 'on' ou 'off'.
+ *
+ * @param {'bot'|'site'|'public'} mode
+ * @returns {'on'|'off'}
+ */
+function dashboardCtaState(mode) {
+    return mode === 'public' && isPublicInstanceOpen() ? 'on' : 'off';
+}
+
+/** Contexte de rendu d'une page de la vitrine (cf. services/vnctDs.js). */
+function vitrineContext(mode) {
+    return { mode, dashboardCta: dashboardCtaState(mode) };
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  Vitrine publique (public/) — modes `site` et `public` uniquement
 // ═══════════════════════════════════════════════════════════════
 
@@ -100,7 +146,7 @@ function mountVitrine(app, mode) {
     // en mode `bot` (auto-hébergement), aucun appel sortant n'est ajouté.
     vnctDs.startVersionPolling();
 
-    app.get('/', (req, res) => vnctDs.send(res, path.join(PUBLIC_DIR, 'index.html'), mode));
+    app.get('/', (req, res) => vnctDs.send(res, path.join(PUBLIC_DIR, 'index.html'), vitrineContext(mode)));
 
     // Garde-fou : toute requête GET/HEAD vers un *.html de public/ passe par le
     // rendu, quelle que soit la route. Empêche express.static de livrer un HTML
@@ -111,7 +157,7 @@ function mountVitrine(app, mode) {
         const filePath = path.join(PUBLIC_DIR, path.normalize(req.path));
         // Traversée de chemin : tout ce qui sort de public/ est refusé au rendu.
         if (!filePath.startsWith(PUBLIC_DIR + path.sep) || !fs.existsSync(filePath)) return next();
-        return vnctDs.send(res, filePath, mode);
+        return vnctDs.send(res, filePath, vitrineContext(mode));
     });
 
     // index:false pour ne pas court-circuiter la route '/' ci-dessus. Les pages
@@ -264,7 +310,7 @@ function createSiteApi(mode) {
         // 503 et non 404 : la ressource existe, elle est temporairement fermée.
         // vnctDs.send conserve le statut déjà posé sur la réponse.
         res.status(503);
-        vnctDs.send(res, SOON_PAGE, mode);
+        vnctDs.send(res, SOON_PAGE, vitrineContext(mode));
     });
 
     mountVitrine(app, mode);
