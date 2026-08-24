@@ -3,7 +3,7 @@
 ## v0.1.0 — Release publique ✅
 
 - [x] Repo GitHub public
-- [x] One-liner install : `curl -sSL https://raw.githubusercontent.com/venaciteam/quasar-discord/main/install.sh | bash`
+- [x] One-liner install : `curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash`
 - [x] Landing page avec compteur d'instances
 - [x] Dashboard accessible sur le reseau local
 - [ ] Tests sur Raspberry Pi 4
