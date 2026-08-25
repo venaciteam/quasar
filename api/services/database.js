@@ -6,6 +6,26 @@ const DB_PATH = path.join(__dirname, '..', '..', 'data', 'quasar.db');
 // --- Intervalle de checkpoint WAL (5 minutes) ---
 const CHECKPOINT_INTERVAL = 5 * 60 * 1000;
 
+// Valeurs autorisées de custom_commands.access_mode. Définies ici, à côté du
+// schéma, parce que trois consommateurs en ont besoin (le bot à l'exécution, la
+// commande /cmd et l'API du dashboard) : les recopier ferait diverger la liste
+// blanche de validation et le domaine réel de la colonne.
+const CUSTOM_CMD_ACCESS_MODES = ['everyone', 'admins', 'role'];
+const CUSTOM_CMD_ACCESS_DEFAULT = 'everyone';
+// Mode réellement appliqué pour une valeur lue en base. Deux cas très
+// différents, à ne pas confondre :
+//   valeur absente ou vide → ligne antérieure à la migration : 'everyone',
+//     le comportement historique, aucune régression.
+//   valeur non reconnue    → donnée anormale (base éditée à la main, retour
+//     arrière de version) : 'admins', le plus restrictif des trois. On ne lève
+//     jamais une restriction sur une valeur qu'on ne comprend pas.
+// Le bot (exécution) et l'API (affichage) partagent cette fonction pour ne pas
+// pouvoir diverger ; le dashboard en reproduit la règle côté navigateur.
+function effectiveAccessMode(stored) {
+    if (stored === null || stored === undefined || stored === '') return CUSTOM_CMD_ACCESS_DEFAULT;
+    return CUSTOM_CMD_ACCESS_MODES.includes(stored) ? stored : 'admins';
+}
+
 let db;
 let checkpointTimer = null;
 
@@ -23,6 +43,7 @@ function getDb() {
         migrateGuildsTimezone();
         migrateScheduledDays();
         migrateEmbedsMentions();
+        migrateCustomCommandsAccess();
         migrateDropTranscripts();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
@@ -155,6 +176,19 @@ function initTables() {
         );
 
         -- Commandes custom
+        --
+        -- access_mode / access_role_id : qui a le droit de lancer la commande.
+        --   'everyone' (défaut, comportement historique) | 'admins' | 'role'
+        -- Ce contrôle est ce qui rend acceptable le fait que les commandes custom
+        -- rejouent les mentions de leur embed (@everyone compris) : sans lui,
+        -- n'importe quel membre pourrait déclencher un ping de masse à volonté.
+        --
+        -- allowed_roles / allowed_channels sont des colonnes historiques jamais
+        -- lues ni écrites nulle part. Elles sont conservées telles quelles (les
+        -- retirer imposerait une reconstruction de table pour zéro bénéfice) mais
+        -- ne participent PAS au contrôle d'accès : une liste de rôles ne peut pas
+        -- exprimer trois modes exclusifs (une liste vide serait ambiguë entre
+        -- « tout le monde » et « personne »).
         CREATE TABLE IF NOT EXISTS custom_commands (
             guild_id TEXT NOT NULL,
             name TEXT NOT NULL,
@@ -162,6 +196,8 @@ function initTables() {
             embed_id INTEGER,
             allowed_roles TEXT DEFAULT '[]',
             allowed_channels TEXT DEFAULT '[]',
+            access_mode TEXT NOT NULL DEFAULT 'everyone',
+            access_role_id TEXT,
             PRIMARY KEY (guild_id, name),
             FOREIGN KEY (guild_id) REFERENCES guilds(guild_id),
             FOREIGN KEY (embed_id) REFERENCES embeds(id)
@@ -403,6 +439,43 @@ function migrateEmbedsMentions() {
     }
 }
 
+// Migration : ajout des colonnes de contrôle d'accès à `custom_commands`.
+//
+// Les commandes personnalisées appliquent désormais les mentions de leur embed
+// (cf. bot/index.js). Pour que ça reste sûr, chaque commande porte un mode
+// d'accès : 'everyone' | 'admins' | 'role'.
+//
+// 'everyone' est la valeur par défaut ET le comportement historique : toutes les
+// commandes déjà en base se retrouvent dans ce mode, sans changement pour elles.
+// Idempotente.
+function migrateCustomCommandsAccess() {
+    try {
+        const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='custom_commands'").get();
+        if (!tbl) return; // table pas encore créée (cas d'un boot frais)
+        const cols = db.pragma('table_info(custom_commands)').map(c => c.name);
+        const columns = [
+            ['access_mode', "TEXT NOT NULL DEFAULT 'everyone'"],
+            ['access_role_id', 'TEXT']
+        ];
+        for (const [name, definition] of columns) {
+            if (cols.includes(name)) continue;
+            db.exec(`ALTER TABLE custom_commands ADD COLUMN ${name} ${definition}`);
+            console.log(`[Quasar] Migration: custom_commands + ${name}`);
+        }
+        // Filet : une ligne dont le mode serait NULL ou vide (base bricolée à la
+        // main, ALTER interrompu) retombe explicitement sur le comportement
+        // historique plutôt que de rester dans un état indéfini.
+        const fixed = db.prepare(
+            "UPDATE custom_commands SET access_mode = 'everyone' WHERE access_mode IS NULL OR access_mode = ''"
+        ).run();
+        if (fixed.changes > 0) {
+            console.log(`[Quasar] Migration: ${fixed.changes} commande(s) custom repassée(s) en accès 'everyone'`);
+        }
+    } catch (e) {
+        console.error('[Quasar] Erreur migration custom_commands access:', e.message);
+    }
+}
+
 // Migration : ajout de la colonne `timezone` à `guilds` (default 'Europe/Paris').
 // Idempotente.
 function migrateGuildsTimezone() {
@@ -545,4 +618,4 @@ function migrateAtomToQuasar() {
     }
 }
 
-module.exports = { getDb };
+module.exports = { getDb, CUSTOM_CMD_ACCESS_MODES, CUSTOM_CMD_ACCESS_DEFAULT, effectiveAccessMode };
