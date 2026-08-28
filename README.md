@@ -34,14 +34,14 @@
 ### Installation en une commande
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/venaciteam/quasar-discord/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash
 ```
 
 Ou manuellement :
 
 ```bash
-git clone https://github.com/venaciteam/quasar-discord.git
-cd quasar-discord
+git clone https://github.com/venaciteam/quasar.git
+cd quasar
 ./setup.sh
 ```
 
@@ -55,8 +55,8 @@ Le script te guide : il demande tes identifiants Discord, crée le `.env`, le vo
 #### 1. Cloner le repo
 
 ```bash
-git clone https://github.com/venaciteam/quasar-discord.git
-cd quasar-discord
+git clone https://github.com/venaciteam/quasar.git
+cd quasar
 ```
 
 #### 2. Configurer
@@ -151,7 +151,7 @@ Le dashboard génère aussi cette URL pour toi, une fois le bot lancé.
 Quasar tourne confortablement sur un **Raspberry Pi 4** (2 Go minimum). La stack est légère : Node.js + SQLite, pas de base de données externe.
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/venaciteam/quasar-discord/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash
 ```
 
 > **Note :** Le build initial peut prendre quelques minutes sur Pi (compilation des modules natifs comme `better-sqlite3` et `sodium-native`).
@@ -259,6 +259,8 @@ Le système supporte les deux modes de déploiement :
 - **Docker** : git pull + rebuild image + restart container
 - **Natif** : git pull + npm ci + restart process
 
+> **Instances installées avant le renommage du dépôt** — le dépôt s'appelait `venaciteam/quasar-discord`. GitHub redirige les opérations `git` et les liens vers le nouveau nom : les instances existantes continuent de se mettre à jour sans rien faire. Pour aligner ton clone malgré tout : `git remote set-url origin https://github.com/venaciteam/quasar.git`.
+
 ---
 
 ## 🏗️ Stack
@@ -275,7 +277,7 @@ Le système supporte les deux modes de déploiement :
 ## 📂 Structure du projet
 
 ```
-quasar-discord/
+quasar/
 ├── index.js              # Point d'entrée
 ├── setup.sh              # Script d'installation
 ├── bot/
@@ -293,6 +295,7 @@ quasar-discord/
 │   ├── app.html          # Dashboard SPA
 │   ├── js/               # Frontend logic
 │   └── css/              # Styles
+├── public/               # Vitrine publique du projet
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -300,6 +303,16 @@ quasar-discord/
 ├── NOTICE                # Noms et marques (non couverts par la licence)
 └── data/                 # Volume Docker (SQLite)
 ```
+
+Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique du projet (`public/`) — les deux vivaient auparavant dans deux dépôts séparés. Ce qu'un déploiement sert dépend de la variable `QUASAR_MODE` :
+
+- `bot` (défaut) — bot Discord + dashboard, le cas de l'auto-hébergement ;
+- `site` — vitrine seule, sans bot ni base de données ;
+- `public` — instance publique : bot, dashboard et vitrine.
+
+Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. L'affichage du bouton « Accéder au dashboard » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même.
+
+Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre en mode `bot`.
 
 ---
 

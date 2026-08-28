@@ -1,11 +1,125 @@
-const { Client, GatewayIntentBits, Collection, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Collection, Partials, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { getDb } = require('../api/services/database');
+const { getDb, effectiveAccessMode } = require('../api/services/database');
+const { buildMentionPayload } = require('../api/services/mentions');
 const { deployCommands } = require('./utils/deploy-commands');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
-const { reportIncident } = require('./utils/errors');
+const { reportIncident, userError } = require('./utils/errors');
 const { isSuspended } = require('./utils/suspension');
+
+// ═══════════════════════════════════════════════════════════════
+//  Commandes personnalisées — contrôle d'accès
+//
+//  Une commande custom est déclenchable à volonté par n'importe qui, et elle
+//  rejoue désormais les mentions de son embed (@everyone compris) comme celles
+//  écrites dans sa réponse texte. C'est ce contrôle d'accès, et lui seul, qui
+//  empêche que `/faq` devienne un bouton « pinger tout le serveur » à
+//  disposition de tous. Il est donc appliqué côté bot, à l'exécution — jamais
+//  uniquement dans l'interface du dashboard.
+//
+//  Trois modes exclusifs, portés par la ligne `custom_commands` :
+//    'everyone' → tout le monde (défaut, et comportement historique)
+//    'admins'   → permission Administrateur de Discord, la même notion que
+//                 celle utilisée par /log, /unlog et le middleware
+//                 requireGuildAdmin du dashboard
+//    'role'     → les porteurs d'un rôle précis (access_role_id)
+//
+//  Dans tous les modes, un administrateur du serveur passe (cf. le
+//  contournement dans checkCustomCommandAccess) : « réservée au rôle X »
+//  signifie donc en pratique « rôle X ou administrateur ».
+// ═══════════════════════════════════════════════════════════════
+
+// Un membre peut arriver en objet discord.js (roles = gestionnaire avec cache)
+// ou en membre brut de l'API (roles = tableau d'IDs). Les deux sont gérés.
+function memberHasRole(member, roleId) {
+    const roles = member?.roles;
+    if (!roles) return false;
+    if (Array.isArray(roles)) return roles.includes(roleId);
+    return !!roles.cache?.has(roleId);
+}
+
+// Permission Administrateur du membre à l'origine de l'interaction. discord.js
+// l'expose soit sur l'interaction, soit sur le membre ; si aucun jeu de
+// permissions exploitable n'est disponible, on répond « non » plutôt que de
+// transformer un « je ne sais pas » en droit accordé.
+function memberIsAdministrator(interaction) {
+    const perms = interaction.memberPermissions || interaction.member?.permissions;
+    return typeof perms?.has === 'function' && perms.has(PermissionFlagsBits.Administrator);
+}
+
+/**
+ * @returns {null|{title:string,cause:string,action:string}} null = accès accordé,
+ *          sinon le refus à afficher en éphémère.
+ */
+function checkCustomCommandAccess(interaction, row) {
+    // Repli sur le plus restrictif si la valeur en base n'est pas reconnue
+    // (cf. effectiveAccessMode). On le journalise : c'est le signe d'une base
+    // incohérente, et la commande devient inaccessible aux non-administrateurs.
+    const mode = effectiveAccessMode(row.access_mode);
+    if (row.access_mode && mode !== row.access_mode) {
+        console.warn(`[Quasar] Commande custom /${row.name} : mode d'accès inconnu "${row.access_mode}" — repli sur "${mode}".`);
+    }
+
+    if (mode === 'everyone') return null;
+
+    // Hors serveur (message privé) il n'y a ni membre ni rôle : rien n'est
+    // vérifiable, donc rien n'est accordé. En pratique les commandes custom sont
+    // déployées par serveur et n'arrivent jamais en MP, mais on ne s'appuie pas
+    // sur cette hypothèse pour décider d'un droit.
+    if (!interaction.guild || !interaction.member) {
+        return {
+            title: 'Commande réservée au serveur',
+            cause: 'L\'accès à cette commande dépend de tes rôles ou de tes permissions, et je n\'arrive pas à les consulter ici.',
+            action: 'Relance-la depuis un salon du serveur concerné. Si tu y es déjà, réessaie dans un instant.',
+        };
+    }
+
+    // Contournement administrateur — appliqué à TOUS les modes, et AVANT leur
+    // évaluation. Ce n'est pas un trou de sécurité, c'est ce qui rend le réglage
+    // réparable :
+    //   1. on ne s'enferme pas dehors de sa propre commande (configurer un mode
+    //      « rôle » sans s'être attribué ce rôle est l'erreur la plus courante) ;
+    //   2. une configuration cassée — rôle supprimé du serveur, mode inconnu en
+    //      base — resterait sinon bloquée pour tout le monde, y compris pour les
+    //      seules personnes capables de la corriger.
+    // Un administrateur peut de toute façon s'attribuer n'importe quel rôle :
+    // la restriction ne lui interdisait rien, elle ne faisait que le gêner.
+    if (memberIsAdministrator(interaction)) return null;
+
+    if (mode === 'admins') {
+        return {
+            title: 'Commande réservée aux administrateurs',
+            cause: 'Cette commande personnalisée est configurée pour les membres ayant la permission « Administrateur » sur ce serveur.',
+            action: 'Demande à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
+        };
+    }
+
+    // mode === 'role'
+    const roleId = row.access_role_id;
+
+    // Rôle configuré puis supprimé du serveur : plus personne ne peut le porter.
+    // On refuse (retomber sur « tout le monde » ouvrirait en grand une commande
+    // volontairement restreinte) et on le dit clairement, pour que la personne
+    // puisse le signaler plutôt que de croire à un bug. Les administrateurs, eux,
+    // sont déjà passés plus haut : ils peuvent utiliser la commande et surtout la
+    // reconfigurer.
+    if (!roleId || !interaction.guild.roles.cache.has(roleId)) {
+        return {
+            title: 'Commande momentanément indisponible',
+            cause: 'Cette commande est réservée à un rôle qui n\'existe plus sur le serveur : en dehors des administrateurs, personne ne peut donc l\'utiliser pour l\'instant.',
+            action: 'Signale-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
+        };
+    }
+
+    if (memberHasRole(interaction.member, roleId)) return null;
+
+    return {
+        title: 'Commande réservée à un rôle',
+        cause: `Cette commande personnalisée est réservée aux membres ayant le rôle <@&${roleId}>, ainsi qu'aux administrateurs du serveur.`,
+        action: 'Si tu penses que ce rôle devrait t\'être attribué, demande-le à un administrateur.',
+    };
+}
 
 function createBot() {
     const client = new Client({
@@ -156,22 +270,47 @@ function createBot() {
 
         if (!command) {
             // Vérifier si c'est une commande custom
-            const { getDb } = require('../api/services/database');
+            // SELECT * : la ligne porte déjà access_mode / access_role_id, le
+            // contrôle d'accès ne coûte donc aucune requête supplémentaire.
             const db = getDb();
             const customCmd = db.prepare('SELECT * FROM custom_commands WHERE guild_id = ? AND name = ?')
                 .get(interaction.guild?.id, interaction.commandName);
 
             if (customCmd) {
                 try {
+                    // Contrôle d'accès AVANT toute réponse : un refus est éphémère,
+                    // rien n'est jamais posté dans le salon.
+                    const refus = checkCustomCommandAccess(interaction, customCmd);
+                    if (refus) return userError(interaction, refus);
+
                     if (customCmd.embed_id) {
-                        const embedRow = db.prepare('SELECT data FROM embeds WHERE id = ?').get(customCmd.embed_id);
+                        const embedRow = db.prepare(
+                            'SELECT data, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE id = ?'
+                        ).get(customCmd.embed_id);
                         if (embedRow) {
                             const { buildDiscordEmbed } = require('./commands/embed');
                             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
-                            return interaction.reply({ embeds: [embed] });
+                            // Mentions de l'embed appliquées à l'identique de
+                            // `/embed send` et des rappels programmés : même helper,
+                            // même payload à configuration égale. C'est le contrôle
+                            // d'accès ci-dessus qui protège de l'abus.
+                            const { content, allowedMentions } = buildMentionPayload(embedRow);
+                            const payload = { embeds: [embed], allowedMentions };
+                            if (content) payload.content = content;
+                            return interaction.reply(payload);
                         }
                     }
                     if (customCmd.response) {
+                        // Réponse texte : volontairement SANS allowedMentions, à
+                        // l'inverse du chemin embed juste au-dessus. Ce qui est
+                        // écrit dans la réponse doit pinger normalement (@everyone,
+                        // rôles, membres) — c'est le comportement d'origine, et le
+                        // contrôle d'accès ci-dessus limite déjà qui peut déclencher
+                        // la commande.
+                        // Les deux chemins divergent délibérément : l'embed rejoue
+                        // strictement les mentions cochées sur lui (parse: [] + listes
+                        // explicites), le texte laisse Discord analyser son contenu.
+                        // Ne pas les « harmoniser ».
                         return interaction.reply({ content: customCmd.response });
                     }
                 } catch (err) {

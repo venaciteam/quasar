@@ -31,19 +31,16 @@ module.exports = {
             await reaction.users.remove(user.id);
         } catch {} // May lack MANAGE_MESSAGES permission
 
+        // Aucun retour n'est envoyé dans le salon, volontairement : un message de
+        // confirmation ordinaire notifie tout le salon à chaque bascule de rôle
+        // (et le supprimer après quelques secondes n'annule pas la notification).
+        // Le retrait de la réaction ci-dessus fait office d'accusé de réception.
         try {
             const hasRole = member.roles.cache.has(entry.role_id);
 
             if (hasRole) {
                 // Retirer le rôle
                 await member.roles.remove(entry.role_id);
-
-                // Confirmation temporaire
-                const msg = await reaction.message.channel.send({
-                    content: `${emoji} <@${user.id}> — rôle **retiré** ✅`
-                }).catch(() => null);
-                if (msg) setTimeout(() => msg.delete().catch(() => {}), 4000);
-
             } else {
                 // Mode unique : retirer les autres rôles du panel d'abord
                 if (panel.mode === 'unique') {
@@ -57,15 +54,11 @@ module.exports = {
 
                 // Donner le rôle
                 await member.roles.add(entry.role_id);
-
-                // Confirmation temporaire
-                const msg = await reaction.message.channel.send({
-                    content: `${emoji} <@${user.id}> — rôle **ajouté** ✅`
-                }).catch(() => null);
-                if (msg) setTimeout(() => msg.delete().catch(() => {}), 4000);
             }
         } catch (e) {
-            console.error('[Quasar] Erreur toggle rôle réaction:', e.message);
+            // Échec silencieux côté membre (pas de message dans le salon) : le log
+            // serveur est le seul canal de diagnostic, il doit être exploitable.
+            console.error(`[Quasar] Erreur toggle rôle réaction (guild ${guild.id}, panel ${panel.id}, rôle ${entry.role_id}, membre ${user.id}):`, e.message);
         }
     }
 };

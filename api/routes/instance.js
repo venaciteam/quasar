@@ -4,7 +4,7 @@ const router = express.Router();
 // Dépôt de référence. Un auto-hébergeur qui modifie le code doit pointer SON dépôt
 // via INSTANCE_SOURCE_URL : l'AGPL-3.0 (article 13) impose de proposer le code source
 // de la version réellement exécutée aux personnes qui utilisent le dashboard à distance.
-const DEFAULT_SOURCE_URL = 'https://github.com/venaciteam/quasar-discord';
+const DEFAULT_SOURCE_URL = 'https://github.com/venaciteam/quasar';
 
 // N'accepter que des URL http(s) : évite qu'une valeur mal saisie (ou un `javascript:`)
 // se retrouve dans un href du dashboard.
