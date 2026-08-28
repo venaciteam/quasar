@@ -16,9 +16,9 @@ const { getDb } = require('./database');
 const CONTRACT_VERSION = '1.0';
 
 // URL publique du texte complet du contrat, affichée sur l'écran d'acceptation.
-// PLACEHOLDER : le contrat sera publié sur Strata (site légal public) au sous-lot G,
-// et cette constante devra pointer vers l'URL réelle à ce moment-là.
-const CONTRACT_PUBLIC_URL = 'https://strata.vena.city/contrat-sous-traitance-quasar';
+// Publié sur Strata (site légal public), au même titre que les CGU et la politique
+// de confidentialité. Doit rester alignée sur le slug de l'article Strata.
+const CONTRACT_PUBLIC_URL = 'https://strata.vena.city/contrat-quasar';
 
 // Points clés du contrat, fidèles au texte v1.0, pour l'écran d'acceptation.
 // Résumé informatif : le lien vers le texte intégral (CONTRACT_PUBLIC_URL) reste
