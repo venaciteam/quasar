@@ -616,6 +616,15 @@
     margin-top: var(--space-2);
 }
 
+/* Rupture visuelle avant une section qui ne configure pas un serveur mais
+   l'instance elle-meme (Systeme). Sans ce trait, elle se confond avec la liste
+   des modules qui la precede, d'autant qu'elle defile desormais avec eux. */
+.sidebar-section--sep {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-default);
+}
+
 .sidebar-link {
     display: flex;
     align-items: center;
