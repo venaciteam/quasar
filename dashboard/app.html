@@ -78,6 +78,9 @@
                 <button class="sidebar-link" data-page="scheduled">
                     <span class="sidebar-link-icon">⏰</span> Rappels
                 </button>
+                <button class="sidebar-link" data-page="erasure">
+                    <span class="sidebar-link-icon">⚖️</span> Droits des personnes
+                </button>
                 <!-- Musique désactivée (YouTube/Google bloquent la lecture) — réactiver en décommentant
                 <button class="sidebar-link" data-page="music">
                     <span class="sidebar-link-icon">🎵</span> Musique
@@ -88,6 +91,14 @@
             <div class="sidebar-section">Système</div>
                 <button class="sidebar-link" data-page="update" id="sidebar-update">
                     <span class="sidebar-link-icon">⬆</span> Mise à jour
+                </button>
+                <!-- Entrées réservées à la propriétaire de l'instance (owner-only) :
+                     cachées par défaut, révélées par app.js si /api/presence renvoie isOwner. -->
+                <button class="sidebar-link" data-page="owner" id="sidebar-owner" style="display:none">
+                    <span class="sidebar-link-icon">🛡️</span> Instance
+                </button>
+                <button class="sidebar-link" data-page="breach" id="sidebar-breach" style="display:none">
+                    <span class="sidebar-link-icon">🚨</span> Notification de violation
                 </button>
 
             <div class="sidebar-footer">
@@ -162,6 +173,10 @@
     <script src="/dashboard/js/pages/tickets.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/scheduled.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/update.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/erasure.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/breach.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/owner.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/contractGate.js?v=__VERSION__"></script>
     <script src="/dashboard/js/app.js?v=__VERSION__"></script>
     <script>
         if ('serviceWorker' in navigator) {

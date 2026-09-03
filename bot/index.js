@@ -6,6 +6,7 @@ const { buildMentionPayload } = require('../api/services/mentions');
 const { deployCommands } = require('./utils/deploy-commands');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
 const { reportIncident, userError } = require('./utils/errors');
+const { isSuspended } = require('./utils/suspension');
 
 // ═══════════════════════════════════════════════════════════════
 //  Commandes personnalisées — contrôle d'accès
@@ -187,6 +188,21 @@ function createBot() {
     setInterval(() => autocompleteLimits.clear(), AC_WINDOW);
 
     client.on('interactionCreate', async (interaction) => {
+        // Enforcement de la suspension (coupure ciblée, sous-lot E) : sur un serveur
+        // suspendu par la propriétaire, Quasar ne répond plus à aucune interaction.
+        // En tête du handler, avant l'autocomplétion et tout dispatch. Ne concerne
+        // pas les DM (pas de interaction.guild).
+        if (interaction.guild && isSuspended(interaction.guild.id)) {
+            if (interaction.isAutocomplete && interaction.isAutocomplete()) return; // pas de reply possible
+            try {
+                await interaction.reply({
+                    content: 'Quasar est temporairement suspendu sur ce serveur par la proprietaire de l\'instance.',
+                    ephemeral: true,
+                });
+            } catch {}
+            return;
+        }
+
         // Autocomplétion (avec rate limit)
         if (interaction.isAutocomplete()) {
             const key = interaction.user.id;
@@ -233,6 +249,16 @@ function createBot() {
                     await handleReportModal(interaction);
                 } catch (e) {
                     reportIncident(interaction, e, { command: `formulaire ${interaction.customId}` });
+                }
+                return;
+            }
+
+            if (interaction.customId.startsWith('mesdonnees_')) {
+                try {
+                    const { handleMesDonneesButton } = require('./commands/mesdonnees');
+                    await handleMesDonneesButton(interaction);
+                } catch (e) {
+                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
                 }
                 return;
             }
@@ -417,6 +443,22 @@ function createBot() {
             retention.start(client);
         } catch (e) {
             console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
+        }
+
+        // Notification de violation (art. 33) — Boucle qui dépile et envoie les
+        // notifications enfilées depuis le dashboard owner.
+        try {
+            require('./modules/breach').start(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage notification de violation:', e.message || e);
+        }
+
+        // Effacement (art. 17) — Boucle de suivi des demandes de suppression
+        // (échéances légales, alertes owner).
+        try {
+            require('./modules/erasure').start(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
         }
     });
 

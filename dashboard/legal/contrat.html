@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contrat de sous-traitance — Instance Quasar (Venacity)</title>
+    <meta name="robots" content="noindex">
+    <link rel="icon" type="image/x-icon" href="/dashboard/icon.ico">
+    <link rel="icon" type="image/png" href="/dashboard/icon.png">
+    <!-- Bootstrap thème AVANT le CSS pour éviter le flash. On réutilise la même
+         préférence que le dashboard (clé localStorage 'vnct_theme', repli cookie
+         'theme', sinon préférence système). L'accent reste 'rose' (fixe). -->
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('vnct_theme');
+                if (t !== 'light' && t !== 'dark') {
+                    var m = document.cookie.match(/(?:^|;\s*)theme=(light|dark)/);
+                    if (m) t = m[1];
+                }
+                if (t !== 'light' && t !== 'dark') {
+                    t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+                }
+                document.documentElement.setAttribute('data-theme', t);
+                document.documentElement.setAttribute('data-accent', 'rose');
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                document.documentElement.setAttribute('data-accent', 'rose');
+            }
+        })();
+    </script>
+    <link rel="stylesheet" href="/dashboard/css/vnct-design-system.css">
+    <style>
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .legal-wrap {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: var(--space-8) var(--space-5) var(--space-16);
+        }
+        .legal-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: var(--space-4);
+            margin-bottom: var(--space-8);
+            flex-wrap: wrap;
+        }
+        .legal-brand {
+            font-size: var(--text-lg);
+            font-weight: var(--font-bold);
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+        .legal-brand span { color: var(--accent); }
+        .legal-theme-toggle {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--border-default);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: var(--text-base);
+            transition: all var(--duration-fast) ease;
+        }
+        .legal-theme-toggle:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+        .legal-header {
+            border-bottom: 1px solid var(--border-default);
+            padding-bottom: var(--space-6);
+            margin-bottom: var(--space-8);
+        }
+        .legal-header h1 {
+            font-size: var(--text-2xl);
+            line-height: var(--leading-tight);
+            margin-bottom: var(--space-4);
+        }
+        .legal-meta {
+            display: flex;
+            gap: var(--space-2);
+            flex-wrap: wrap;
+        }
+        .legal-badge {
+            font-size: var(--text-xs);
+            font-weight: var(--font-medium);
+            padding: var(--space-1) var(--space-3);
+            border-radius: var(--radius-full);
+            background: hsla(var(--accent-h), var(--accent-s), 60%, 0.12);
+            color: var(--accent);
+            border: 1px solid hsla(var(--accent-h), var(--accent-s), 60%, 0.25);
+        }
+        .legal-badge--muted {
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            border-color: var(--border-default);
+        }
+
+        .legal-wrap h2 {
+            font-size: var(--text-xl);
+            margin-top: var(--space-10);
+            margin-bottom: var(--space-4);
+            padding-top: var(--space-4);
+            border-top: 1px solid var(--border-default);
+            scroll-margin-top: var(--space-6);
+        }
+        .legal-wrap h3 {
+            font-size: var(--text-lg);
+            margin-top: var(--space-6);
+            margin-bottom: var(--space-3);
+            color: var(--text-primary);
+        }
+        .legal-wrap p {
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
+            margin-bottom: var(--space-4);
+            font-size: var(--text-base);
+        }
+        .legal-wrap ul {
+            margin: 0 0 var(--space-4);
+            padding-left: var(--space-6);
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
+        }
+        .legal-wrap ol {
+            margin: 0 0 var(--space-4);
+            padding-left: var(--space-6);
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
+        }
+        .legal-wrap li { margin-bottom: var(--space-2); }
+        .legal-wrap strong { color: var(--text-primary); font-weight: var(--font-semibold); }
+        .legal-wrap a { color: var(--accent); }
+        .legal-wrap code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.9em;
+            background: var(--bg-tertiary);
+            padding: 0.1em 0.4em;
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+        }
+
+        /* Table des matières */
+        .legal-toc {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg);
+            padding: var(--space-5) var(--space-6);
+            margin-bottom: var(--space-8);
+        }
+        .legal-toc__title {
+            font-size: var(--text-sm);
+            font-weight: var(--font-semibold);
+            text-transform: uppercase;
+            letter-spacing: var(--tracking-wide);
+            color: var(--text-muted);
+            margin-bottom: var(--space-3);
+        }
+        .legal-toc ol {
+            margin: 0;
+            padding-left: var(--space-5);
+            columns: 2;
+            column-gap: var(--space-8);
+        }
+        .legal-toc li { margin-bottom: var(--space-2); break-inside: avoid; }
+        .legal-toc a { color: var(--text-secondary); text-decoration: none; font-size: var(--text-sm); }
+        .legal-toc a:hover { color: var(--accent); text-decoration: underline; }
+        @media (max-width: 600px) { .legal-toc ol { columns: 1; } }
+
+        /* Callouts */
+        .callout {
+            border: 1px solid var(--border-default);
+            border-left-width: 3px;
+            border-radius: var(--radius-md);
+            padding: var(--space-4) var(--space-5);
+            margin: 0 0 var(--space-5);
+            background: var(--bg-secondary);
+        }
+        .callout__title {
+            font-weight: var(--font-semibold);
+            font-size: var(--text-sm);
+            margin-bottom: var(--space-2);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        .callout p { margin-bottom: var(--space-2); font-size: var(--text-sm); }
+        .callout p:last-child { margin-bottom: 0; }
+        .callout ul, .callout ol { font-size: var(--text-sm); margin-bottom: 0; }
+
+        .callout--abstract { border-left-color: var(--accent); }
+        .callout--abstract .callout__title { color: var(--accent); }
+        .callout--important { border-left-color: var(--accent); background: hsla(var(--accent-h), var(--accent-s), 60%, 0.06); }
+        .callout--important .callout__title { color: var(--accent); }
+        .callout--info { border-left-color: var(--accent); }
+        .callout--info .callout__title { color: var(--accent); }
+        .callout--note { border-left-color: var(--text-muted); }
+        .callout--note .callout__title { color: var(--text-secondary); }
+        .callout--tip { border-left-color: var(--success); }
+        .callout--tip .callout__title { color: var(--success); }
+        .callout--success { border-left-color: var(--success); background: hsla(160, 80%, 45%, 0.06); }
+        .callout--success .callout__title { color: var(--success); }
+        .callout--warning { border-left-color: var(--warning); background: hsla(35, 90%, 50%, 0.06); }
+        .callout--warning .callout__title { color: var(--warning); }
+        .callout--danger { border-left-color: var(--danger); background: hsla(0, 80%, 55%, 0.06); }
+        .callout--danger .callout__title { color: var(--danger); }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin: 0 0 var(--space-5);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-md);
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: var(--text-sm);
+            min-width: 480px;
+        }
+        thead th {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-weight: var(--font-semibold);
+            text-align: left;
+            padding: var(--space-3) var(--space-4);
+            border-bottom: 1px solid var(--border-default);
+            white-space: nowrap;
+        }
+        tbody td {
+            padding: var(--space-3) var(--space-4);
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-default);
+            vertical-align: top;
+            line-height: var(--leading-normal);
+        }
+        tbody tr:last-child td { border-bottom: none; }
+        tbody td strong { color: var(--text-primary); }
+
+        .legal-footer {
+            margin-top: var(--space-16);
+            padding-top: var(--space-6);
+            border-top: 1px solid var(--border-default);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: var(--text-sm);
+        }
+        .legal-footer a { color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+    <div class="legal-wrap">
+        <div class="legal-topbar">
+            <div class="legal-brand">Qua<span>sar</span></div>
+            <button class="legal-theme-toggle" type="button" onclick="toggleLegalTheme()" aria-label="Changer de thème" title="Changer de thème">☀️</button>
+        </div>
+
+        <header class="legal-header">
+            <h1>Contrat de sous-traitance des données personnelles — Instance Quasar hébergée par Venacity</h1>
+            <div class="legal-meta">
+                <span class="legal-badge">Version 1.0</span>
+                <span class="legal-badge legal-badge--muted">28 août 2026</span>
+                <span class="legal-badge legal-badge--muted">Article 28 du RGPD</span>
+            </div>
+        </header>
+
+        <div class="callout callout--abstract">
+            <div class="callout__title">📋 Résumé</div>
+            <p>Ce contrat encadre le traitement des données personnelles réalisé par <strong>Venacity</strong> pour le compte des <strong>administratrices et administrateurs</strong> qui connectent leur serveur Discord à l'instance hébergée du robot Quasar (<code>quasar.vena.city/dashboard</code>). Il est conclu en application de l'<strong>article 28 du règlement général sur la protection des données</strong> (règlement UE 2016/679, ci-après « le RGPD »), qui impose un contrat écrit entre le responsable de traitement et son sous-traitant. Il précise ce que Venacity traite, sur quelles instructions, avec quelles garanties de sécurité, comment les violations de données sont notifiées, comment les demandes des personnes sont traitées, et ce que deviennent les données à la fin de la relation.</p>
+        </div>
+
+        <div class="callout callout--important">
+            <div class="callout__title">❗ Version 1.0 — 28 août 2026</div>
+            <p>Première version de ce contrat. Elle contractualise le partage des rôles déjà décrit dans les conditions générales d'utilisation (§ 6.9) et la politique de confidentialité (§ 4.9), et s'appuie sur les mesures techniques réellement déployées sur l'instance depuis le 25 juillet 2026.</p>
+        </div>
+
+
+        <nav class="legal-toc" aria-label="Table des matières">
+            <div class="legal-toc__title">Table des matières</div>
+            <ol>
+                <li><a href="#art-1">Définitions</a></li>
+                <li><a href="#art-2">Parties et formation du contrat</a></li>
+                <li><a href="#art-3">Objet, nature, finalité et durée</a></li>
+                <li><a href="#art-4">Données traitées et personnes concernées</a></li>
+                <li><a href="#art-5">Traitement sur instruction documentée</a></li>
+                <li><a href="#art-6">Confidentialité</a></li>
+                <li><a href="#art-7">Sécurité des données</a></li>
+                <li><a href="#art-8">Sous-traitance ultérieure</a></li>
+                <li><a href="#art-9">Droits des personnes concernées</a></li>
+                <li><a href="#art-10">Notification des violations de données</a></li>
+                <li><a href="#art-11">Assistance à la sécurité et aux analyses d'impact</a></li>
+                <li><a href="#art-12">Sort des données en fin de relation</a></li>
+                <li><a href="#art-13">Registre et mise à disposition, audit</a></li>
+                <li><a href="#art-14">Information des personnes concernées</a></li>
+                <li><a href="#art-15">Responsabilité</a></li>
+                <li><a href="#art-16">Modification du contrat et versionnement</a></li>
+                <li><a href="#art-17">Durée, résiliation, coupure</a></li>
+                <li><a href="#art-18">Droit applicable et différends</a></li>
+                <li><a href="#historique">Historique des versions</a></li>
+            </ol>
+        </nav>
+
+        <!-- ARTICLE 1 -->
+        <h2 id="art-1">Article 1 — Définitions</h2>
+        <p>Les termes ci-dessous ont, dans le présent contrat, le sens que leur donne l'article 4 du RGPD.</p>
+        <ul>
+            <li><strong>Données à caractère personnel</strong> (« données ») : toute information se rapportant à une personne physique identifiée ou identifiable. Sur Quasar, il s'agit principalement d'<strong>identifiants Discord</strong> et des informations qui s'y rattachent.</li>
+            <li><strong>Traitement</strong> : toute opération portant sur des données — collecte, enregistrement, consultation, conservation, communication, effacement, etc.</li>
+            <li><strong>Responsable de traitement</strong> : la personne qui détermine les finalités et les moyens du traitement. Dans ce contrat, c'est <strong>l'administratrice ou l'administrateur</strong> du serveur Discord connecté.</li>
+            <li><strong>Sous-traitant</strong> : la personne qui traite des données <strong>pour le compte</strong> du responsable de traitement. Dans ce contrat, c'est <strong>Venacity</strong>.</li>
+            <li><strong>Sous-traitant ultérieur</strong> : un tiers auquel le Sous-traitant confie une partie du traitement (par exemple l'hébergeur du serveur).</li>
+            <li><strong>Personne concernée</strong> : la personne physique à qui se rapportent les données (un membre du serveur, un·e modérateur·rice, etc.).</li>
+            <li><strong>Violation de données</strong> : une atteinte à la sécurité entraînant, de manière accidentelle ou illicite, la destruction, la perte, l'altération, la divulgation ou l'accès non autorisé à des données.</li>
+            <li><strong>L'Instance</strong> : l'instance du robot Quasar hébergée par Venacity et accessible sur <code>quasar.vena.city/dashboard</code>. Elle se distingue des instances que des tiers installent sur leur propre infrastructure, auxquelles ce contrat ne s'applique pas.</li>
+        </ul>
+
+        <!-- ARTICLE 2 -->
+        <h2 id="art-2">Article 2 — Parties et formation du contrat</h2>
+
+        <h3>2.1 Le Sous-traitant</h3>
+        <p>Le Sous-traitant est <strong>Venacity</strong>, nom sous lequel <strong>Louna Domanski</strong>, personne physique, exploite l'Instance :</p>
+        <ul>
+            <li><strong>Adresse</strong> : 5 rue des Joyeux, 16000 Angoulême, France</li>
+            <li><strong>Adresse électronique</strong> : <code>contact@vena.city</code></li>
+        </ul>
+        <div class="callout callout--note">
+            <div class="callout__title">📝 Société en cours de constitution</div>
+            <p>La société par actions simplifiée « Venacity » est <strong>en cours de constitution</strong> à la date de ce contrat. Tant qu'elle n'est pas immatriculée au registre du commerce et des sociétés, elle n'a pas la personnalité morale et ne peut être partie à un contrat (article 1842 du code civil). Le Sous-traitant est donc aujourd'hui la personne physique nommée ci-dessus. <strong>Le jour de l'immatriculation, la société se substituera de plein droit à elle</strong> dans le présent contrat, et cette clause sera mise à jour avec la date de substitution.</p>
+        </div>
+
+        <h3>2.2 Le Responsable de traitement</h3>
+        <p>Le Responsable de traitement est <strong>la personne administratrice</strong> d'un ou plusieurs serveurs Discord qui accepte le présent contrat et connecte son ou ses serveurs à l'Instance. Elle est identifiée par son <strong>compte Discord</strong> (identifiant numérique) au moment de l'acceptation.</p>
+        <div class="callout callout--tip">
+            <div class="callout__title">💡 En clair</div>
+            <p>Si vous êtes administratrice ou administrateur d'un serveur Discord et que vous utilisez l'Instance pour activer la modération, les tickets, les messages de bienvenue ou toute autre fonction, <strong>c'est vous le responsable de traitement</strong>. Vous décidez de ce que le robot fait de vos données. Venacity ne fait qu'exécuter vos réglages.</p>
+        </div>
+
+        <h3>2.3 Formation et acceptation</h3>
+        <p>Le contrat est formé par l'<strong>acceptation en ligne</strong> du Responsable de traitement, dans le tableau de bord de l'Instance, avant tout accès aux fonctions de configuration.</p>
+        <ul>
+            <li>L'acceptation se fait par une <strong>case à cocher non pré-cochée</strong> : un consentement pré-coché serait dépourvu de valeur.</li>
+            <li>Sont enregistrés, à titre de preuve : l'<strong>identifiant Discord</strong> du Responsable, la <strong>date et l'heure</strong> de l'acceptation, et la <strong>version du contrat</strong> acceptée.</li>
+            <li>Le refus d'accepter le contrat <strong>bloque l'accès</strong> aux fonctions de configuration. Le sort des données déjà présentes est précisé à l'<a href="#art-17">Article 17</a>.</li>
+        </ul>
+
+        <!-- ARTICLE 3 -->
+        <h2 id="art-3">Article 3 — Objet, nature, finalité et durée</h2>
+        <p>En application de l'article 28.3 du RGPD, les caractéristiques du traitement confié sont les suivantes.</p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Élément</th><th>Description</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Objet</strong></td><td>Héberger et faire fonctionner le robot Quasar pour le compte du Responsable de traitement, afin qu'il puisse configurer et utiliser les modules de son serveur Discord.</td></tr>
+                    <tr><td><strong>Nature des opérations</strong></td><td>Collecte, enregistrement, structuration, conservation, consultation, communication (au sein du serveur Discord concerné) et effacement des données, selon les modules activés.</td></tr>
+                    <tr><td><strong>Finalité</strong></td><td>Assurer le fonctionnement des seules fonctions activées par le Responsable : modération, tickets, messages de bienvenue et de départ, rôles automatiques, salons vocaux temporaires, embeds, commandes personnalisées, rappels programmés.</td></tr>
+                    <tr><td><strong>Durée</strong></td><td>Le traitement dure <strong>tant que le robot est présent sur le serveur</strong> du Responsable. À son retrait, les données sont supprimées après un <strong>délai de grâce de 7 jours</strong> (voir <a href="#art-12">Article 12</a>).</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ARTICLE 4 -->
+        <h2 id="art-4">Article 4 — Données traitées et personnes concernées</h2>
+        <div class="callout callout--info">
+            <div class="callout__title">ℹ️ Catégories de données traitées sur l'Instance</div>
+            <p>Ce sont les mêmes catégories que celles décrites au § 4.9 de la politique de confidentialité.</p>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Catégorie de données</th><th>Détail</th><th>Personnes concernées</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Identifiants Discord</strong></td><td>Identifiants numériques de serveurs, salons, rôles, membres et modérateur·rices</td><td>Membres du serveur, équipe de modération</td></tr>
+                    <tr><td><strong>Sanctions de modération</strong></td><td>Type, motif, durée, identifiant de la personne sanctionnée et de celle qui sanctionne</td><td>Membres sanctionnés, modérateur·rices</td></tr>
+                    <tr><td><strong>Métadonnées de tickets</strong></td><td>Ouverture, fermeture, motif de fermeture (sans le contenu des échanges)</td><td>Membres ayant ouvert un ticket</td></tr>
+                    <tr><td><strong>Configurations de serveur</strong></td><td>Messages de bienvenue, rôles automatiques, panneaux de réaction, commandes personnalisées, salons vocaux temporaires, rappels</td><td>Membres visés par ces configurations</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="callout callout--success">
+            <div class="callout__title">✅ Ce que l'Instance ne conserve pas</div>
+            <p>Depuis le 25 juillet 2026, <strong>les transcriptions des conversations de tickets ne sont plus conservées</strong> : à la fermeture d'un ticket, la transcription est déposée en pièce jointe dans le serveur Discord du Responsable, puis n'est jamais enregistrée dans la base de Venacity. La trace de la conversation reste chez le Responsable, sous sa responsabilité.</p>
+        </div>
+        <div class="callout callout--tip">
+            <div class="callout__title">💡 Des données pseudonymes par nature</div>
+            <p>Quasar ne demande ni nom, ni adresse, ni e-mail, ni mot de passe. Il ne manipule que des <strong>identifiants techniques Discord</strong>. Cela ne les fait pas sortir du champ des données personnelles, mais réduit sensiblement le risque en cas d'incident.</p>
+        </div>
+
+        <!-- ARTICLE 5 -->
+        <h2 id="art-5">Article 5 — Traitement sur instruction documentée</h2>
+        <p>En application de l'article 28.3.a du RGPD, le Sous-traitant <strong>ne traite les données que sur instruction documentée</strong> du Responsable de traitement.</p>
+        <ul>
+            <li>Les <strong>réglages effectués dans le tableau de bord</strong> et les <strong>commandes exécutées sur le serveur</strong> constituent ces instructions documentées : activer un module, fixer une durée de conservation des sanctions, configurer un ticket, etc.</li>
+            <li>Le Sous-traitant ne traite les données <strong>pour aucune finalité propre</strong>. Il ne les revend pas, ne les exploite pas à des fins commerciales, statistiques ou publicitaires, et ne les communique à aucun tiers en dehors de ce qui est nécessaire au fonctionnement demandé.</li>
+            <li>Le Sous-traitant n'effectue <strong>aucun transfert hors de l'Union européenne</strong> de sa propre initiative. L'hébergement est situé en Allemagne (voir <a href="#art-8">Article 8</a>).</li>
+            <li>Si le Sous-traitant estime qu'une instruction constitue une violation du RGPD, il en <strong>informe le Responsable</strong> sans délai.</li>
+        </ul>
+
+        <!-- ARTICLE 6 -->
+        <h2 id="art-6">Article 6 — Confidentialité</h2>
+        <p>En application de l'article 28.3.b du RGPD, le Sous-traitant veille à ce que les personnes autorisées à traiter les données <strong>s'engagent à en respecter la confidentialité</strong> ou soient soumises à une obligation légale appropriée de confidentialité.</p>
+        <div class="callout callout--note">
+            <div class="callout__title">📝 Une structure à une personne</div>
+            <p>À la date de ce contrat, l'Instance est administrée par la seule personne physique identifiée à l'article 2.1. L'accès technique aux données est limité à cette personne. Toute personne qui interviendrait à l'avenir sur l'Instance serait tenue à la même obligation de confidentialité.</p>
+        </div>
+
+        <!-- ARTICLE 7 -->
+        <h2 id="art-7">Article 7 — Sécurité des données</h2>
+        <p>En application des articles 28.3.c et 32 du RGPD, le Sous-traitant met en œuvre les mesures techniques et organisationnelles appropriées. Les mesures ci-dessous correspondent à ce qui est <strong>réellement déployé</strong> sur l'Instance ; elles ne sont pas une liste d'intentions.</p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Mesure</th><th>Mise en œuvre effective</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Accès restreint au tableau de bord</strong></td><td>Le tableau de bord n'écoute par défaut que sur la machine hôte (<code>127.0.0.1</code>). Son exposition réseau est une décision délibérée de l'exploitant.</td></tr>
+                    <tr><td><strong>Authentification</strong></td><td>Accès réservé aux administrateur·rices de serveur via l'authentification Discord (OAuth2). <strong>Aucun mot de passe n'est stocké</strong> par Quasar.</td></tr>
+                    <tr><td><strong>Isolation de la base</strong></td><td>Les données sont dans une base SQLite locale, jointe au service par le réseau interne du conteneur. <strong>Aucun port de base de données n'est exposé</strong> publiquement.</td></tr>
+                    <tr><td><strong>Chiffrement des flux</strong></td><td>Le trafic passe par Cloudflare en mode « Full (strict) », en HTTPS de bout en bout.</td></tr>
+                    <tr><td><strong>Conteneur non privilégié</strong></td><td>Le service s'exécute avec un utilisateur non-root dans son conteneur.</td></tr>
+                    <tr><td><strong>Minimisation et conservation limitée</strong></td><td>Sanctions conservées 12 mois par défaut (réglable de 1 à 120 mois par le Responsable) ; identifiants, tickets et configurations supprimés 7 jours après le retrait du robot ; transcriptions de tickets non conservées.</td></tr>
+                    <tr><td><strong>Sauvegardes</strong></td><td>La base est sauvegardée par la plateforme de déploiement (Coolify), avec des points de contrôle réguliers du journal d'écriture.</td></tr>
+                    <tr><td><strong>Effacement effectif</strong></td><td>Lors de la suppression des anciennes conversations de tickets, l'espace de la base a été réécrit (opération <code>VACUUM</code>) pour qu'une donnée supprimée ne reste pas lisible dans le fichier.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="callout callout--warning">
+            <div class="callout__title">⚠️ Le Responsable a aussi un rôle de sécurité</div>
+            <p>Certaines garanties dépendent du Responsable : ne donner les droits d'administration du serveur qu'aux personnes de confiance, et ne pas exposer inutilement le tableau de bord au réseau. Le Sous-traitant fournit un outil sécurisé par défaut ; son usage sûr relève aussi du Responsable.</p>
+        </div>
+
+        <!-- ARTICLE 8 -->
+        <h2 id="art-8">Article 8 — Sous-traitance ultérieure</h2>
+        <p>En application des articles 28.2 et 28.3.d du RGPD, le Responsable de traitement <strong>autorise</strong> le Sous-traitant à recourir aux sous-traitants ultérieurs suivants, tous situés dans l'Union européenne :</p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Sous-traitant ultérieur</th><th>Rôle</th><th>Localisation</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>netcup GmbH</strong></td><td>Hébergement du serveur physique (Petra) sur lequel tourne l'Instance</td><td>Emmy-Noether-Straße 10, 76131 Karlsruhe, Allemagne — serveurs à Nuremberg (UE)</td></tr>
+                    <tr><td><strong>Cloudflare</strong></td><td>Acheminement du trafic, protection réseau et génération des certificats</td><td>Réseau mondial ; le trafic européen est traité au sein de l'UE</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <ul>
+            <li>Le Sous-traitant impose à ces sous-traitants ultérieurs des obligations de protection <strong>équivalentes</strong> à celles du présent contrat, dans la mesure applicable à leur rôle.</li>
+            <li>En cas de <strong>changement</strong> de sous-traitant ultérieur (ajout ou remplacement), le Sous-traitant en <strong>informe le Responsable</strong> au préalable, par le canal décrit à l'<a href="#art-10">Article 10</a> ou par mise à jour de la politique de confidentialité, et lui laisse la possibilité de <strong>s'y opposer</strong> en cessant d'utiliser l'Instance.</li>
+        </ul>
+
+        <!-- ARTICLE 9 -->
+        <h2 id="art-9">Article 9 — Droits des personnes concernées</h2>
+        <p>En application de l'article 28.3.e du RGPD, le Sous-traitant <strong>assiste</strong> le Responsable de traitement pour répondre aux demandes des personnes qui exercent leurs droits (accès, rectification, effacement, opposition, limitation).</p>
+        <div class="callout callout--important">
+            <div class="callout__title">❗ C'est le Responsable qui décide, pas Venacity</div>
+            <p>Le Responsable de traitement est seul à décider de la suite à donner à une demande. Venacity <strong>ne se substitue pas à lui</strong> : elle lui <strong>transmet</strong> la demande et <strong>exécute sa décision</strong>. C'est la traduction concrète de l'article 28.3.e (« assister », et non « décider à la place »).</p>
+        </div>
+        <p><strong>Traitement d'une demande de suppression, par catégorie :</strong></p>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Catégorie de données</th><th>Traitement</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Sanctions actives</strong> (bannissement ou exclusion en cours)</td><td>La suppression peut être <strong>refusée</strong>, de façon motivée, au titre des motifs légitimes impérieux de l'article 21 du RGPD : la sanction produit encore ses effets. La décision appartient au Responsable.</td></tr>
+                    <tr><td><strong>Sanctions expirées ou levées</strong></td><td>L'effacement est dû.</td></tr>
+                    <tr><td><strong>Données sans lien avec la modération</strong></td><td>L'effacement est dû, sans discussion.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p><strong>Modalités :</strong></p>
+        <ul>
+            <li>La demande est <strong>routée au Responsable</strong> compétent, avec sa catégorie et l'échéance applicable.</li>
+            <li>Le Responsable doit répondre <strong>dans un délai d'un mois</strong> à compter de la demande (article 12.3 du RGPD), porté à trois mois si la demande est complexe, avec information motivée de la personne.</li>
+            <li>La <strong>décision et sa motivation</strong> sont conservées à titre de preuve.</li>
+            <li>Si le Responsable <strong>ne répond pas</strong> avant l'échéance, le Sous-traitant le <strong>relance</strong> ; l'inaction du Responsable relève de sa propre responsabilité, le Sous-traitant ne pouvant décider à sa place.</li>
+            <li>Toute personne concernée peut écrire à <code>contact@vena.city</code> : sa demande est transmise au Responsable compétent.</li>
+        </ul>
+
+        <!-- ARTICLE 10 -->
+        <h2 id="art-10">Article 10 — Notification des violations de données</h2>
+        <p>En application des articles 28.3.f et 33.2 du RGPD, le Sous-traitant notifie au Responsable de traitement <strong>toute violation de données</strong> le concernant.</p>
+
+        <h3>10.1 Engagement de délai</h3>
+        <div class="callout callout--danger">
+            <div class="callout__title">🚨 Engagement ferme : 24 heures</div>
+            <p>La loi impose au sous-traitant de notifier « dans les meilleurs délais » (article 33.2), sans fixer de durée chiffrée. Venacity s'engage sur un délai maximal de <strong>24 heures</strong> à compter du moment où elle a connaissance de la violation.</p>
+            <p><strong>Pourquoi 24 heures :</strong> le Responsable de traitement, lui, ne dispose que de <strong>72 heures</strong> pour notifier la CNIL (article 33.1). En s'engageant à 24 heures, Venacity lui laisse au moins <strong>48 heures</strong> pour préparer et déposer sa propre déclaration.</p>
+        </div>
+
+        <h3>10.2 Canal de notification</h3>
+        <p>La notification emprunte le <strong>robot lui-même</strong>, présent sur les serveurs connectés, complété par des canaux de repli pour ne jamais dépendre d'un seul point de défaillance :</p>
+        <ul>
+            <li><strong>Message direct</strong> aux administrateur·rices des serveurs concernés ;</li>
+            <li><strong>Repli par message dans un salon du serveur</strong> si les messages directs sont refusés (réglage Discord) ;</li>
+            <li><strong>Bannière persistante dans le tableau de bord</strong>, qui ne dépend pas de Discord et reste visible jusqu'à prise de connaissance.</li>
+        </ul>
+        <div class="callout callout--note">
+            <div class="callout__title">📝 Traçabilité</div>
+            <p>Le Sous-traitant journalise <strong>qui a reçu la notification, quand, et qui ne l'a pas reçue</strong>. Cette traçabilité répond à l'obligation de documentation de l'article 33.5 : un envoi non tracé ne prouve rien.</p>
+        </div>
+
+        <h3>10.3 Contenu et notification par phases</h3>
+        <p>La notification fournit au Responsable les éléments dont il a besoin pour sa propre déclaration à la CNIL, correspondant aux quatre mentions de l'article 33.3 :</p>
+        <ol>
+            <li>La <strong>nature</strong> de la violation, et lorsque c'est possible les <strong>catégories et le nombre approximatif</strong> de personnes concernées et d'enregistrements touchés ;</li>
+            <li>Le <strong>point de contact</strong> auprès duquel obtenir davantage d'informations ;</li>
+            <li>Les <strong>conséquences probables</strong> de la violation ;</li>
+            <li>Les <strong>mesures prises ou proposées</strong> pour y remédier et en atténuer les effets.</li>
+        </ol>
+        <div class="callout callout--tip">
+            <div class="callout__title">💡 Notification par phases (article 33.4)</div>
+            <p>Une violation se comprend rarement d'un seul coup. Le Sous-traitant peut adresser une <strong>première notification</strong> dès qu'il a connaissance de l'incident, puis des <strong>compléments</strong> rattachés au même incident au fur et à mesure. Attendre d'avoir l'image complète serait un retard fautif : la première notification part sans attendre.</p>
+        </div>
+
+        <!-- ARTICLE 11 -->
+        <h2 id="art-11">Article 11 — Assistance à la sécurité et aux analyses d'impact</h2>
+        <p>En application de l'article 28.3.f du RGPD, le Sous-traitant assiste le Responsable de traitement, compte tenu de la nature du traitement et des informations à sa disposition, pour :</p>
+        <ul>
+            <li>garantir la sécurité du traitement (article 32) ;</li>
+            <li>notifier et documenter les violations de données (articles 33 et 34) ;</li>
+            <li>réaliser, le cas échéant, une <strong>analyse d'impact relative à la protection des données</strong> (article 35) et la consultation préalable de la CNIL (article 36).</li>
+        </ul>
+        <p>Le Sous-traitant met à disposition, sur demande, les informations relatives aux mesures de sécurité et à l'architecture de l'Instance nécessaires à ces obligations.</p>
+
+        <!-- ARTICLE 12 -->
+        <h2 id="art-12">Article 12 — Sort des données en fin de relation</h2>
+        <p>En application de l'article 28.3.g du RGPD, au terme de la relation, le Sous-traitant <strong>supprime</strong> les données du serveur concerné.</p>
+        <ul>
+            <li>Lorsque le robot est <strong>retiré d'un serveur</strong>, les données de ce serveur sont supprimées après un <strong>délai de grâce de 7 jours</strong>, destiné à couvrir un retrait accidentel. Réinviter le robot avant l'échéance annule la suppression.</li>
+            <li><strong>Exception</strong> : les <strong>bannissements encore en vigueur</strong> ne sont pas effacés, puisqu'ils produisent toujours leurs effets. Le Sous-traitant en vérifie le statut auprès de Discord et s'abstient de purger lorsque cette vérification est impossible.</li>
+            <li>Compte tenu de la nature des données (identifiants techniques réutilisables à tout moment depuis Discord), la <strong>restitution</strong> n'a pas d'objet : le Responsable conserve à tout instant l'accès à son propre serveur. La suppression est donc le mode de sortie par défaut.</li>
+        </ul>
+
+        <!-- ARTICLE 13 -->
+        <h2 id="art-13">Article 13 — Registre et mise à disposition, audit</h2>
+        <p>En application de l'article 28.3.h du RGPD, le Sous-traitant met à la disposition du Responsable de traitement toutes les informations nécessaires pour démontrer le respect de ses obligations, et permet la réalisation d'audits.</p>
+        <div class="callout callout--success">
+            <div class="callout__title">✅ Un sous-traitant auditable par nature</div>
+            <p>Quasar est un <strong>logiciel libre</strong> publié sous licence AGPL-3.0. Son code source — celui qui est réellement exécuté sur l'Instance — est <strong>public et consultable</strong> : <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener noreferrer">venaciteam/quasar</a>. C'est la forme d'auditabilité la plus complète possible : n'importe qui peut vérifier ce que le robot fait des données, sans avoir à demander.</p>
+        </div>
+        <ul>
+            <li>Le Sous-traitant répond aux demandes d'information adressées à <code>contact@vena.city</code>.</li>
+            <li>Un audit sur pièces peut être demandé de façon raisonnable ; les modalités sont convenues entre les parties de manière à ne pas compromettre la sécurité des autres serveurs hébergés sur l'Instance.</li>
+        </ul>
+
+        <!-- ARTICLE 14 -->
+        <h2 id="art-14">Article 14 — Information des personnes concernées</h2>
+        <p>L'information des membres du serveur relève du <strong>Responsable de traitement</strong>, qui est seul en relation avec eux (article 14 du RGPD).</p>
+        <ul>
+            <li>Le Sous-traitant met à disposition une <strong>politique de confidentialité publique</strong> décrivant le traitement réalisé sur l'Instance (§ 4.9).</li>
+            <li>Le robot fournit par ailleurs des moyens d'information aux membres (par exemple une commande permettant à un membre de connaître les catégories de données le concernant et la marche à suivre pour exercer ses droits).</li>
+            <li>Il appartient au Responsable de porter cette information à la connaissance des membres de son serveur.</li>
+        </ul>
+
+        <!-- ARTICLE 15 -->
+        <h2 id="art-15">Article 15 — Responsabilité</h2>
+        <ul>
+            <li>Chaque partie répond des dommages causés par le traitement lorsqu'elle a manqué aux obligations du RGPD qui lui incombent spécifiquement, ou lorsqu'elle a agi en dehors des instructions licites de l'autre partie (article 82 du RGPD).</li>
+            <li>Le Sous-traitant répond des manquements aux obligations que le RGPD met spécifiquement à la charge des sous-traitants, ainsi que du non-respect des instructions documentées du Responsable.</li>
+            <li>Le Responsable de traitement demeure responsable de la licéité du traitement qu'il met en œuvre, de l'information de ses membres et des suites qu'il donne aux demandes des personnes.</li>
+        </ul>
+        <div class="callout callout--note">
+            <div class="callout__title">📝 Un service fourni sans contrepartie financière</div>
+            <p>L'Instance est mise à disposition <strong>gratuitement</strong>. Cette gratuité ne dégrade pas les obligations de sécurité et de notification du Sous-traitant, mais elle est un élément d'appréciation de sa responsabilité, dans les limites permises par la loi.</p>
+        </div>
+
+        <!-- ARTICLE 16 -->
+        <h2 id="art-16">Article 16 — Modification du contrat et versionnement</h2>
+        <ul>
+            <li>Le présent contrat porte un <strong>numéro de version</strong>. La version en vigueur est indiquée dans son en-tête.</li>
+            <li>Toute <strong>modification substantielle</strong> (portée du traitement, mesures de sécurité, sous-traitants ultérieurs, engagements de délai, droits des personnes) donne lieu à une <strong>nouvelle version</strong> et déclenche une <strong>nouvelle acceptation</strong> par le Responsable, au prochain accès au tableau de bord.</li>
+            <li>Les modifications purement rédactionnelles ou de mise en forme n'entraînent pas de nouvelle acceptation.</li>
+            <li>L'annonce d'une nouvelle version peut emprunter le même canal que celui des notifications de violation (voir article 10.2).</li>
+        </ul>
+
+        <!-- ARTICLE 17 -->
+        <h2 id="art-17">Article 17 — Durée, résiliation, coupure</h2>
+        <ul>
+            <li>Le contrat prend effet à son acceptation et dure tant que le Responsable utilise l'Instance.</li>
+            <li>Le Responsable peut y <strong>mettre fin à tout moment</strong> en retirant le robot de ses serveurs. Les données sont alors traitées selon l'<a href="#art-12">Article 12</a>.</li>
+            <li>En cas de <strong>refus du contrat</strong> ou d'une nouvelle version, l'accès aux fonctions de configuration est bloqué. Les données déjà présentes ne sont pas supprimées immédiatement du seul fait du refus : elles suivent le régime de conservation habituel et sont purgées au retrait du robot, après le délai de grâce de 7 jours.</li>
+            <li>Le Sous-traitant se réserve la possibilité de <strong>couper l'accès d'un serveur déterminé</strong> à l'Instance, sans affecter les autres serveurs, notamment en cas d'usage contraire aux conditions générales d'utilisation. Cette coupure ciblée permet de refuser un usage sans fermer le service pour tout le monde.</li>
+        </ul>
+
+        <!-- ARTICLE 18 -->
+        <h2 id="art-18">Article 18 — Droit applicable et différends</h2>
+        <ul>
+            <li>Le présent contrat est régi par le <strong>droit français</strong> et par le RGPD.</li>
+            <li>En cas de différend, les parties recherchent une solution amiable avant toute action. À défaut, les tribunaux français sont compétents, sous réserve des règles d'ordre public applicables au Responsable de traitement.</li>
+            <li>Toute personne concernée conserve le droit d'introduire une réclamation auprès de la <strong>CNIL</strong> (Commission nationale de l'informatique et des libertés).</li>
+        </ul>
+
+        <!-- HISTORIQUE -->
+        <h2 id="historique">Historique des versions</h2>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Version</th><th>Date</th><th>Modifications</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>1.0</strong></td><td>28 août 2026</td><td>Version initiale. Contractualise le partage des rôles décrit dans les CGU (§ 6.9) et la politique de confidentialité (§ 4.9). Couvre l'ensemble de l'article 28.3 du RGPD. Engagement de notification des violations sous 24 heures. Mécanisme de traitement des demandes des personnes par catégorie.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <footer class="legal-footer">
+            <p>Contrat de sous-traitance — Instance Quasar hébergée par Venacity · Version 1.0 (28 août 2026)<br>
+            Logiciel libre sous licence AGPL-3.0 — <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener noreferrer">code source</a> · <a href="https://vena.city" target="_blank" rel="noopener noreferrer">Venacity</a></p>
+        </footer>
+    </div>
+
+    <script>
+        // Toggle thème local — écrit la même clé que le dashboard ('vnct_theme')
+        // pour rester cohérent avec la préférence de l'utilisateur.
+        function toggleLegalTheme() {
+            var current = document.documentElement.getAttribute('data-theme') || 'dark';
+            var next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            try { localStorage.setItem('vnct_theme', next); } catch (e) {}
+            syncToggleIcon();
+        }
+        function syncToggleIcon() {
+            var current = document.documentElement.getAttribute('data-theme') || 'dark';
+            var btn = document.querySelector('.legal-theme-toggle');
+            if (btn) {
+                btn.textContent = current === 'dark' ? '☀️' : '🌙';
+                btn.title = current === 'dark' ? 'Mode clair' : 'Mode sombre';
+            }
+        }
+        syncToggleIcon();
+    </script>
+</body>
+</html>

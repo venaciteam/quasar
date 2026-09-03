@@ -73,6 +73,22 @@ async function init() {
     currentUser = auth.user;
     renderUserInfo();
 
+    // ── Gating du contrat de sous-traitance (RGPD art. 28) ──
+    // Bloquant : tant que le contrat n'est pas accepté, checkContractGate() ne
+    // résout pas (refus → jamais) ou résout false, et init() s'arrête ici — aucun
+    // serveur n'est chargé. checkContractGate est exposé par contractGate.js,
+    // chargé avant app.js ; on garde une garde défensive au cas où il manquerait.
+    if (typeof window.checkContractGate === 'function') {
+        const contractOk = await window.checkContractGate();
+        if (!contractOk) return;
+    }
+
+    // ── Révélation des entrées owner-only + bannière de violation ──
+    // Dégradation gracieuse : ces appels réseau sont non bloquants, toute erreur
+    // est avalée et le dashboard reste pleinement fonctionnel.
+    await revealOwnerNav();
+    await showBreachBanners();
+
     guilds = await API.get('/api/guilds') || [];
     lastGuildsFetch = Date.now();
 
@@ -165,6 +181,69 @@ function showUpdateBanner(local, remote) {
         </div>
         <button class="btn btn-primary" onclick="loadPage('update')" style="flex-shrink:0;font-size:.8rem;padding:.4rem .8rem">Mettre à jour</button>
     `;
+    const main = document.querySelector('.main');
+    const content = document.getElementById('content');
+    if (main && content) main.insertBefore(banner, content);
+}
+
+// ═══ Owner-only : révélation des entrées de nav réservées à la propriétaire ═══
+// Réutilise /api/presence, qui renvoie isOwner. Non bloquant : en cas d'échec on
+// laisse les entrées cachées (fail-safe : on ne révèle jamais à tort).
+async function revealOwnerNav() {
+    try {
+        const data = await API.get('/api/presence');
+        if (!data || !data.isOwner) return;
+        ['sidebar-owner', 'sidebar-breach'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = '';
+        });
+    } catch {}
+}
+
+// ═══ Bannière de notification de violation (RGPD art. 33) ═══
+// Filet indépendant de Discord : tout admin d'un serveur connecté voit ici les
+// incidents ouverts non encore acquittés, même si le MP a échoué. Style calqué
+// sur showUpdateBanner. Un bandeau par incident, persistant jusqu'à l'accusé.
+async function showBreachBanners() {
+    let incidents;
+    try {
+        incidents = await API.get('/api/breach/banner');
+    } catch {
+        return;
+    }
+    if (!Array.isArray(incidents)) return;
+    incidents.forEach(showBreachBanner);
+}
+
+function showBreachBanner(incident) {
+    if (!incident || incident.id == null) return;
+    const bannerId = `breach-banner-${incident.id}`;
+    if (document.getElementById(bannerId)) return;
+
+    const title = incident.title || 'Violation de données personnelles';
+    const rawBody = (incident.lastMessage && incident.lastMessage.body) || '';
+    const excerpt = rawBody.length > 220 ? rawBody.slice(0, 220).trim() + '…' : rawBody;
+
+    const banner = document.createElement('div');
+    banner.id = bannerId;
+    banner.className = 'update-banner breach-banner';
+    banner.innerHTML = `
+        <span class="update-banner-icon">🚨</span>
+        <div style="flex:1;min-width:0">
+            <strong>Notification de violation de données</strong>
+            <p style="font-weight:var(--font-medium)">${escapeHtml(title)}</p>
+            ${excerpt ? `<p style="white-space:pre-wrap;color:var(--text-secondary)">${escapeHtml(excerpt)}</p>` : ''}
+        </div>
+        <button class="btn btn-primary" style="flex-shrink:0;font-size:.8rem;padding:.4rem .8rem">J'ai pris connaissance</button>
+    `;
+
+    const btn = banner.querySelector('button');
+    btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try { await API.post(`/api/breach/banner/${incident.id}/ack`); } catch {}
+        banner.remove();
+    });
+
     const main = document.querySelector('.main');
     const content = document.getElementById('content');
     if (main && content) main.insertBefore(banner, content);
@@ -406,6 +485,11 @@ async function loadPage(page) {
         // Musique désactivée — réactiver en décommentant (+ entrée moduleList, fonction loadMusic, lien sidebar app.html)
         // case 'music':      loadMusic(content); break;
         case 'update':     await loadUpdate(content); break;
+        // Le bouton retour mobile n'est plus inséré par case : setMobileBackVisible()
+        // le monte une fois pour toutes en tête de loadPage(), hors de #content.
+        case 'erasure':    await loadErasure(content, currentGuild.id); break;
+        case 'breach':     await loadBreach(content); break;
+        case 'owner':      await loadOwner(content); break;
         default:
             content.innerHTML = `<div class="main-header"><h1 class="main-title">${page}</h1><p class="main-subtitle">Module en construction 🔧</p></div>`;
     }

@@ -237,6 +237,13 @@ function createApi(discordClient, mode = 'bot') {
     const updateRoutes = require('./routes/update');
     const scheduledRoutes = require('./routes/scheduled');
     const instanceRoutes = require('./routes/instance');
+    // Lot 2 conformité RGPD — mêmes contraintes de chargement paresseux : ces
+    // routes et l'utilitaire de suspension tirent la chaîne bot/BDD.
+    const contractRoutes = require('./routes/contract');
+    const breachRoutes = require('./routes/breach');
+    const ownerRoutes = require('./routes/owner');
+    const erasureRoutes = require('./routes/erasure');
+    const { isSuspended } = require('../bot/utils/suspension');
 
     const app = express();
 
@@ -252,6 +259,23 @@ function createApi(discordClient, mode = 'bot') {
     // API routes
     app.use('/auth', authRoutes);
     app.use('/api/bot', botRoutes);
+
+    // Enforcement de la suspension (coupure ciblée, sous-lot E) : refuse toute
+    // ÉCRITURE de configuration sur un serveur suspendu par la propriétaire.
+    // Monté AVANT TOUS les routers guild-scoped — y compris guildRoutes, qui porte
+    // PUT /:guildId/modules et PUT /:guildId/settings — pour les couvrir tous, avec
+    // leurs sous-routes internes. La liste GET /api/guilds n'a pas de segment
+    // :guildId : elle n'est jamais interceptée. Les demandes de suppression (droit
+    // des personnes, obligation légale) NE sont PAS bloquées par une suspension :
+    // seule la configuration l'est.
+    app.use('/api/guilds/:guildId', (req, res, next) => {
+        const isErasure = req.path.includes('/erasure');
+        if (!isErasure && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) && isSuspended(req.params.guildId)) {
+            return res.status(403).json({ error: 'Serveur suspendu par la proprietaire : configuration en lecture seule.' });
+        }
+        next();
+    });
+
     app.use('/api/guilds', guildRoutes);
     app.use('/api/guilds/:guildId/moderation', moderationRoutes);
     app.use('/api/guilds/:guildId/welcome', welcomeRoutes);
@@ -261,7 +285,11 @@ function createApi(discordClient, mode = 'bot') {
     app.use('/api/guilds/:guildId/tempvoice', tempvoiceRoutes);
     app.use('/api/guilds/:guildId/tickets', ticketsRoutes);
     app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
+    app.use('/api/guilds/:guildId/erasure', erasureRoutes);
     app.use('/api/presence', presenceRoutes);
+    app.use('/api/contract', contractRoutes);
+    app.use('/api/breach', breachRoutes);
+    app.use('/api/owner', ownerRoutes);
     app.use('/api', updateRoutes);
     app.use('/api', instanceRoutes);
 
