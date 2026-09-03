@@ -22,6 +22,7 @@
 | 🔊 **TempVoice** | Salons vocaux temporaires avec boutons interactifs |
 | 🌐 **Dashboard Web** | Tout configurer depuis un navigateur — thème clair/sombre |
 | ⬆ **Auto-update** | Mise à jour en un clic depuis le dashboard avec logs temps réel |
+| ⚖️ **Droits des personnes** | `/mes-donnees`, demandes de suppression routées à l'administrateur, notification de violation de données, contrat de sous-traitance sur instance publique |
 
 ---
 
@@ -80,6 +81,7 @@ cp .env.example .env
 | `BOT_OWNER_ID` | Ton ID Discord — active les fonctions admin dans le dashboard (gestion du statut du bot). Pour le trouver : active le mode développeur dans Discord → clic droit sur ton profil → Copier l'identifiant |
 | `INSTANCE_OPERATOR_NAME` | Qui héberge cette instance — affiché dans le dashboard (optionnel) |
 | `INSTANCE_LEGAL_URL` | Lien vers tes mentions légales (optionnel) |
+| `CONTRACT_PUBLIC_URL` | Lien vers ton contrat de sous-traitance, **utilisé uniquement en `QUASAR_MODE=public`**. Vide : le contrat de l'instance Venacity |
 | `INSTANCE_SOURCE_URL` | Code source de ta version — **requis par l'AGPL si tu as modifié Quasar et que ton dashboard est accessible à d'autres** |
 | `ABUSE_REPORT_URL` | Où reçois-tu les signalements d'abus (`/signaler abus`). **Vide par défaut** : sans ça, aucun signalement d'abus ne quitte ton instance |
 | `INSTANCE_ABUSE_CONTACT` | Contact affiché pour signaler un abus quand `ABUSE_REPORT_URL` est vide (e-mail ou URL) |
@@ -227,11 +229,12 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 | `/help` | Aide, liste des commandes et moyens de signalement |
 | `/ping` | Latence du bot |
 
-### Signalement — accessible à tous les membres
+### Signalement et données personnelles — accessible à tous les membres
 | Commande | Description |
 |----------|-------------|
 | `/signaler bug` | Quasar dysfonctionne — part chez qui développe le bot |
 | `/signaler abus` | Le bot est utilisé de façon abusive — reste chez l'hébergeur de l'instance |
+| `/mes-donnees` | Voir les données que Quasar traite te concernant sur ce serveur, et demander leur suppression |
 
 </details>
 
@@ -325,6 +328,28 @@ Quasar manipule des données personnelles : identifiants Discord, motifs de sanc
 Si tu héberges Quasar, **tu es responsable des données** qu'il stocke sur ta machine. Venacity écrit le logiciel, elle n'a accès à rien : Quasar ne contacte aucun service tiers pour fonctionner, et la télémétrie a été retirée en v3.3.0.
 
 Sur une instance ouverte à des serveurs tiers, chaque administrateur de serveur reste responsable des données de son propre serveur ; l'hébergeur de l'instance agit pour son compte.
+
+### Le contrat de sous-traitance
+
+Dès qu'une instance est ouverte à des serveurs tiers, l'article 28 du RGPD impose un **contrat écrit** entre l'hébergeur de l'instance (sous-traitant) et chaque administrateur qui y connecte son serveur (responsable de traitement). Quasar embarque le mécanisme : écran bloquant à la première connexion, case à cocher **jamais pré-cochée**, et enregistrement de qui a accepté quoi et quand — identifiant Discord, horodatage, version. Une nouvelle version du contrat redemande l'acceptation.
+
+> ⚠️ **Ce mécanisme ne s'active qu'en `QUASAR_MODE=public`.** En auto-hébergement (`bot`, le défaut), aucun contrat n'est demandé : tu es seul opérateur de ton instance, tu n'as personne avec qui contracter.
+>
+> Si tu ouvres **ta propre** instance à des administrateurs tiers, tu as le même besoin juridique — mais avec **ton** contrat, pas celui de Venacity. Publie-le et pointe `CONTRACT_PUBLIC_URL` dessus, puis remplace le texte servi en repli (`dashboard/legal/contrat.html`) et les constantes de `api/services/contract.js`. Le contrat livré nomme explicitement Venacity comme sous-traitant : il ne vaut que pour son instance. La licence AGPL-3.0 te donne le droit de l'adapter.
+
+### Notification d'une violation de données
+
+L'article 33 du RGPD impose au sous-traitant de prévenir le responsable de traitement sans délai. Quasar fournit le canal : le propriétaire de l'instance (`BOT_OWNER_ID`) rédige librement le message depuis le dashboard — avec un aide-mémoire des mentions à ne pas oublier —, le **prévisualise**, puis **confirme explicitement** l'envoi. Rien ne part avant cette confirmation. Une notification peut être adressée **par étapes** : un premier message dès la connaissance de l'incident, des compléments ensuite.
+
+La diffusion emprunte trois canaux, pour ne pas dépendre d'un seul point de défaillance : **message privé** aux administrateurs ; à défaut, un **avis neutre dans le salon de logs** — sans aucun détail de l'incident, il renvoie vers les messages privés et le dashboard ; et un **bandeau dans le dashboard**, qui ne dépend pas de Discord. Chaque envoi est journalisé, **y compris ceux qui échouent** : savoir qui n'a pas été prévenu fait partie de l'obligation.
+
+### Demandes de suppression
+
+Un membre peut demander l'effacement de ses données avec `/mes-donnees`. La demande n'est pas tranchée par l'hébergeur : elle est **routée à l'administrateur du serveur**, seul responsable de traitement et seul à pouvoir décider. Le traitement se fait **par catégorie** — une sanction encore en vigueur peut être conservée avec un refus motivé, une sanction expirée doit être effacée, le reste s'efface sans discussion. La décision et sa motivation sont conservées, et un rappel est émis avant l'échéance légale d'un mois.
+
+### Suspendre un serveur
+
+Le propriétaire de l'instance peut **couper Quasar sur un serveur précis**, sans toucher aux autres. La suspension ne supprime aucune donnée et ne retire pas le bot du serveur : c'est un drapeau réversible. Elle permet de refuser un usage sans fermer le service pour tout le monde. Un compteur des serveurs connectés est affiché à côté, pour repérer un changement d'échelle.
 
 ### Ce qui est conservé, et combien de temps
 

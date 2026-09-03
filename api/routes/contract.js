@@ -12,10 +12,11 @@ const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const {
     CONTRACT_VERSION,
-    CONTRACT_PUBLIC_URL,
+    getContractPublicUrl,
     CONTRACT_SUMMARY,
     hasAcceptedCurrent,
     recordAcceptance,
+    isContractRequired,
 } = require('../services/contract');
 
 const router = express.Router();
@@ -32,12 +33,16 @@ const CONTRACT_LOCAL_URL = '/dashboard/legal/contrat.html';
 // ayant accepté une version antérieure est considéré non-accepté (revoit l'écran).
 router.get('/status', requireAuth, (req, res) => {
     try {
+        // `required` vaut false hors instance publique : le gating front ne doit pas
+        // imposer le contrat de Venacity aux instances auto-hebergees (cf. contract.js).
+        const required = isContractRequired();
         const accepted = hasAcceptedCurrent(req.user.id);
         res.json({
+            required,
             accepted,
             version: CONTRACT_VERSION,
             summary: CONTRACT_SUMMARY,
-            url: CONTRACT_PUBLIC_URL,
+            url: getContractPublicUrl(),
             localUrl: CONTRACT_LOCAL_URL,
         });
     } catch (err) {
