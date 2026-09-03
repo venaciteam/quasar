@@ -27,6 +27,29 @@ const CONTENT_TYPES = {
     '.json': 'application/json; charset=utf-8',
 };
 
+// Contenu BRUT des fichiers, placeholders inclus. Séparé du cache de render()
+// pour que les deux ne se contaminent pas.
+const rawCache = new Map();
+
+/**
+ * Lit un fichier SANS rien y substituer. Utilisé par le rendu de la vitrine
+ * (vnctDs), qui doit développer ses partials avant de substituer __VERSION__ :
+ * les partials portent eux aussi ce placeholder.
+ * @returns {string|null} null si le fichier est illisible
+ */
+function raw(filePath) {
+    if (rawCache.has(filePath)) return rawCache.get(filePath);
+
+    let content = null;
+    try {
+        content = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+        console.error(`[Quasar] Lecture impossible de ${path.basename(filePath)} :`, err.message);
+    }
+    rawCache.set(filePath, content);
+    return content;
+}
+
 /**
  * Lit un fichier et y injecte la version courante.
  * @returns {string|null} null si le fichier est illisible
@@ -34,14 +57,12 @@ const CONTENT_TYPES = {
 function render(filePath) {
     if (cache.has(filePath)) return cache.get(filePath);
 
-    try {
-        const content = fs.readFileSync(filePath, 'utf8').replace(PLACEHOLDER, VERSION);
-        cache.set(filePath, content);
-        return content;
-    } catch (err) {
-        console.error(`[Quasar] Lecture impossible de ${path.basename(filePath)} :`, err.message);
-        return null;
-    }
+    const content = raw(filePath);
+    if (content === null) return null;
+
+    const rendered = content.replace(PLACEHOLDER, VERSION);
+    cache.set(filePath, rendered);
+    return rendered;
 }
 
 /**
@@ -62,4 +83,4 @@ function send(res, filePath) {
     return res.send(content);
 }
 
-module.exports = { VERSION, send, render };
+module.exports = { VERSION, send, render, raw };

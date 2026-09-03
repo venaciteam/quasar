@@ -1,0 +1,46 @@
+<!--
+    Header flottant DS (.vnct-header) commun aux pages vitrine de Quasar —
+    contrat DS v2.1+ (vnct-design-system/MIGRATION.md, « chrome standard v2 »,
+    façon Maât). Remplace le chrome historique déprécié (.nav maison,
+    .nav-mobile maison, .vnct-footer) retiré de la vitrine en v4.5.0.
+
+    Deux variantes, choisies par le paramètre `variant` de l'include :
+
+    - 'app' (accueil) : rien à gauche — Quasar n'a pas de compte Cardo, sa
+      seule identité est Discord et elle vit dans le dashboard, pas ici. Le
+      groupe d'actions est poussé à droite par un margin-left:auto en CSS de
+      page (PAS un spacer : .vnct-header__inner > * porte pointer-events:auto,
+      un élément fantôme capterait les clics sur une bande du header alors que
+      le contenu doit rester cliquable dessous). À droite : drapeau « Signaler ou proposer » (VNCT.Feedback) + menu « … ».
+    - 'static' (pages produit) : marque « Qua|sar » (le « sar » irisé) +
+      libellé contextuel à gauche, bouton ghost « Accueil » à droite, + menu.
+
+    Paramètres de l'include (cf. api/services/partials.js) :
+    - variant : 'static' (défaut) | 'app'
+    - ctx     : libellé contextuel de la variante statique ('' par défaut)
+-->
+<header class="vnct-header">
+  <div class="vnct-header__inner">
+    {{#if:app}}{{else}}
+    <div class="vnct-header__brand">
+      <span class="vnct-header__brand-name">Qua<span class="vnct-iris-text">sar</span></span>
+      {{#if:ctx}}<span class="vnct-header__ctx">{{ctx}}</span>{{/if:ctx}}
+    </div>
+    {{/if:app}}
+    <div class="vnct-header__actions">
+      {{#if:app}}
+      <!-- Drapeau « Signaler ou proposer ». Pastille iconique du chrome header :
+           dérogation actée à la règle « texte explicite > icône seule », le
+           libellé est porté par title + aria-label (même choix que Maât et
+           Prisma). Ouvre la modale VNCT.Feedback du DS, qui poste sur
+           /api/feedback/vnct (relais vers Sema, repli webhook Discord). -->
+      <button class="vnct-header__icon" type="button" data-quasar-action="report" title="Signaler ou proposer" aria-label="Signaler ou proposer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+      </button>
+      {{else}}
+      <a class="vnct-btn vnct-btn--ghost vnct-btn--sm" href="/">Accueil</a>
+      {{/if:app}}
+      {{> menu}}
+    </div>
+  </div>
+</header>

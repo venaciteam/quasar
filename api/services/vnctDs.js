@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const assetVersion = require('./assetVersion');
+const partials = require('./partials');
 
 // Base URL du DS, surchargeable par environnement (dev / mock local).
 const DS_BASE = process.env.VNCT_DS_BASE_URL || 'https://design.vena.city';
@@ -139,27 +140,122 @@ function applyDashboardCta(html, isOn) {
  *     (fichier, mode, cta) — quelques replace de plus sur une chaîne déjà en
  *     mémoire sont négligeables.
  *  3. Blocs conditionnels __DASHBOARD_CTA_ON__ — voir applyDashboardCta().
+ *  4. Partials {{> header}} / {{> menu}} / {{> scripts}} — développés AVANT
+ *     tout le reste (cf. readPage). Le markup qu'ils apportent porte lui aussi
+ *     des placeholders (__VERSION__ et __VNCT_JS_URL__ dans scripts.html) : il
+ *     doit donc entrer dans le flux avant les substitutions, sinon ces
+ *     placeholders seraient servis bruts.
  *
  * L'ordre compte : l'étage caché d'abord, l'étage volatil ensuite. L'inverse
  * ferait entrer les URLs du DS dans le cache de assetVersion.
  *
  * @param {string} filePath
- * @param {{mode: string, dashboardCta: 'on'|'off'}} context — état déjà tranché
- *        par le serveur (cf. api/index.js). Le rendu ne décide de rien lui-même ;
- *        un contexte absent retombe sur le défaut sûr : bouton fermé.
+ * @param {{mode: string, dashboardCta: 'on'|'off', blocks?: Record<string, () => string>}} context
+ *        état déjà tranché par le serveur (cf. api/index.js). Le rendu ne décide
+ *        de rien lui-même ; un contexte absent retombe sur le défaut sûr :
+ *        bouton fermé, aucun fragment dynamique.
  * @returns {string|null} null si le fichier est illisible
  */
-function render(filePath, { mode = '', dashboardCta = 'off' } = {}) {
-    const base = assetVersion.render(filePath);
-    if (base === null) return null;
+function render(filePath, { mode = '', dashboardCta = 'off', blocks = {} } = {}) {
+    const raw = readPage(filePath);
+    if (raw === null) return null;
 
     const { css, js } = dsUrls();
-    return applyDashboardCta(base, dashboardCta === 'on')
+    let out = applyDashboardCta(raw, dashboardCta === 'on')
         .replaceAll('__VNCT_CSS_URL__', css)
         .replaceAll('__VNCT_JS_URL__', js)
         .replaceAll('__QUASAR_MODE__', mode)
         .replaceAll('__DASHBOARD_CTA__', dashboardCta);
+
+    // Fragments HTML calculés par requête (ex. __NOUVEAUTES_LIST__, dont le
+    // contenu change à chaud via l'API admin). Injectés BRUTS et volontairement
+    // hors du cache de page : les mettre en cache figerait le changelog jusqu'au
+    // prochain redémarrage. La fonction n'est appelée que si son placeholder est
+    // réellement présent — une page qui ne l'utilise pas ne paie pas son calcul.
+    for (const [name, produce] of Object.entries(blocks)) {
+        const placeholder = `__${name}__`;
+        if (out.includes(placeholder)) out = out.replaceAll(placeholder, produce());
+    }
+    return out;
 }
+
+// Gabarits de page entièrement assemblés (partials développés, __VERSION__
+// substituée), mis en cache pour la vie du process. Le cache est indexé par
+// (fichier + variables de page) : deux pages qui incluent le même header avec
+// un `ctx` différent ne doivent pas se marcher dessus.
+//
+// Ce qui reste HORS de ce cache : les URLs du DS, le mode et l'état du bouton
+// dashboard — leur ?v= change en cours de vie du process (polling), les figer
+// ici casserait le cache-busting jusqu'au prochain redémarrage.
+const pageCache = new Map();
+
+function readPage(filePath) {
+    const data = PAGE_DATA[filePath] || {};
+    const key = `${filePath}::${JSON.stringify(data)}`;
+    if (pageCache.has(key)) return pageCache.get(key);
+
+    // assetVersion.render() lit le disque et substitue __VERSION__. Les partials
+    // sont développés APRÈS : partials/scripts.html porte lui aussi un
+    // __VERSION__, il doit donc entrer dans le flux avant cette substitution.
+    // On relit donc le gabarit brut, on développe, puis on substitue.
+    const source = assetVersion.raw(filePath);
+    if (source === null) return null;
+
+    const rendered = partials
+        .expand(source, data)
+        .replaceAll('__VERSION__', assetVersion.VERSION);
+    pageCache.set(key, rendered);
+    return rendered;
+}
+
+// Variables de rendu des pages vitrine (chrome). Déclarées ici, à côté du
+// moteur, et pas dans chaque HTML : la variante de header et le libellé
+// contextuel sont une décision de navigation, elle se lit mieux d'un bloc.
+// Une page absente de cette table rend le header en variante statique sans
+// libellé — le défaut sûr.
+const path = require('path');
+const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
+const pageFile = (name) => path.join(PUBLIC_DIR, name);
+
+/**
+ * Liens de paiement de la page /soutenir, lus dans l'environnement.
+ *
+ * TOUS optionnels, et c'est le mécanisme central de la page : une variable
+ * absente masque le bouton correspondant, et si AUCUNE n'est définie la page
+ * bascule d'elle-même en mode « bientôt » (drapeau `supportSoon`). Aucun lien
+ * de paiement n'est donc jamais écrit en dur dans le HTML — et tant que le
+ * soutien n'est pas ouvert, la page reste honnête toute seule, sans qu'il faille
+ * penser à la modifier.
+ *
+ * Même convention de nommage que Prisma (STRIPE_LINK_*) : les deux services
+ * puisent dans le même compte, autant que les variables se lisent pareil.
+ */
+function supportLinks() {
+    const link = (name) => (process.env[name] || '').trim();
+    const links = {
+        once2: link('STRIPE_LINK_ONCE_2'),
+        once5: link('STRIPE_LINK_ONCE_5'),
+        onceCustom: link('STRIPE_LINK_ONCE_CUSTOM'),
+        monthly2: link('STRIPE_LINK_MONTHLY_2'),
+        monthly5: link('STRIPE_LINK_MONTHLY_5'),
+        monthly10: link('STRIPE_LINK_MONTHLY_10'),
+    };
+    const hasOnce = Boolean(links.once2 || links.once5 || links.onceCustom);
+    const hasMonthly = Boolean(links.monthly2 || links.monthly5 || links.monthly10);
+    return { ...links, hasOnce, hasMonthly, supportSoon: !hasOnce && !hasMonthly };
+}
+
+const PAGE_DATA = {
+    // L'accueil porte le chrome applicatif : pas de marque à gauche (on est
+    // déjà sur la page de la marque, le hero la porte en grand), drapeau de
+    // signalement + menu à droite.
+    [pageFile('index.html')]: { app: true },
+    [pageFile('ethique.html')]: { ctx: 'éthique' },
+    [pageFile('pourquoi.html')]: { ctx: 'un mot de la créatrice' },
+    [pageFile('nouveautes.html')]: { ctx: 'nouveautés' },
+    [pageFile('soutenir.html')]: { ctx: 'soutenir', ...supportLinks() },
+    [pageFile('instance-bientot.html')]: { ctx: 'instance publique' },
+};
 
 /**
  * Envoie une page de la vitrine, tous placeholders substitués. Le code de statut

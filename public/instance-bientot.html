@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__">
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,19 +9,15 @@
     <meta name="robots" content="noindex">
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
     <style>
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            min-height: 100vh;
-            font-family: var(--font-family);
-            color: var(--text-primary);
-            background: var(--bg-primary);
-        }
-
         /* <main> et non <div> : le DS v2 élève automatiquement body > main
-           au-dessus du canvas de fond (contrat --z-content: 2). */
+           au-dessus du canvas de fond (contrat --z-content: 2).
+
+           Hauteur : 100dvh moins la place du header flottant, pour que la carte
+           reste optiquement centrée sous lui plutôt que poussée vers le bas.
+           dvh et non vh — sur mobile, vh compte les barres du navigateur même
+           quand elles sont rétractées. */
         main {
-            min-height: 100vh;
+            min-height: calc(100dvh - 5rem);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -75,6 +71,8 @@
     </style>
 </head>
 <body>
+    {{> header}}
+
     <main>
         <section class="vnct-card soon">
             <img class="soon__symbol" src="/quasar-symbol.png" alt="" aria-hidden="true">
@@ -94,11 +92,6 @@
         </section>
     </main>
 
-    <script src="__VNCT_JS_URL__"></script>
-    <script>
-        VNCT.config.serviceName = 'Quasar';
-        VNCT.config.serviceVersion = '__VERSION__';
-        VNCT.config.devReportUrl = 'https://sema.vena.city';
-    </script>
+    {{> scripts}}
 </body>
 </html>

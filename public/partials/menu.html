@@ -1,0 +1,63 @@
+<!--
+    Menu « … » du header (VNCT.HeaderMenu, 100 % déclaratif — contrat DS v2.1,
+    cf. vnct-design-system/MIGRATION.md « Le menu overflow »). Bouton et panneau
+    FRÈRES dans .vnct-menu-wrap ; ouverture, fermeture, clic dehors, Échap et
+    navigation clavier sont pilotés par le DS. Un item <a> navigue et referme
+    le menu tout seul ; un <button> est à la charge du service (listener +
+    VNCT.HeaderMenu.closeAll(), cf. public/partials/scripts.html).
+
+    Ordre canonique Quasar :
+      Éthique / Un mot de la créatrice / Nouveautés / Soutenir Quasar
+      — séparateur — bascule de thème — séparateur —
+      liens légaux Strata (externes) + © Venacity.
+
+    Les liens légaux vivent ICI depuis le retrait du .vnct-footer : ils portent
+    une obligation légale, leur présence sur chaque page vitrine n'est pas
+    négociable (cf. MIGRATION.md « Bloc légal — contrat obligatoire »).
+-->
+<div class="vnct-menu-wrap">
+  <button class="vnct-header__icon" data-vnct-menu type="button" aria-haspopup="true" aria-expanded="false" aria-label="Plus d'options" title="Plus d'options">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+  </button>
+  <div class="vnct-menu" data-vnct-menu-panel role="menu" hidden>
+    <!-- Éthique — icône balance (les engagements se pèsent). -->
+    <a class="vnct-menu__item" href="/ethique" role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M5 7h14"/><path d="m5 7-3 6a3.5 3.5 0 0 0 6 0z"/><path d="m19 7-3 6a3.5 3.5 0 0 0 6 0z"/><path d="M7 21h10"/></svg>
+      Éthique
+    </a>
+    <!-- Un mot de la créatrice — icône cœur (registre personnel). -->
+    <a class="vnct-menu__item" href="/pourquoi" role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+      Un mot de la créatrice
+    </a>
+    <!-- Nouveautés — icône étincelles. -->
+    <a class="vnct-menu__item" href="/nouveautes" role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>
+      Nouveautés
+    </a>
+    <!-- Soutenir — icône tasse (participer aux frais). -->
+    <a class="vnct-menu__item" href="/soutenir" role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+      Soutenir Quasar
+    </a>
+    <div class="vnct-menu__sep" role="separator"></div>
+    <button class="vnct-menu__item" type="button" role="menuitem" data-quasar-action="theme" aria-label="Changer de thème">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      Changer de thème
+    </button>
+    <div class="vnct-menu__sep" role="separator"></div>
+    <a class="vnct-menu__item vnct-menu__item--ext" href="https://strata.vena.city/ml" target="_blank" rel="noopener noreferrer" role="menuitem">
+      <span>Mentions légales<span class="vnct-sr-only"> (nouvelle fenêtre)</span></span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <a class="vnct-menu__item vnct-menu__item--ext" href="https://strata.vena.city/pdc" target="_blank" rel="noopener noreferrer" role="menuitem">
+      <span>Politique de confidentialité<span class="vnct-sr-only"> (nouvelle fenêtre)</span></span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <a class="vnct-menu__item vnct-menu__item--ext" href="https://strata.vena.city/cgu" target="_blank" rel="noopener noreferrer" role="menuitem">
+      <span>Conditions générales d'utilisation<span class="vnct-sr-only"> (nouvelle fenêtre)</span></span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <div class="vnct-menu__foot">&copy; 2026 Venacity</div>
+  </div>
+</div>

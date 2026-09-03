@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const assetVersion = require('./services/assetVersion');
 const vnctDs = require('./services/vnctDs');
+const nouveautes = require('./services/nouveautes');
 
 const DASHBOARD_DIR = path.join(__dirname, '..', 'dashboard');
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -132,9 +133,20 @@ function dashboardCtaState(mode) {
     return mode === 'public' && isPublicInstanceOpen() ? 'on' : 'off';
 }
 
-/** Contexte de rendu d'une page de la vitrine (cf. services/vnctDs.js). */
+/**
+ * Contexte de rendu d'une page de la vitrine (cf. services/vnctDs.js).
+ *
+ * `blocks` porte les fragments HTML calculés par requête. Ce sont des FONCTIONS
+ * et non des chaînes : elles ne sont appelées que si la page rendue contient
+ * réellement le placeholder correspondant — l'accueil ne paie pas le rendu du
+ * changelog.
+ */
 function vitrineContext(mode) {
-    return { mode, dashboardCta: dashboardCtaState(mode) };
+    return {
+        mode,
+        dashboardCta: dashboardCtaState(mode),
+        blocks: { NOUVEAUTES_LIST: () => nouveautes.listHtml() },
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -146,7 +158,24 @@ function mountVitrine(app, mode) {
     // en mode `bot` (auto-hébergement), aucun appel sortant n'est ajouté.
     vnctDs.startVersionPolling();
 
+    // API admin du journal des nouveautés. Montée ICI, avec la vitrine : c'est
+    // la seule chose qu'elle alimente, et elle ne dépend ni du bot ni de la base
+    // — elle fonctionne donc aussi en mode `site`. Sans QUASAR_ADMIN_API_KEY,
+    // les routes répondent 503 : rien n'est publiable par défaut.
+    app.use('/api', require('./routes/adminNouveautes'));
+
     app.get('/', (req, res) => vnctDs.send(res, path.join(PUBLIC_DIR, 'index.html'), vitrineContext(mode)));
+
+    // Pages produit, servies sur des URLs SANS extension : ce sont les adresses
+    // publiques (menu « … », liens sortants, partages) et elles doivent le
+    // rester. Le garde-fou *.html ci-dessous continue de servir les mêmes
+    // fichiers sur /<nom>.html, mais ces URLs-là ne sont exposées nulle part.
+    const PRODUCT_PAGES = ['ethique', 'pourquoi', 'nouveautes', 'soutenir'];
+    for (const name of PRODUCT_PAGES) {
+        app.get(`/${name}`, (req, res) => {
+            vnctDs.send(res, path.join(PUBLIC_DIR, `${name}.html`), vitrineContext(mode));
+        });
+    }
 
     // Garde-fou : toute requête GET/HEAD vers un *.html de public/ passe par le
     // rendu, quelle que soit la route. Empêche express.static de livrer un HTML
