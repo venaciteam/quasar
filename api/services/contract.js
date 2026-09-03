@@ -30,7 +30,6 @@ const CONTRACT_SUMMARY = [
     'Toute violation de données vous concernant vous est notifiée sous 24 heures maximum, par message direct, repli en salon si besoin et bannière persistante dans le tableau de bord, avec traçabilité des envois.',
     'Les demandes d\'exercice des droits (dont l\'effacement) vous sont routées : c\'est vous qui décidez, avec une décision motivée obligatoire en cas de refus, sous un délai d\'un mois. Venacity relaie et exécute votre décision, sans se substituer à vous.',
     'Fin de relation : au retrait du bot d\'un serveur, ses données sont supprimées après un délai de grâce de 7 jours (les bannissements encore en vigueur sont conservés). Réinviter le bot avant l\'échéance annule la suppression.',
-    'Ce contrat n\'a pas été relu par un professionnel du droit : une relecture par un·e juriste ou avocat·e est vivement recommandée avant de s\'en prévaloir dans un litige.',
 ];
 
 // True si l'admin a déjà accepté la version courante du contrat.
