@@ -18,7 +18,28 @@ const CONTRACT_VERSION = '1.0';
 // URL publique du texte complet du contrat, affichée sur l'écran d'acceptation.
 // Publié sur Strata (site légal public), au même titre que les CGU et la politique
 // de confidentialité. Doit rester alignée sur le slug de l'article Strata.
-const CONTRACT_PUBLIC_URL = 'https://strata.vena.city/contrat-quasar';
+const DEFAULT_CONTRACT_PUBLIC_URL = 'https://strata.vena.city/contrat-quasar';
+
+// N'accepter que des URL http(s) : une valeur mal saisie — ou un `javascript:` —
+// ne doit jamais se retrouver dans un href de l'ecran d'acceptation.
+// Meme garde-fou que api/routes/instance.js.
+function sanitizeUrl(value) {
+    if (!value) return null;
+    try {
+        const url = new URL(String(value).trim());
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+        return url.href;
+    } catch {
+        return null;
+    }
+}
+
+// URL publique du texte integral, configurable par l'operateur de l'instance.
+// Un tiers qui ouvre sa propre instance publie SON contrat et pointe ici dessus,
+// sans avoir a modifier le code. A defaut, le contrat de l'instance Venacity.
+function getContractPublicUrl() {
+    return sanitizeUrl(process.env.CONTRACT_PUBLIC_URL) || DEFAULT_CONTRACT_PUBLIC_URL;
+}
 
 // Points clés du contrat, fidèles au texte v1.0, pour l'écran d'acceptation.
 // Résumé informatif : le lien vers le texte intégral (CONTRACT_PUBLIC_URL) reste
@@ -31,6 +52,21 @@ const CONTRACT_SUMMARY = [
     'Les demandes d\'exercice des droits (dont l\'effacement) vous sont routées : c\'est vous qui décidez, avec une décision motivée obligatoire en cas de refus, sous un délai d\'un mois. Venacity relaie et exécute votre décision, sans se substituer à vous.',
     'Fin de relation : au retrait du bot d\'un serveur, ses données sont supprimées après un délai de grâce de 7 jours (les bannissements encore en vigueur sont conservés). Réinviter le bot avant l\'échéance annule la suppression.',
 ];
+
+// Le contrat n'a de sens que sur l'instance publique opérée par Venacity : c'est
+// elle, et elle seule, qui est sous-traitante des administrateur·rices qui s'y
+// connectent. Une instance auto-hébergée (QUASAR_MODE=bot, le défaut) a son propre
+// opérateur — lui imposer le contrat de Venacity, qui nomme une autre personne comme
+// sous-traitant, n'aurait aucun sens juridique. Toute valeur autre que "public"
+// désactive donc l'exigence : on n'impose jamais un contrat par défaut.
+//
+// Un tiers qui exploite sa PROPRE instance ouverte à d'autres administrateur·rices a
+// le même besoin juridique, mais avec SON contrat : il lui revient de remplacer le
+// texte servi (dashboard/legal/contrat.html) et le contenu de ce module. La licence
+// AGPL-3.0 lui en donne le droit ; le README le documente.
+function isContractRequired() {
+    return (process.env.QUASAR_MODE || '').trim().toLowerCase() === 'public';
+}
 
 // True si l'admin a déjà accepté la version courante du contrat.
 function hasAcceptedCurrent(adminId) {
@@ -55,7 +91,9 @@ function recordAcceptance(adminId) {
 
 module.exports = {
     CONTRACT_VERSION,
-    CONTRACT_PUBLIC_URL,
+    isContractRequired,
+    DEFAULT_CONTRACT_PUBLIC_URL,
+    getContractPublicUrl,
     CONTRACT_SUMMARY,
     hasAcceptedCurrent,
     recordAcceptance,

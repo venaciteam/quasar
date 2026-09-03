@@ -317,7 +317,9 @@
 
             // ── Écran d'acceptation ──────────────────────────────────────────
             function renderAcceptance() {
-                const localUrl = state.localUrl || LOCAL_URL_FALLBACK;
+                // Le texte publie fait foi : on pointe dessus en priorite. La copie
+                // embarquee sert de repli si aucune URL publique n'est configuree.
+                const localUrl = state.url || state.localUrl || LOCAL_URL_FALLBACK;
                 const summaryItems = state.summary.length
                     ? state.summary.map(p => `<li>${escapeHtml(p)}</li>`).join('')
                     : `<li>Venacity héberge Quasar pour votre compte : en tant qu'administratrice ou administrateur, vous restez responsable de traitement (art. 28 du RGPD). Prenez connaissance du texte intégral via le lien ci-dessous avant d'accepter.</li>`;
@@ -494,6 +496,13 @@
                     }
 
                     const data = await res.json();
+
+                    // Instance auto-hebergee : le contrat de Venacity ne la concerne pas.
+                    if (data && data.required === false) {
+                        teardown();
+                        resolve(true);
+                        return;
+                    }
 
                     if (data && data.accepted) {
                         // Déjà accepté (version courante) → aucun écran.
