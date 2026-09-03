@@ -6,3 +6,8 @@ node_modules
 data
 *.bak
 *.md
+# Exception : le seed du journal des nouveautés est du CONTENU applicatif, pas
+# de la documentation. Sans cette ligne, `*.md` l'exclut de l'image et la page
+# /nouveautes démarre vide sur un volume neuf — silencieusement, puisque le seed
+# absent est traité comme un historique vide (cf. api/services/nouveautes.js).
+!content/*.md

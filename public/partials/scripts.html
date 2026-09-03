@@ -1,0 +1,59 @@
+<!--
+    Pied de scripts commun aux pages vitrine : DS v2 + configuration du service
+    + actions du chrome dé-inline-ées.
+
+    - data-disable-fab="true" : le FAB déprécié du DS ne se monte JAMAIS. Sans
+      ce flag, la page afficherait à la fois le drapeau du header (chrome v2) et
+      la pastille flottante du chrome historique — deux entrées pour le même
+      signalement.
+    - Le script du DS est chargé SANS defer : le bloc de config qui suit doit
+      s'exécuter APRÈS lui (vnct-common.js pose window.VNCT en fin de course et
+      écraserait une config posée avant).
+    - Délégation d'événements data-quasar-action : les partials header et menu
+      n'ont aucun onclick inline. Quasar n'a pas de CSP à nonce aujourd'hui,
+      mais l'écrire proprement maintenant évite d'avoir à repasser sur cinq
+      pages le jour où elle arrive.
+    - Le relais de signalement vit sur /api/feedback/vnct (cf. api/index.js) :
+      il est monté dans les DEUX modes qui servent la vitrine (`site` et
+      `public`), le drapeau fonctionne donc même sans bot ni base.
+-->
+<script src="__VNCT_JS_URL__" data-disable-fab="true"></script>
+<script>
+  (function () {
+    VNCT.config.serviceName = 'Quasar';
+    VNCT.config.serviceVersion = '__VERSION__';
+    // Backend des signalements = Sema. JAMAIS dev.vena.city (hôte mort qui
+    // répond 404 — piège documenté de la skill sema).
+    VNCT.config.devReportUrl = 'https://sema.vena.city';
+    // Repli si Sema est injoignable : le relais webhook Discord de Quasar.
+    VNCT.config.discordWebhookUrl = '/api/feedback/vnct';
+
+    document.addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest ? ev.target.closest('[data-quasar-action]') : null;
+      if (!el) return;
+      var action = el.getAttribute('data-quasar-action');
+      if (action === 'theme') {
+        // Menu volontairement laissé ouvert : la bascule se constate sur place,
+        // et re-basculer ne demande pas de rouvrir le menu.
+        VNCT.Theme.toggle();
+      } else if (action === 'report') {
+        VNCT.HeaderMenu.closeAll();
+        VNCT.Feedback.open();
+      } else if (action === 'copy-install') {
+        copyInstallCommand(el);
+      }
+    });
+
+    // Copie de la commande d'installation (carte « Autohébergement » de
+    // l'accueil). Retour visuel porté par l'attribut data-copied : le libellé
+    // du bouton n'est pas remplacé, il reste lisible par les lecteurs d'écran.
+    function copyInstallCommand(btn) {
+      var cmd = document.getElementById('install-cmd');
+      if (!cmd || !navigator.clipboard) return;
+      navigator.clipboard.writeText(cmd.textContent.trim()).then(function () {
+        btn.setAttribute('data-copied', 'true');
+        setTimeout(function () { btn.removeAttribute('data-copied'); }, 2000);
+      }).catch(function () {});
+    }
+  })();
+</script>

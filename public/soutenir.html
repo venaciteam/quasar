@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Soutenir Quasar — participer aux frais</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <meta name="theme-color" content="#06060c">
+    <meta name="description" content="Quasar est gratuit et le restera. Soutenir le projet, c'est participer aux frais qui le font tourner — sans aucune contrepartie.">
+    <meta property="og:title" content="Soutenir Quasar — participer aux frais">
+    <meta property="og:description" content="Quasar est gratuit et le restera. Soutenir le projet, c'est participer aux frais qui le font tourner.">
+    <meta property="og:url" content="https://quasar.vena.city/soutenir">
+    <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <style>
+        .quasar-read { position: relative; z-index: 2; width: 100%; max-width: 48rem; margin: 0 auto; padding: 0 var(--space-4) var(--space-10); }
+        .quasar-read__title { margin: var(--space-4) 0 var(--space-3); font-size: var(--text-2xl); color: var(--text-primary); }
+        .quasar-read__title .vnct-iris-text { font-weight: inherit; }
+        .quasar-read__lead { margin: 0 0 var(--space-8); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-read__lead strong { color: var(--text-primary); }
+        .quasar-read__foot { display: flex; justify-content: center; margin-top: var(--space-8); }
+
+        /* Offres : une colonne par récurrence, côte à côte dès qu'il y a la place. */
+        .quasar-offers { display: grid; gap: var(--space-4); }
+        @media (min-width: 720px) { .quasar-offers { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); } }
+        .quasar-offer {
+            padding: var(--space-6) var(--space-5);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            background: var(--s4);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            text-align: center;
+        }
+        .quasar-offer h2 { margin: 0; font-size: var(--text-lg); color: var(--text-primary); }
+        .quasar-offer p { margin: var(--space-2) 0 var(--space-5); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-offer__btns { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); }
+
+        .quasar-payinfo {
+            display: flex; align-items: flex-start; justify-content: center; gap: var(--space-2);
+            margin-top: var(--space-5);
+            font-size: var(--text-xs); color: var(--text-muted); line-height: var(--leading-relaxed);
+        }
+        .quasar-payinfo svg { flex-shrink: 0; margin-top: 2px; }
+
+        /* Mode « bientôt » : encart d'attente, affiché tant qu'aucun lien de
+           paiement n'est configuré côté serveur. */
+        .quasar-soon {
+            display: flex; align-items: flex-start; gap: var(--space-4);
+            padding: var(--space-5);
+            border: 1px dashed var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            /* Fond obligatoire : sans lui, la bordure pointillée flotte au-dessus
+               de la trame animée et l'encart paraît vide. --s3 est la surface la
+               plus opaque du DS (97 %), le motif ne transparaît pas. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+        }
+        .quasar-soon svg { flex-shrink: 0; color: var(--accent); margin-top: 2px; }
+        .quasar-soon__title { margin: 0 0 var(--space-2); font-size: var(--text-base); font-weight: var(--font-semibold); color: var(--text-primary); }
+        .quasar-soon__text { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+
+        /* Engagements : ce que le soutien ne change PAS. */
+        .quasar-rules { margin-top: var(--space-8); display: grid; gap: var(--space-4); }
+        .quasar-rule { display: flex; align-items: flex-start; gap: var(--space-3); }
+        .quasar-rule svg { flex-shrink: 0; color: var(--accent); margin-top: 2px; }
+        .quasar-rule p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-rule b { color: var(--text-primary); }
+    </style>
+</head>
+<body>
+    {{> header}}
+
+    <main class="quasar-read">
+        <h1 class="quasar-read__title vnct-appear">Soutenir Qua<span class="vnct-iris-text">sar</span></h1>
+        <p class="quasar-read__lead vnct-appear vnct-appear--d1">
+            Quasar est <strong>gratuit et le restera</strong>, sans palier premium ni
+            fonctionnalité verrouillée. Mais faire tourner l'instance publique a un coût
+            réel&nbsp;: un serveur allumé en continu, un nom de domaine, du temps de
+            maintenance. Soutenir Quasar, c'est <strong>participer à ces frais</strong> — et le
+            garder gratuit, sans publicité, pour tout le monde.
+        </p>
+
+        {{#if:supportSoon}}
+        <div class="quasar-soon vnct-appear vnct-appear--d2" role="status">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <div>
+                <p class="quasar-soon__title">Le soutien ouvre bientôt</p>
+                <p class="quasar-soon__text">
+                    La possibilité de participer aux frais arrive avec l'ouverture complète de
+                    l'instance publique&nbsp;: les derniers réglages sont en cours. En attendant,
+                    en parler autour de vous — ou mettre une étoile au dépôt — aide déjà
+                    énormément.
+                </p>
+            </div>
+        </div>
+        {{else}}
+        <div class="quasar-offers vnct-appear vnct-appear--d2">
+            {{#if:hasOnce}}
+            <section class="quasar-offer">
+                <h2>Une fois</h2>
+                <p>Un coup de pouce ponctuel, sans suite.</p>
+                <div class="quasar-offer__btns">
+                    {{#if:once2}}<a class="vnct-btn vnct-btn--primary" href="{{once2}}" target="_blank" rel="noopener">2&nbsp;€<span class="vnct-sr-only"> — soutien ponctuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:once2}}
+                    {{#if:once5}}<a class="vnct-btn vnct-btn--primary" href="{{once5}}" target="_blank" rel="noopener">5&nbsp;€<span class="vnct-sr-only"> — soutien ponctuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:once5}}
+                    {{#if:onceCustom}}<a class="vnct-btn vnct-btn--primary" href="{{onceCustom}}" target="_blank" rel="noopener">Montant libre<span class="vnct-sr-only"> — soutien ponctuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:onceCustom}}
+                </div>
+            </section>
+            {{/if:hasOnce}}
+            {{#if:hasMonthly}}
+            <section class="quasar-offer">
+                <h2>Chaque mois</h2>
+                <p>Ce qui couvre durablement un serveur allumé en continu. Résiliable à tout moment.</p>
+                <div class="quasar-offer__btns">
+                    {{#if:monthly2}}<a class="vnct-btn vnct-btn--primary" href="{{monthly2}}" target="_blank" rel="noopener">2&nbsp;€/mois<span class="vnct-sr-only"> — soutien mensuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:monthly2}}
+                    {{#if:monthly5}}<a class="vnct-btn vnct-btn--primary" href="{{monthly5}}" target="_blank" rel="noopener">5&nbsp;€/mois<span class="vnct-sr-only"> — soutien mensuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:monthly5}}
+                    {{#if:monthly10}}<a class="vnct-btn vnct-btn--primary" href="{{monthly10}}" target="_blank" rel="noopener">10&nbsp;€/mois<span class="vnct-sr-only"> — soutien mensuel, paiement Stripe (nouvelle fenêtre)</span></a>{{/if:monthly10}}
+                </div>
+            </section>
+            {{/if:hasMonthly}}
+        </div>
+        <p class="quasar-payinfo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>Paiement sécurisé sur une page Stripe — anonyme, sans compte à créer. Quasar ne voit ni ne conserve aucune donnée bancaire.</span>
+        </p>
+        {{/if:supportSoon}}
+
+        <section class="quasar-rules vnct-appear vnct-appear--d3" aria-label="Engagements">
+            <div class="quasar-rule">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="15" x2="16" y2="15"/></svg>
+                <p><b>Aucune contrepartie.</b> Le service reste strictement identique pour tout le monde. Soutenir ne débloque rien, n'accélère rien, ne donne accès à rien de plus — sinon ce ne serait plus un soutien, mais un abonnement déguisé.</p>
+            </div>
+            <div class="quasar-rule">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <p><b>Aucune donnée en échange.</b> Le soutien passe par Stripe, à côté de Quasar. Votre compte Discord n'est pas lié à votre paiement, et rien n'apparaît nulle part dans le produit.</p>
+            </div>
+            <div class="quasar-rule">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"/></svg>
+                <p><b>Soutenir autrement, ça compte aussi.</b> Signaler un bug, proposer une amélioration, corriger la documentation ou simplement parler du projet&nbsp;: tout ça fait avancer Quasar autant qu'un virement.</p>
+            </div>
+        </section>
+
+        <div class="quasar-read__foot vnct-appear vnct-appear--d4">
+            <a class="vnct-btn vnct-btn--ghost" href="/">Retour à l'accueil</a>
+        </div>
+    </main>
+
+    {{> scripts}}
+</body>
+</html>

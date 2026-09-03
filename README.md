@@ -87,6 +87,9 @@ cp .env.example .env
 | `INSTANCE_ABUSE_CONTACT` | Contact affiché pour signaler un abus quand `ABUSE_REPORT_URL` est vide (e-mail ou URL) |
 | `REPORT_RELAY_URL` | Où partent les bugs du logiciel (`/signaler bug`). Défaut : `https://sema.vena.city` |
 | `GUILD_PURGE_GRACE_DAYS` | Délai avant suppression des données d'un serveur quitté (défaut : `7` jours, `0` = immédiat) |
+| `QUASAR_ADMIN_API_KEY` | Clé d'administration du journal des nouveautés (`/api/admin/nouveautes`). **Vide par défaut** : sans elle, ces routes répondent 503 et rien ne peut être publié |
+| `STRIPE_LINK_ONCE_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_CUSTOM` | Liens de paiement ponctuels de la page `/soutenir`. Chacun est optionnel : un lien absent masque son bouton |
+| `STRIPE_LINK_MONTHLY_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_10` | Idem pour les soutiens mensuels. Si **aucun** lien n'est défini, `/soutenir` bascule d'elle-même en mode « bientôt » |
 
 > **🔒 Le dashboard est fermé par défaut** — Il n'écoute que sur la machine qui l'héberge. C'est volontaire : le dashboard donne accès à toute la configuration du bot et aux données de tes serveurs (sanctions, tickets, configs). Tant que tu n'y touches pas, personne d'autre sur ton réseau ne peut l'atteindre.
 >
@@ -299,12 +302,14 @@ quasar/
 │   ├── js/               # Frontend logic
 │   └── css/              # Styles
 ├── public/               # Vitrine publique du projet
+│   └── partials/         # Chrome mutualisé (header, menu, scripts)
+├── content/              # Seed du journal des nouveautés
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
 ├── LICENSE               # AGPL-3.0
 ├── NOTICE                # Noms et marques (non couverts par la licence)
-└── data/                 # Volume Docker (SQLite)
+└── data/                 # Volume Docker (SQLite + nouveautes.json)
 ```
 
 Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique du projet (`public/`) — les deux vivaient auparavant dans deux dépôts séparés. Ce qu'un déploiement sert dépend de la variable `QUASAR_MODE` :
@@ -313,9 +318,35 @@ Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique
 - `site` — vitrine seule, sans bot ni base de données ;
 - `public` — instance publique : bot, dashboard et vitrine.
 
-Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. L'affichage du bouton « Accéder au dashboard » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même.
+Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. L'affichage de la carte « Sans rien installer » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même : quand elle est fermée, la carte est retirée du HTML servi et l'accueil n'affiche que l'autohébergement.
 
-Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre en mode `bot`.
+Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre en mode `bot`, et la vitrine n'est pas servie du tout.
+
+### Les pages de la vitrine
+
+| URL | Contenu |
+|---|---|
+| `/` | Accueil : les deux façons d'utiliser Quasar, l'argument « premium sans palier », les engagements sur la vie privée |
+| `/ethique` | Ce que Quasar fait des données, et ce qu'il n'en fait pas — détaillé par mode d'hébergement |
+| `/pourquoi` | Un mot de la créatrice, et l'origine du nom |
+| `/nouveautes` | Le journal des mises à jour (voir ci-dessous) |
+| `/soutenir` | Participer aux frais de l'instance publique |
+
+Toutes partagent le chrome du design system Venacity — en-tête flottant, menu « … », bascule de thème — mutualisé dans `public/partials/`. Les liens légaux vivent dans ce menu : le pied de page a été retiré avec le chrome historique du design system.
+
+### Le journal des nouveautés
+
+La page `/nouveautes` lit `data/nouveautes.json`, sur le volume persistant. Le fichier est alimenté **à chaud** par une API d'administration : publier une note de version ne demande aucun redéploiement.
+
+| Route | Effet |
+|---|---|
+| `GET /api/admin/nouveautes` | Liste les entrées, de la plus récente à la plus ancienne |
+| `POST /api/admin/nouveautes` | Publie un bloc markdown. Corps : `{ "block": "## 🌌 Quasar — vX.Y.Z\n### Titre\n> *JJ mois AAAA*\n\n- …" }` |
+| `DELETE /api/admin/nouveautes/:id` | Retire une entrée (l'`id` est renvoyé par les deux routes ci-dessus) |
+
+L'authentification se fait par clé d'API, en en-tête `X-API-Key` (ou `Authorization: Bearer`). **Sans `QUASAR_ADMIN_API_KEY`, ces routes répondent 503** : rien n'est publiable par défaut.
+
+L'upsert se fait par couple (date + version) : re-poster un bloc corrigé de la même version le même jour remplace l'entrée au lieu d'en créer une seconde. Au tout premier démarrage sur un volume neuf, l'historique est initialisé depuis `content/nouveautes.md`, versionné dans le dépôt ; ensuite ce fichier n'est plus relu — l'éditer ne publie donc rien sur une instance déjà déployée.
 
 ---
 

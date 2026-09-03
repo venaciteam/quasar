@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>L'éthique de Quasar — les engagements</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <meta name="theme-color" content="#06060c">
+    <meta name="description" content="Ce que Quasar fait de vos données, et surtout ce qu'il n'en fait pas. Engagements détaillés, par mode d'hébergement.">
+    <meta property="og:title" content="L'éthique de Quasar — les engagements">
+    <meta property="og:description" content="Ce que Quasar fait de vos données, et surtout ce qu'il n'en fait pas.">
+    <meta property="og:url" content="https://quasar.vena.city/ethique">
+    <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <style>
+        /* Page de lecture : colonne étroite, cartes en verre dépoli.
+           Même gabarit que /pourquoi, /nouveautes et /soutenir. */
+        .quasar-read { position: relative; z-index: 2; width: 100%; max-width: 48rem; margin: 0 auto; padding: 0 var(--space-4) var(--space-10); }
+        .quasar-read__title { margin: var(--space-4) 0 var(--space-3); font-size: var(--text-2xl); color: var(--text-primary); }
+        .quasar-read__title .vnct-iris-text { font-weight: inherit; }
+        .quasar-read__lead { margin: 0 0 var(--space-8); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-read__lead strong { color: var(--text-primary); }
+
+        .quasar-read__sections { display: flex; flex-direction: column; gap: var(--space-4); }
+        .quasar-card {
+            padding: var(--space-6) var(--space-5);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            background: var(--s4);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+        }
+        .quasar-card__title { margin: 0 0 var(--space-3); font-size: var(--text-lg); color: var(--text-primary); }
+        .quasar-card p { margin: 0 0 var(--space-4); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-card p:last-child { margin-bottom: 0; }
+        .quasar-card strong { color: var(--text-primary); }
+        .quasar-card a { color: var(--accent); }
+        .quasar-card ul { margin: 0 0 var(--space-4); padding-left: 1.2em; color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-card li { margin-bottom: var(--space-2); }
+        .quasar-card li:last-child { margin-bottom: 0; }
+        .quasar-card li::marker { color: var(--text-muted); }
+
+        /* Encart irisé : réservé au passage le plus engagé de la page. */
+        .quasar-highlight { padding: var(--space-6) var(--space-5); border-radius: var(--radius-lg, 14px); }
+        .quasar-highlight p { margin: 0 0 var(--space-4); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-highlight p:last-child { margin-bottom: 0; }
+
+        .quasar-read__foot { display: flex; justify-content: center; margin-top: var(--space-8); }
+    </style>
+</head>
+<body>
+    {{> header}}
+
+    <main class="quasar-read">
+        <h1 class="quasar-read__title vnct-appear">L'éthique de Qua<span class="vnct-iris-text">sar</span></h1>
+        <p class="quasar-read__lead vnct-appear vnct-appear--d1">
+            Un bot Discord voit passer beaucoup de choses&nbsp;: qui rejoint un serveur, qui
+            est sanctionné, ce qui se dit dans un ticket de support. La question n'est donc pas
+            de savoir si Quasar a accès à des données sensibles — il en a — mais
+            <strong>ce qu'il en fait</strong>. Voici la réponse, en détail.
+        </p>
+
+        <div class="quasar-read__sections vnct-appear vnct-appear--d2">
+
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">Deux façons d'utiliser Quasar, deux situations différentes</h2>
+                <p>
+                    Cette page distingue les deux, parce que les engagements ne sont pas les
+                    mêmes — et prétendre le contraire serait malhonnête.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Vous hébergez Quasar vous-même.</strong> C'est le mode par défaut,
+                        celui pour lequel le projet a été écrit. Le bot tourne sur votre machine,
+                        la base de données est un fichier sur votre disque. Venacity n'a accès à
+                        rien, et ne peut techniquement pas en avoir.
+                    </li>
+                    <li>
+                        <strong>Vous utilisez l'instance publique.</strong> Le bot tourne alors sur
+                        un serveur de Venacity, qui devient de fait hébergeur de vos données de
+                        configuration. C'est un engagement fort de ma part, encadré par un
+                        contrat de sous-traitance.
+                    </li>
+                </ul>
+            </article>
+
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">Si vous hébergez Quasar vous-même</h2>
+                <p>
+                    <strong>Rien ne sort de chez vous.</strong> Configurations, sanctions, panneaux
+                    de rôles, transcripts de tickets&nbsp;: tout vit dans un unique fichier SQLite,
+                    sur la machine que vous avez choisie. Il n'y a ni compte à créer chez Venacity,
+                    ni clé d'API à demander, ni serveur central à contacter.
+                </p>
+                <p>
+                    <strong>Il n'y a aucune télémétrie.</strong> Pas d'analytics, pas de compteur
+                    d'installations, pas de « ping » périodique. Je ne sais pas combien
+                    d'instances de Quasar tournent dans le monde, et c'est volontaire&nbsp;: le
+                    seul moyen honnête de promettre que rien n'est mesuré, c'est de n'avoir rien
+                    écrit pour le mesurer.
+                </p>
+                <p>
+                    <strong>Les seules connexions sortantes sont celles que vous attendez</strong>&nbsp;:
+                    l'API de Discord (sans elle, pas de bot), et la vérification des mises à jour.
+                </p>
+            </article>
+
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">Si vous utilisez l'instance publique</h2>
+                <p>
+                    Là, Venacity héberge vos données de configuration et devient
+                    <strong>sous-traitant au sens du RGPD</strong>. Ça implique des obligations
+                    précises, et elles sont écrites&nbsp;: un contrat de sous-traitance est
+                    consultable et opposable, et il décrit ce qui est traité, pourquoi, combien de
+                    temps, et ce que vous pouvez exiger.
+                </p>
+                <p>
+                    L'authentification passe par Discord (OAuth2)&nbsp;: <strong>aucun mot de passe
+                    n'est stocké</strong>, et Quasar ne connaît de vous que ce que Discord lui
+                    transmet pour vous identifier. Le droit à l'effacement est implémenté dans le
+                    produit, pas seulement promis dans un document.
+                </p>
+                <p>
+                    Et si l'instance publique ne vous convient pas, l'autre mode reste toujours
+                    disponible&nbsp;: c'est le même logiciel, et il est ouvert.
+                </p>
+            </article>
+
+            <section class="quasar-highlight vnct-iris-border" aria-label="Ce à quoi je m'engage">
+                <h2 class="quasar-card__title">Ce à quoi je m'engage, dans les deux cas</h2>
+                <p>
+                    Vos données ne sont <strong>jamais revendues</strong>, jamais recoupées avec
+                    celles d'un autre service, jamais exploitées pour de la publicité ciblée. Il
+                    n'existe aucun profil publicitaire derrière Quasar, parce qu'il n'existe aucun
+                    modèle économique qui en dépende.
+                </p>
+                <p>
+                    Quasar est gratuit et le restera, sans palier premium ni fonctionnalité
+                    verrouillée. Ce qui le fait tenir, ce sont les <a href="/soutenir">soutiens</a>
+                    de celles et ceux qui le souhaitent — jamais vos données.
+                </p>
+            </section>
+
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">Et si vous ne me croyez pas</h2>
+                <p>
+                    C'est la bonne réaction, et c'est précisément pour ça que
+                    <strong>le code est ouvert</strong>. Tout ce qui est affirmé sur cette page est
+                    vérifiable&nbsp;: les requêtes sortantes, ce qui est écrit en base, ce qui ne
+                    l'est pas. Une promesse de confidentialité qui ne peut pas être auditée ne vaut
+                    pas grand-chose.
+                </p>
+                <p>
+                    <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">Lire le code sur GitHub<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a>
+                </p>
+            </article>
+
+        </div>
+
+        <div class="quasar-read__foot vnct-appear vnct-appear--d3">
+            <a class="vnct-btn vnct-btn--ghost" href="/">Retour à l'accueil</a>
+        </div>
+    </main>
+
+    {{> scripts}}
+</body>
+</html>

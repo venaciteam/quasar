@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pourquoi Quasar — un mot de la créatrice</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <meta name="theme-color" content="#06060c">
+    <meta name="description" content="Pourquoi Quasar existe : le mot de sa créatrice.">
+    <meta property="og:title" content="Pourquoi Quasar — un mot de la créatrice">
+    <meta property="og:description" content="Pourquoi Quasar existe : le mot de sa créatrice.">
+    <meta property="og:url" content="https://quasar.vena.city/pourquoi">
+    <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <style>
+        /* Page « un mot de la créatrice » — même gabarit que /ethique :
+           colonne de cartes en verre dépoli, un encart irisé pour le passage
+           le plus engagé, signature alignée à droite.
+
+           Le TEXTE de cette page est celui de Leeva. Rien n'y est généré : quand
+           il faut le faire évoluer, on remplace le contenu des cartes, jamais on
+           ne « complète » au jugé. */
+        .quasar-read { position: relative; z-index: 2; width: 100%; max-width: 48rem; margin: 0 auto; padding: 0 var(--space-4) var(--space-10); }
+        .quasar-read__title { margin: var(--space-4) 0 var(--space-3); font-size: var(--text-2xl); color: var(--text-primary); }
+        .quasar-read__title .vnct-iris-text { font-weight: inherit; }
+        .quasar-read__lead { margin: 0 0 var(--space-8); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-read__lead strong { color: var(--text-primary); }
+        .quasar-read__foot { display: flex; justify-content: center; margin-top: var(--space-8); }
+
+        .quasar-read__sections { display: flex; flex-direction: column; gap: var(--space-4); }
+        .quasar-card {
+            padding: var(--space-6) var(--space-5);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            background: var(--s4);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+        }
+        .quasar-card__title { margin: 0 0 var(--space-3); font-size: var(--text-lg); color: var(--text-primary); }
+        .quasar-card p { margin: 0 0 var(--space-4); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-card p:last-child { margin-bottom: 0; }
+        .quasar-card strong { color: var(--text-primary); }
+        .quasar-card em { color: var(--accent); font-style: italic; }
+        .quasar-card a { color: var(--accent); }
+
+        .quasar-highlight { padding: var(--space-6) var(--space-5); border-radius: var(--radius-lg, 14px); }
+        .quasar-highlight p { margin: 0 0 var(--space-4); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-highlight p:last-child { margin-bottom: 0; }
+
+        /* Signature « — Leeva », alignée à droite. */
+        .quasar-sign { margin: var(--space-5) 0 0; text-align: right; font-size: var(--text-base); color: var(--text-primary); font-weight: var(--font-semibold); }
+
+        /* Encart d'attente, affiché tant que le texte n'est pas écrit. À retirer
+           en même temps qu'on remplit les cartes ci-dessous. */
+        .quasar-draft {
+            display: flex; align-items: flex-start; gap: var(--space-4);
+            padding: var(--space-5);
+            border: 1px dashed var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            /* Fond obligatoire, cf. .quasar-soon dans soutenir.html : une bordure
+               pointillée seule laisse voir la trame animée à travers l'encart. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+        }
+        .quasar-draft svg { flex-shrink: 0; color: var(--accent); margin-top: 2px; }
+        .quasar-draft__title { margin: 0 0 var(--space-2); font-size: var(--text-base); font-weight: var(--font-semibold); color: var(--text-primary); }
+        .quasar-draft__text { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+    </style>
+</head>
+<body>
+    {{> header}}
+
+    <main class="quasar-read">
+        <h1 class="quasar-read__title vnct-appear">Pourquoi Qua<span class="vnct-iris-text">sar</span></h1>
+
+        <div class="quasar-read__sections vnct-appear vnct-appear--d2">
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 PAGE EN ATTENTE DE SON TEXTE.
+
+                 Le mot de la créatrice est un texte personnel : il est écrit par
+                 Leeva, jamais rédigé à sa place. En attendant, cette page dit
+                 honnêtement où elle en est plutôt que d'afficher un texte
+                 plausible mais inventé — même choix que Prisma, dont la page
+                 /pourquoi est restée en attente jusqu'à ce que le texte existe.
+
+                 Pour la remplir : remplacer ce bloc .quasar-draft par les cartes
+                 du texte (structure de référence en commentaire juste en
+                 dessous), et retirer le style .quasar-draft devenu inutile.
+                 ══════════════════════════════════════════════════════════════ -->
+            <div class="quasar-draft" role="status">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                <div>
+                    <p class="quasar-draft__title">Cette page est en cours d'écriture</p>
+                    <p class="quasar-draft__text">
+                        Le mot de la créatrice arrive bientôt&nbsp;: pourquoi Quasar existe,
+                        d'où vient son nom, et ce qui a motivé le choix de tout ouvrir plutôt
+                        que de verrouiller. En attendant, <a href="/ethique">la page éthique</a>
+                        détaille déjà les engagements du projet.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Structure de référence, à décommenter et remplir avec le texte réel :
+
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">Titre de la première partie</h2>
+                <p>…</p>
+            </article>
+
+            <section class="quasar-highlight vnct-iris-border" aria-label="Ce à quoi je tiens">
+                <h2 class="quasar-card__title">Ce à quoi je tiens</h2>
+                <p>…</p>
+            </section>
+
+            <section class="quasar-card" aria-label="Un dernier mot">
+                <h2 class="quasar-card__title">Un dernier mot</h2>
+                <p>…</p>
+                <p class="quasar-sign">— Leeva</p>
+            </section>
+            -->
+
+            <!-- Origine du nom : ce texte-ci existe déjà (il vivait au bas de
+                 l'ancienne page d'accueil, section « D'où vient le nom ? ») et
+                 trouve sa place naturelle ici. Conservé mot pour mot, au
+                 vouvoiement près. -->
+            <article class="quasar-card">
+                <h2 class="quasar-card__title">D'où vient le nom</h2>
+                <p>
+                    Dans les années 60, les astronomes ont découvert des objets d'apparence
+                    minuscule mais à la puissance incompréhensible — ils les ont appelés
+                    <em>quasars</em>.
+                </p>
+                <p>
+                    <strong>Quasar</strong> est un bot Discord construit sur la même idée&nbsp;:
+                    petit, auto-hébergeable en une ligne sur n'importe quelle machine où Docker
+                    tourne, mais capable de ce que d'autres réservent à leurs abonnements.
+                </p>
+            </article>
+
+        </div>
+
+        <div class="quasar-read__foot vnct-appear vnct-appear--d3">
+            <a class="vnct-btn vnct-btn--ghost" href="/">Retour à l'accueil</a>
+        </div>
+    </main>
+
+    {{> scripts}}
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr" data-accent="rose" data-quasar-mode="__QUASAR_MODE__" data-dashboard-cta="__DASHBOARD_CTA__">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Les nouveautés de Quasar — le journal des mises à jour</title>
+    <link rel="icon" type="image/png" href="/icon.png">
+    <meta name="theme-color" content="#06060c">
+    <meta name="description" content="Version après version, tout ce qui change dans Quasar est consigné ici : ajouts, améliorations et corrections, de la plus récente à la plus ancienne.">
+    <meta property="og:title" content="Les nouveautés de Quasar">
+    <meta property="og:description" content="Le journal des mises à jour de Quasar, version après version.">
+    <meta property="og:url" content="https://quasar.vena.city/nouveautes">
+    <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <style>
+        /* Page « nouveautés » : changelog rendu CÔTÉ SERVEUR à partir des blocs
+           markdown du journal (cf. api/services/nouveautes.js). Une carte par
+           version, hiérarchie stylée depuis le markdown rendu — le HTML injecté
+           n'a pas de classes, tout passe par les sélecteurs de descendance. */
+        .quasar-news { position: relative; z-index: 2; width: 100%; max-width: 48rem; margin: 0 auto; padding: 0 var(--space-4) var(--space-10); }
+        .quasar-news__title { margin: var(--space-4) 0 var(--space-3); font-size: var(--text-2xl); color: var(--text-primary); }
+        .quasar-news__title .vnct-iris-text { font-weight: inherit; }
+        .quasar-news__lead { margin: 0 0 var(--space-6); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-news__lead strong { color: var(--text-primary); }
+
+        /* Cas vide : encart sobre, bordure pointillée. */
+        .quasar-news-empty {
+            padding: var(--space-4);
+            border: 1px dashed var(--border-default);
+            border-radius: var(--radius-md, 10px);
+            font-size: var(--text-sm); color: var(--text-muted);
+            line-height: var(--leading-relaxed);
+            /* Fond obligatoire, cf. .quasar-soon dans soutenir.html. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+        }
+
+        .quasar-news-list { display: flex; flex-direction: column; gap: var(--space-4); }
+        .quasar-news-entry {
+            padding: var(--space-5) var(--space-4);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg, 14px);
+            background: var(--s4);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            transition: border-color var(--duration-fast) ease;
+        }
+        @media (min-width: 769px) { .quasar-news-entry:hover { border-color: var(--border-hover); } }
+
+        /* ── Hiérarchie du markdown rendu ─────────────────────────────────────
+           h2  = « 🌌 Quasar — v4.5.0 » (la version)  -> en-tête de carte, accent
+           h3  = titre humain de la version           -> titre mis en avant
+           > * = date en citation                     -> ligne muted discrète
+           p>strong seul = libellé de section (✨/🔧) -> intertitre compact
+           ul/li = les changements                    -> corps de texte          */
+        .quasar-news-entry h2 {
+            margin: 0 0 var(--space-1);
+            font-size: var(--text-sm);
+            font-weight: var(--font-semibold);
+            color: var(--accent);
+            letter-spacing: var(--tracking-wide, 0.02em);
+        }
+        .quasar-news-entry h3 {
+            margin: 0 0 var(--space-1);
+            font-size: var(--text-lg);
+            color: var(--text-primary);
+            line-height: var(--leading-snug);
+        }
+        /* La PREMIÈRE citation après le titre est la ligne de DATE : simple
+           mention muted sans filet. Les autres gardent un filet accent discret. */
+        .quasar-news-entry blockquote {
+            margin: var(--space-4) 0 0;
+            padding: var(--space-1) 0 var(--space-1) var(--space-3);
+            border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+        }
+        .quasar-news-entry blockquote p { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); }
+        .quasar-news-entry h3 + blockquote,
+        .quasar-news-entry h2 + blockquote { margin: 0 0 var(--space-4); padding: 0; border-left: 0; }
+        .quasar-news-entry h3 + blockquote p,
+        .quasar-news-entry h2 + blockquote p { color: var(--text-muted); font-size: var(--text-xs); }
+        .quasar-news-entry h3 + blockquote em,
+        .quasar-news-entry h2 + blockquote em { font-style: normal; }
+
+        .quasar-news-entry p { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        /* Libellés de section (« **✨ Nouveautés** » seuls dans leur paragraphe) :
+           intertitres compacts. Sans :has(), dégradation propre en paragraphe. */
+        .quasar-news-entry p:has(> strong:only-child) { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-sm); }
+        .quasar-news-entry strong { color: var(--text-primary); }
+        .quasar-news-entry em { color: var(--text-muted); }
+        .quasar-news-entry a { color: var(--accent); }
+        .quasar-news-entry ul { margin: 0 0 var(--space-3); padding-left: 1.2em; }
+        .quasar-news-entry ul:last-child, .quasar-news-entry p:last-child, .quasar-news-entry blockquote:last-child { margin-bottom: 0; }
+        .quasar-news-entry li { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
+        .quasar-news-entry li:last-child { margin-bottom: 0; }
+        .quasar-news-entry li::marker { color: var(--text-muted); }
+
+        .quasar-news__foot { margin-top: var(--space-8); font-size: var(--text-xs); color: var(--text-muted); text-align: center; }
+        .quasar-news__foot a { color: var(--accent); }
+    </style>
+</head>
+<body>
+    {{> header}}
+
+    <main class="quasar-news">
+        <h1 class="quasar-news__title vnct-appear">Les nouveautés de Qua<span class="vnct-iris-text">sar</span></h1>
+        <p class="quasar-news__lead vnct-appear vnct-appear--d1">
+            Version après version, tout ce qui change dans Quasar est consigné ici — les
+            <strong>ajouts</strong> comme les <strong>corrections</strong>, de la plus récente
+            à la plus ancienne.
+        </p>
+
+        <div class="vnct-appear vnct-appear--d2">
+            <!-- Fragment rendu à chaque requête par api/services/nouveautes.js :
+                 le journal est piloté à chaud via l'API admin, le mettre en
+                 cache ici figerait la page jusqu'au prochain redémarrage. -->
+            __NOUVEAUTES_LIST__
+        </div>
+
+        <p class="quasar-news__foot vnct-appear vnct-appear--d3">
+            Une remarque sur l'une de ces évolutions&nbsp;? Le drapeau
+            «&nbsp;Signaler ou proposer&nbsp;» de <a href="/">l'accueil</a> la transmet
+            directement.
+        </p>
+    </main>
+
+    {{> scripts}}
+</body>
+</html>
