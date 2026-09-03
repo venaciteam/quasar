@@ -50,6 +50,7 @@
 
 ## Ideas
 
+- [ ] Anti-nuke — chantier ultérieur, hors du périmètre de la modération automatique : protéger le serveur contre un compte d'administration compromis (suppression massive de salons ou de rôles, vague de bannissements, création de webhooks). Quarantaine du compte fautif et restauration depuis backup.
 - [ ] Systeme de plugins (modules activables/desactivables)
 - [ ] Backup/restore config depuis le dashboard
 - [ ] Support Fluxer (quasar-fluxer)

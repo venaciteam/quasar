@@ -57,6 +57,9 @@
                 <button class="sidebar-link" data-page="moderation">
                     <span class="sidebar-link-icon">🛡️</span> Modération
                 </button>
+                <button class="sidebar-link" data-page="automod">
+                    <span class="sidebar-link-icon">🤖</span> Modération auto
+                </button>
                 <button class="sidebar-link" data-page="welcome">
                     <span class="sidebar-link-icon">👋</span> Welcome / Leave
                 </button>
@@ -171,6 +174,13 @@
     <script src="/dashboard/js/pages/tempvoice.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/tickets.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/scheduled.js?v=__VERSION__"></script>
+    <!-- Modération automatique : le conteneur d'onglets DOIT rester avant les
+         fichiers d'onglets, c'est lui qui expose registerAutomodTab. -->
+    <script src="/dashboard/js/pages/automod.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/automod-discord.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/automod-escalation.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/automod-antiraid.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/pages/automod-honeypot.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/update.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/erasure.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/breach.js?v=__VERSION__"></script>

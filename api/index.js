@@ -272,6 +272,13 @@ function createApi(discordClient, mode = 'bot') {
     const breachRoutes = require('./routes/breach');
     const ownerRoutes = require('./routes/owner');
     const erasureRoutes = require('./routes/erasure');
+    // Modération automatique — quatre modules qui partagent le socle commun
+    // (punitions composables, portée par règle, salon d'arbitrage).
+    const automodRoutes = require('./routes/automod');
+    const warnEscalationRoutes = require('./routes/warnEscalation');
+    const antiraidRoutes = require('./routes/antiraid');
+    const honeypotRoutes = require('./routes/honeypot');
+    const deferRoutes = require('./routes/defer');
     const { isSuspended } = require('../bot/utils/suspension');
 
     const app = express();
@@ -315,6 +322,14 @@ function createApi(discordClient, mode = 'bot') {
     app.use('/api/guilds/:guildId/tickets', ticketsRoutes);
     app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
     app.use('/api/guilds/:guildId/erasure', erasureRoutes);
+    // Montés après le garde-fou de suspension ci-dessus, comme tous les routeurs
+    // guild-scoped : une écriture de configuration reste refusée sur un serveur
+    // suspendu, sans que chaque module ait à y penser.
+    app.use('/api/guilds/:guildId/automod', automodRoutes);
+    app.use('/api/guilds/:guildId/warn-escalation', warnEscalationRoutes);
+    app.use('/api/guilds/:guildId/antiraid', antiraidRoutes);
+    app.use('/api/guilds/:guildId/honeypot', honeypotRoutes);
+    app.use('/api/guilds/:guildId/defer', deferRoutes);
     app.use('/api/presence', presenceRoutes);
     app.use('/api/contract', contractRoutes);
     app.use('/api/breach', breachRoutes);

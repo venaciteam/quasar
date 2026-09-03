@@ -475,6 +475,7 @@ async function loadPage(page) {
     switch (page) {
         case 'overview':   await loadOverview(content); break;
         case 'moderation': await loadModeration(content, currentGuild.id); break;
+        case 'automod':    await loadAutomod(content, currentGuild.id); break;
         case 'welcome':    await loadWelcome(content, currentGuild.id); break;
         case 'reactionroles': await loadReactionRoles(content, currentGuild.id); break;
         case 'embeds':     await loadEmbeds(content, currentGuild.id); break;

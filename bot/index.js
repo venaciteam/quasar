@@ -180,6 +180,7 @@ function createBot() {
     // Handler d'interactions
     const { handleTempVoiceInteraction } = require('./interactions/tempvoice');
     const { handleTicketInteraction } = require('./interactions/ticket');
+    const { handleDeferInteraction } = require('./interactions/defer');
 
     // Rate limit autocomplete : max 5 par utilisateur par 10 secondes
     const autocompleteLimits = new Map();
@@ -238,6 +239,15 @@ function createBot() {
 
             if (interaction.customId.startsWith('ticket_')) {
                 try { await handleTicketInteraction(interaction); } catch (e) {
+                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
+                }
+                return;
+            }
+
+            // Arbitrage : les boutons portent l'identifiant du cas et restent
+            // fonctionnels après un redémarrage, sans état en mémoire.
+            if (interaction.customId.startsWith('defer_')) {
+                try { await handleDeferInteraction(interaction); } catch (e) {
                     reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
                 }
                 return;
@@ -459,6 +469,16 @@ function createBot() {
             require('./modules/erasure').start(client);
         } catch (e) {
             console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
+        }
+
+        // Modération automatique — Levée des bannissements temporaires arrivés à
+        // terme. Discord n'a pas de ban à durée : sans ce balayage, un `tempban`
+        // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
+        // n'est en base (un SELECT indexé par minute).
+        try {
+            require('./utils/punishments').startTempBanSweeper(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
         }
     });
 

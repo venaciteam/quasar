@@ -46,6 +46,7 @@ function getDb() {
         migrateCustomCommandsAccess();
         migrateDropTranscripts();
         migrateLot2Compliance();
+        migrateAutomodScope();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -414,6 +415,161 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_breach_deliv_message ON breach_deliveries(message_id);
         CREATE INDEX IF NOT EXISTS idx_erasure_guild ON erasure_requests(guild_id);
         CREATE INDEX IF NOT EXISTS idx_erasure_status_due ON erasure_requests(status, due_at);
+
+        -- =====================================================================
+        -- Modération automatique
+        --
+        -- Portée par règle, pas réglage global (modèle « à la Dyno ») : chaque
+        -- table de configuration ci-dessous porte les six mêmes colonnes de
+        -- portée, listées dans SCOPE_COLUMNS et évaluées par
+        -- bot/utils/scopeFilter.js — un seul endroit décide « cette règle
+        -- s'applique-t-elle à cette cible ? », les quatre modules le consomment.
+        --
+        --   affected_roles / affected_channels   JSON array, vide = « tout »
+        --   ignored_roles  / ignored_channels    JSON array, priorité sur affected_*
+        --   log_channel                          NULL = repli sur le modlog global
+        --   response_message                     NULL = message par défaut du module
+        --
+        -- AUCUNE de ces tables n'a de FOREIGN KEY vers guilds : la purge d'un
+        -- serveur quitté (bot/modules/retention/purge.js) supprime la ligne
+        -- la ligne "guilds" en dernier, et les clés étrangères sont actives (pragma
+        -- foreign_keys = ON). Une FK ici ferait échouer toute la transaction de
+        -- purge. Les tempvoice_* suivent déjà cette règle pour la même raison.
+        -- Contrepartie : ces tables DOIVENT être ajoutées à GUILD_TABLES dans
+        -- purge.js, sans quoi leurs lignes survivraient au départ du bot.
+        -- =====================================================================
+
+        -- Règles AutoMod natives de Discord, miroir côté Quasar.
+        -- discord_rule_id est l'identifiant renvoyé par l'API Discord ; il peut
+        -- être NULL (règle décrite ici mais pas encore poussée) et la règle peut
+        -- avoir été supprimée côté Discord à notre insu — d'où discord_missing,
+        -- posé par la synchronisation plutôt que de supprimer la configuration
+        -- locale, qui reste réutilisable pour recréer la règle.
+        CREATE TABLE IF NOT EXISTS automod_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            discord_rule_id TEXT,
+            trigger_type TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 0,
+            discord_missing INTEGER NOT NULL DEFAULT 0,
+            last_synced_at INTEGER,
+            affected_roles TEXT NOT NULL DEFAULT '[]',
+            affected_channels TEXT NOT NULL DEFAULT '[]',
+            ignored_roles TEXT NOT NULL DEFAULT '[]',
+            ignored_channels TEXT NOT NULL DEFAULT '[]',
+            log_channel TEXT,
+            response_message TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        -- Escalade par avertissements : au seuil "threshold" de warns actifs, applique la
+        -- chaîne "punishments" (cf. bot/utils/punishments.js).
+        CREATE TABLE IF NOT EXISTS warn_escalation (
+            guild_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            threshold INTEGER NOT NULL DEFAULT 3,
+            punishments TEXT NOT NULL DEFAULT '',
+            affected_roles TEXT NOT NULL DEFAULT '[]',
+            affected_channels TEXT NOT NULL DEFAULT '[]',
+            ignored_roles TEXT NOT NULL DEFAULT '[]',
+            ignored_channels TEXT NOT NULL DEFAULT '[]',
+            log_channel TEXT,
+            response_message TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        -- Anti-raid sur les arrivées.
+        -- Défauts volontairement inoffensifs : enabled = 0 ET punishments vide,
+        -- c'est-à-dire « alerte seule ». Une instance qui se met à jour ne doit
+        -- jamais se réveiller en expulsant ses arrivants sans qu'un
+        -- administrateur l'ait demandé.
+        CREATE TABLE IF NOT EXISTS antiraid_config (
+            guild_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            join_count INTEGER NOT NULL DEFAULT 10,
+            join_window_seconds INTEGER NOT NULL DEFAULT 60,
+            min_account_age_hours INTEGER NOT NULL DEFAULT 0,
+            punishments TEXT NOT NULL DEFAULT '',
+            panic_duration_seconds INTEGER NOT NULL DEFAULT 300,
+            affected_roles TEXT NOT NULL DEFAULT '[]',
+            affected_channels TEXT NOT NULL DEFAULT '[]',
+            ignored_roles TEXT NOT NULL DEFAULT '[]',
+            ignored_channels TEXT NOT NULL DEFAULT '[]',
+            log_channel TEXT,
+            response_message TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        -- Honeypot : un salon piège, un seul par serveur (d'où guild_id en clé).
+        CREATE TABLE IF NOT EXISTS honeypot_config (
+            guild_id TEXT PRIMARY KEY,
+            channel_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            punishments TEXT NOT NULL DEFAULT '',
+            affected_roles TEXT NOT NULL DEFAULT '[]',
+            affected_channels TEXT NOT NULL DEFAULT '[]',
+            ignored_roles TEXT NOT NULL DEFAULT '[]',
+            ignored_channels TEXT NOT NULL DEFAULT '[]',
+            log_channel TEXT,
+            response_message TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        -- Salon d'arbitrage : où poster les cas au lieu de punir directement.
+        CREATE TABLE IF NOT EXISTS defer_config (
+            guild_id TEXT PRIMARY KEY,
+            channel_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        -- Cas soumis à arbitrage. message_id / channel_id désignent l'embed posté
+        -- dans le salon d'arbitrage : c'est par eux qu'on retrouve le message à
+        -- mettre à jour, y compris après un redémarrage du bot (aucun état n'est
+        -- gardé en mémoire, l'identifiant du cas voyage dans le customId).
+        -- Volontairement SANS colonne de contenu : la preuve éventuelle est
+        -- affichée dans l'embed au moment du signalement, jamais conservée ici —
+        -- même principe que les transcripts de tickets.
+        CREATE TABLE IF NOT EXISTS defer_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            channel_id TEXT,
+            message_id TEXT,
+            target_user_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            reason TEXT,
+            proposed_punishments TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            resolved_by TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            resolved_at INTEGER
+        );
+
+        -- Bannissements temporaires en attente de levée. Discord n'a pas de ban
+        -- à durée : sans cette table et le balayage de bot/utils/punishments.js,
+        -- un "tempban" serait un ban définitif qui ment sur sa durée.
+        CREATE TABLE IF NOT EXISTS temp_bans (
+            guild_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            reason TEXT,
+            source TEXT,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (guild_id, user_id)
+        );
+
+        -- Indexes modération automatique
+        CREATE INDEX IF NOT EXISTS idx_automod_rules_guild ON automod_rules(guild_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_automod_rules_discord ON automod_rules(guild_id, discord_rule_id);
+        CREATE INDEX IF NOT EXISTS idx_defer_cases_guild_status ON defer_cases(guild_id, status);
+        CREATE INDEX IF NOT EXISTS idx_defer_cases_message ON defer_cases(message_id);
+        CREATE INDEX IF NOT EXISTS idx_temp_bans_due ON temp_bans(expires_at);
     `);
 }
 
@@ -750,4 +906,62 @@ function migrateLot2Compliance() {
     }
 }
 
-module.exports = { getDb, CUSTOM_CMD_ACCESS_MODES, CUSTOM_CMD_ACCESS_DEFAULT, effectiveAccessMode };
+// Colonnes de portée communes à toutes les tables de configuration de la
+// modération automatique. Exportées parce que trois consommateurs s'appuient
+// dessus : le schéma ci-dessus, la migration de rattrapage, et les routes d'API
+// des quatre modules qui valident les champs reçus du dashboard. Les recopier
+// ferait diverger la liste de validation du domaine réel des tables.
+const SCOPE_COLUMNS = Object.freeze({
+    affected_roles: "TEXT NOT NULL DEFAULT '[]'",
+    affected_channels: "TEXT NOT NULL DEFAULT '[]'",
+    ignored_roles: "TEXT NOT NULL DEFAULT '[]'",
+    ignored_channels: "TEXT NOT NULL DEFAULT '[]'",
+    log_channel: 'TEXT',
+    response_message: 'TEXT',
+});
+
+// Tables de configuration portant ces colonnes.
+const SCOPED_TABLES = Object.freeze([
+    'automod_rules',
+    'warn_escalation',
+    'antiraid_config',
+    'honeypot_config',
+]);
+
+// --- Migration : rattrapage des colonnes de portée ---
+//
+// Les tables de la modération automatique sont toutes créées en CREATE TABLE IF
+// NOT EXISTS ci-dessus : une instance qui se met à jour les reçoit complètes, et
+// cette migration ne fait rien. Elle existe pour le cas réel du déploiement
+// intermédiaire — une preview de PR ayant créé une table avant qu'une colonne de
+// portée ne lui soit ajoutée. Sans elle, `CREATE TABLE IF NOT EXISTS` verrait la
+// table déjà là et laisserait un schéma amputé, avec des SELECT qui échouent au
+// runtime sur une colonne inconnue.
+//
+// Volontairement NON gardée par _migrations : le coût est un PRAGMA par table au
+// boot, et l'intérêt est justement de rattraper un état qu'une ligne
+// _migrations aurait déclaré « déjà fait ».
+function migrateAutomodScope() {
+    for (const table of SCOPED_TABLES) {
+        try {
+            const cols = db.pragma(`table_info(${table})`).map(c => c.name);
+            if (cols.length === 0) continue; // table absente : rien à rattraper
+            for (const [name, definition] of Object.entries(SCOPE_COLUMNS)) {
+                if (cols.includes(name)) continue;
+                db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+                console.log(`[Quasar] Migration: ${table} + ${name}`);
+            }
+        } catch (err) {
+            console.error(`[Quasar] Erreur migration portée ${table} :`, err.message);
+        }
+    }
+}
+
+module.exports = {
+    getDb,
+    CUSTOM_CMD_ACCESS_MODES,
+    CUSTOM_CMD_ACCESS_DEFAULT,
+    effectiveAccessMode,
+    SCOPE_COLUMNS,
+    SCOPED_TABLES,
+};
