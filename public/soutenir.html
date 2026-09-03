@@ -49,6 +49,12 @@
             padding: var(--space-5);
             border: 1px dashed var(--border-default);
             border-radius: var(--radius-lg, 14px);
+            /* Fond obligatoire : sans lui, la bordure pointillée flotte au-dessus
+               de la trame animée et l'encart paraît vide. --s3 est la surface la
+               plus opaque du DS (97 %), le motif ne transparaît pas. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
         }
         .quasar-soon svg { flex-shrink: 0; color: var(--accent); margin-top: 2px; }
         .quasar-soon__title { margin: 0 0 var(--space-2); font-size: var(--text-base); font-weight: var(--font-semibold); color: var(--text-primary); }

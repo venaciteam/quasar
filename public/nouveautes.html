@@ -29,6 +29,10 @@
             border-radius: var(--radius-md, 10px);
             font-size: var(--text-sm); color: var(--text-muted);
             line-height: var(--leading-relaxed);
+            /* Fond obligatoire, cf. .quasar-soon dans soutenir.html. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
         }
 
         .quasar-news-list { display: flex; flex-direction: column; gap: var(--space-4); }

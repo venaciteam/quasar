@@ -56,6 +56,11 @@
             padding: var(--space-5);
             border: 1px dashed var(--border-default);
             border-radius: var(--radius-lg, 14px);
+            /* Fond obligatoire, cf. .quasar-soon dans soutenir.html : une bordure
+               pointillée seule laisse voir la trame animée à travers l'encart. */
+            background: var(--s3);
+            -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
+            backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
         }
         .quasar-draft svg { flex-shrink: 0; color: var(--accent); margin-top: 2px; }
         .quasar-draft__title { margin: 0 0 var(--space-2); font-size: var(--text-base); font-weight: var(--font-semibold); color: var(--text-primary); }

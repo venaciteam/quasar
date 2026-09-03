@@ -147,12 +147,23 @@
             line-height: var(--leading-relaxed);
         }
         .quasar-block__lead strong { color: var(--text-primary); }
-        .quasar-pills { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-5); }
+        /* list-style/padding remis à zéro : c'est un <ul> sémantique (une liste de
+           fonctionnalités), mais les puces natives n'ont aucun sens sur des
+           pilules disposées en ligne. */
+        .quasar-pills {
+            list-style: none;
+            margin: var(--space-5) 0 0;
+            padding: 0;
+            display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2);
+        }
+        /* Fond OPAQUE, jamais translucide : la trame de points animée du DS passe
+           sinon au travers et la pilule paraît vide. Le color-mix se fait donc
+           contre --bg-secondary (une couleur), pas contre `transparent`. */
         .quasar-pill {
             padding: var(--space-2) var(--space-4);
             border-radius: var(--radius-full);
-            border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-            background: color-mix(in srgb, var(--accent) 10%, transparent);
+            border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+            background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
             font-size: var(--text-xs);
             font-weight: var(--font-medium);
             color: var(--text-primary);
