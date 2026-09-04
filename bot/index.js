@@ -490,6 +490,16 @@ function createBot() {
         } catch (e) {
             console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
         }
+
+        // Anti-raid — Levée des modes panique arrivés a terme. Meme raison que
+        // ci-dessus, en plus critique : un mode panique pose puis oublie parce que
+        // le processus a redemarre laisserait un serveur ferme indefiniment. Le
+        // balayage relit l'echeance en base et rend au serveur son etat d'origine.
+        try {
+            require('./modules/antiraid').startPanicSweeper(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage anti-raid:', e.message || e);
+        }
     });
 
     return client;

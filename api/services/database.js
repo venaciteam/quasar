@@ -518,6 +518,33 @@ function initTables() {
             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
 
+        -- Mode panique de l'anti-raid, en cours ou en attente de levée.
+        --
+        -- Cette table existe pour UNE raison : la levée doit survivre à un
+        -- redémarrage du bot. Un mode panique posé puis oublié parce que le
+        -- processus a redémarré laisserait un serveur verrouillé indéfiniment —
+        -- le pire échec possible du module. Même raisonnement que "temp_bans",
+        -- et même mécanique : l'échéance est en base, un balayage périodique la
+        -- relit (bot/modules/antiraid/panic.js).
+        --
+        -- "method" dit COMMENT la posture défensive a été posée, donc comment la
+        -- lever : les deux mécanismes de Discord ne se défont pas de la même
+        -- façon (action d'incident temporaire vs fonction INVITES_DISABLED).
+        --
+        -- "previous_invites_disabled" est l'état d'origine à restaurer. Sans lui,
+        -- lever le mode panique sur un serveur qui avait DÉJÀ mis ses invitations
+        -- en pause les rouvrirait — la levée annulerait une décision qui n'était
+        -- pas la mienne.
+        CREATE TABLE IF NOT EXISTS antiraid_panic (
+            guild_id TEXT PRIMARY KEY,
+            method TEXT NOT NULL,                  -- incident_actions | invites_disabled
+            expires_at INTEGER NOT NULL,           -- epoch secondes
+            previous_invites_disabled INTEGER NOT NULL DEFAULT 0,
+            reason TEXT,
+            triggered_by TEXT,                     -- 'detection' | identifiant Discord d'une personne
+            created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
         -- Honeypot : un salon piège, un seul par serveur (d'où guild_id en clé).
         CREATE TABLE IF NOT EXISTS honeypot_config (
             guild_id TEXT PRIMARY KEY,
@@ -588,6 +615,7 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_defer_cases_guild_status ON defer_cases(guild_id, status);
         CREATE INDEX IF NOT EXISTS idx_defer_cases_message ON defer_cases(message_id);
         CREATE INDEX IF NOT EXISTS idx_temp_bans_due ON temp_bans(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_antiraid_panic_due ON antiraid_panic(expires_at);
     `);
 }
 

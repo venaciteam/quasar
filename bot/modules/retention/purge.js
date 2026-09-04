@@ -50,6 +50,9 @@ const PURGE_STEPS = [
     { table: 'automod_rules',   sql: 'DELETE FROM automod_rules WHERE guild_id = ?' },
     { table: 'warn_escalation', sql: 'DELETE FROM warn_escalation WHERE guild_id = ?' },
     { table: 'antiraid_config', sql: 'DELETE FROM antiraid_config WHERE guild_id = ?' },
+    // État du mode panique. Le bot n'est plus sur le serveur : il n'y a plus rien
+    // à lever, et garder l'échéance ferait retenter la levée à chaque balayage.
+    { table: 'antiraid_panic',  sql: 'DELETE FROM antiraid_panic WHERE guild_id = ?' },
     { table: 'honeypot_config', sql: 'DELETE FROM honeypot_config WHERE guild_id = ?' },
     { table: 'defer_config',    sql: 'DELETE FROM defer_config WHERE guild_id = ?' },
     { table: 'defer_cases',     sql: 'DELETE FROM defer_cases WHERE guild_id = ?' },
