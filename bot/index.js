@@ -130,7 +130,17 @@ function createBot() {
             GatewayIntentBits.GuildMessageReactions,
             GatewayIntentBits.GuildVoiceStates,
             GatewayIntentBits.GuildPresences,
-            GatewayIntentBits.MessageContent
+            GatewayIntentBits.MessageContent,
+            // AutoMod natif de Discord. Ces deux intents ne sont PAS privilégiés
+            // (seuls GuildMembers, GuildPresences et MessageContent le sont) : rien
+            // à activer dans le portail développeur, aucune demande d'approbation.
+            //  - Configuration : tient à jour le cache des règles quand elles sont
+            //    modifiées ailleurs que depuis Quasar.
+            //  - Execution : indispensable pour recevoir AUTO_MODERATION_ACTION_EXECUTION,
+            //    l'événement qui permet d'historiser et de journaliser les
+            //    déclenchements (cf. bot/events/autoModerationActionExecution.js).
+            GatewayIntentBits.AutoModerationConfiguration,
+            GatewayIntentBits.AutoModerationExecution
         ],
         partials: [
             Partials.Message,

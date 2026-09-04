@@ -1072,6 +1072,41 @@
     box-shadow: 0 0 8px hsla(0, 80%, 55%, 0.3);
 }
 
+/* Etat desactive — commun a toutes les variantes.
+   Sans cette regle, un bouton `disabled` etait strictement indiscernable d'un
+   bouton actif : meme fond, meme curseur, meme effet au survol. Cela concerne
+   autant les boutons desactives par une regle metier (quota atteint) que ceux
+   que withDebounce() neutralise le temps d'un enregistrement — on cliquait dans
+   le vide sans comprendre pourquoi. Aucune teinte nouvelle : seulement une
+   opacite reduite et la suppression des retours d'interaction. */
+.btn:disabled,
+.btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: none;
+    box-shadow: none;
+}
+
+/* Neutralisation du survol, variante par variante : chacune a son fond au repos,
+   il faut le lui rendre plutot que d'en imposer un seul a toutes. */
+.btn:disabled:hover { background: var(--bg-secondary); border-color: var(--border-default); }
+.btn-primary:disabled:hover { background: var(--accent); border-color: var(--accent); }
+.btn-blue:disabled:hover,
+.btn-secondary:disabled:hover,
+.btn-gold:disabled:hover { background: transparent; border-color: var(--accent); }
+.btn-danger:disabled:hover { background: transparent; border-color: var(--danger); }
+
+.btn:disabled:hover,
+.btn[disabled]:hover {
+    filter: none;
+    box-shadow: none;
+}
+
+.btn:disabled:active,
+.btn[disabled]:active {
+    transform: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════════ */
 /*   MODULES GRID (page d'accueil)                                     */
 /* ═══════════════════════════════════════════════════════════════════ */

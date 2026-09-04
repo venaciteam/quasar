@@ -42,6 +42,18 @@ const PURGE_STEPS = [
     { table: 'tempvoice_triggers', sql: 'DELETE FROM tempvoice_triggers WHERE guild_id = ?' },
     { table: 'tempvoice_preferences', sql: 'DELETE FROM tempvoice_preferences WHERE guild_id = ?' },
     { table: 'tempvoice_active', sql: 'DELETE FROM tempvoice_active WHERE guild_id = ?' },
+    // Modération automatique. Ces tables n'ont volontairement AUCUNE clé étrangère
+    // vers `guilds` (cf. api/services/database.js) : elles doivent donc être purgées
+    // explicitement ici, sans quoi leurs lignes survivraient au départ du bot.
+    // `defer_cases.target_user_id` est une donnée nominative — son oubli n'était pas
+    // un détail de propreté mais un manquement à l'article 5.1.e.
+    { table: 'automod_rules',   sql: 'DELETE FROM automod_rules WHERE guild_id = ?' },
+    { table: 'warn_escalation', sql: 'DELETE FROM warn_escalation WHERE guild_id = ?' },
+    { table: 'antiraid_config', sql: 'DELETE FROM antiraid_config WHERE guild_id = ?' },
+    { table: 'honeypot_config', sql: 'DELETE FROM honeypot_config WHERE guild_id = ?' },
+    { table: 'defer_config',    sql: 'DELETE FROM defer_config WHERE guild_id = ?' },
+    { table: 'defer_cases',     sql: 'DELETE FROM defer_cases WHERE guild_id = ?' },
+    { table: 'temp_bans',       sql: 'DELETE FROM temp_bans WHERE guild_id = ?' },
     { table: 'modules', sql: 'DELETE FROM modules WHERE guild_id = ?' },
     { table: 'guilds', sql: 'DELETE FROM guilds WHERE guild_id = ?' },
 ];
