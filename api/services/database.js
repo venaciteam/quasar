@@ -47,6 +47,8 @@ function getDb() {
         migrateDropTranscripts();
         migrateLot2Compliance();
         migrateAutomodScope();
+        migrateWarnEscalationTiers();
+        migrateAutoSanctionsToTiers();
 
         // --- Checkpoint périodique (toutes les 5 min) ---
         checkpointTimer = setInterval(() => {
@@ -466,8 +468,20 @@ function initTables() {
 
         -- Escalade par avertissements : au seuil "threshold" de warns actifs, applique la
         -- chaîne "punishments" (cf. bot/utils/punishments.js).
+        --
+        -- UNE LIGNE PAR PALIER, pas une par serveur. L'escalade historique de
+        -- Quasar (modules.config.autoSanctions) en portait déjà trois — mute,
+        -- kick, ban, chacun à son propre seuil. Une table à clé primaire
+        -- guild_id n'en aurait gardé qu'un : migrer « mute à 3, kick à 5, ban
+        -- à 8 » y aurait perdu deux paliers, c'est-à-dire une régression pour
+        -- des serveurs qui s'en servent aujourd'hui. D'où id en clé et un
+        -- index unique sur (guild_id, threshold) : deux paliers au même seuil
+        -- seraient une ambiguïté, la base la refuse plutôt que de trancher au
+        -- hasard. Voir migrateWarnEscalationTiers() pour la reprise des bases
+        -- créées avec la forme mono-palier.
         CREATE TABLE IF NOT EXISTS warn_escalation (
-            guild_id TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
             enabled INTEGER NOT NULL DEFAULT 0,
             threshold INTEGER NOT NULL DEFAULT 3,
             punishments TEXT NOT NULL DEFAULT '',
@@ -567,6 +581,10 @@ function initTables() {
         -- Indexes modération automatique
         CREATE INDEX IF NOT EXISTS idx_automod_rules_guild ON automod_rules(guild_id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_automod_rules_discord ON automod_rules(guild_id, discord_rule_id);
+        CREATE INDEX IF NOT EXISTS idx_warn_escalation_guild ON warn_escalation(guild_id);
+        -- Deux paliers au même seuil sur un même serveur : refusé en base, pas
+        -- seulement dans le formulaire. L'API traduit la contrainte en refus lisible.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_warn_escalation_tier ON warn_escalation(guild_id, threshold);
         CREATE INDEX IF NOT EXISTS idx_defer_cases_guild_status ON defer_cases(guild_id, status);
         CREATE INDEX IF NOT EXISTS idx_defer_cases_message ON defer_cases(message_id);
         CREATE INDEX IF NOT EXISTS idx_temp_bans_due ON temp_bans(expires_at);
@@ -955,6 +973,205 @@ function migrateAutomodScope() {
             console.error(`[Quasar] Erreur migration portée ${table} :`, err.message);
         }
     }
+}
+
+// --- Migration : escalade des warns, du palier unique aux N paliers ---
+//
+// La première version de `warn_escalation` avait `guild_id` en clé primaire :
+// un seul palier par serveur. L'escalade historique de Quasar en portait trois
+// (mute / kick / ban), une base créée avec cette forme doit donc être reprise
+// avant que le module ne puisse en enregistrer plusieurs.
+//
+// SQLite ne sait pas changer une clé primaire : la seule voie est le
+// remplacement de table (rename → create → copy → drop). Les lignes existantes
+// sont recopiées telles quelles et deviennent chacune le premier palier de leur
+// serveur — aucune configuration n'est perdue.
+//
+// Gardée par la STRUCTURE avant tout (présence de la colonne `id`) plutôt que
+// par _migrations seul : une base rattrapée à la main, ou reprise d'un
+// déploiement intermédiaire, doit être réparée même si la ligne de suivi
+// existe. La ligne _migrations est écrite pour la traçabilité et pour dire à la
+// migration de données ci-dessous que le terrain est prêt.
+function migrateWarnEscalationTiers() {
+    try {
+        db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )`);
+
+        const cols = db.pragma('table_info(warn_escalation)').map(c => c.name);
+        if (cols.length === 0) return;   // table absente : initTables la créera à la bonne forme
+        if (cols.includes('id')) {
+            // Déjà à la forme N paliers (base neuve, ou migration déjà passée).
+            db.prepare('INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)')
+                .run('warn_escalation_tiers_v1', Date.now());
+            return;
+        }
+
+        // Colonnes réellement présentes dans l'ancienne table : une base issue
+        // d'un déploiement intermédiaire peut ne pas avoir toutes les colonnes de
+        // portée. On ne copie que ce qui existe, le reste prend son défaut.
+        const carried = [
+            'guild_id', 'enabled', 'threshold', 'punishments',
+            'affected_roles', 'affected_channels', 'ignored_roles', 'ignored_channels',
+            'log_channel', 'response_message', 'created_at', 'updated_at',
+        ].filter(name => cols.includes(name));
+
+        const apply = db.transaction(() => {
+            db.exec('ALTER TABLE warn_escalation RENAME TO warn_escalation_legacy');
+            db.exec(`
+                CREATE TABLE warn_escalation (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    threshold INTEGER NOT NULL DEFAULT 3,
+                    punishments TEXT NOT NULL DEFAULT '',
+                    affected_roles TEXT NOT NULL DEFAULT '[]',
+                    affected_channels TEXT NOT NULL DEFAULT '[]',
+                    ignored_roles TEXT NOT NULL DEFAULT '[]',
+                    ignored_channels TEXT NOT NULL DEFAULT '[]',
+                    log_channel TEXT,
+                    response_message TEXT,
+                    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+                )
+            `);
+            db.exec(
+                `INSERT INTO warn_escalation (${carried.join(', ')}) ` +
+                `SELECT ${carried.join(', ')} FROM warn_escalation_legacy`
+            );
+            db.exec('DROP TABLE warn_escalation_legacy');
+            // Le DROP a emporté les index de l'ancienne table : on les repose.
+            db.exec('CREATE INDEX IF NOT EXISTS idx_warn_escalation_guild ON warn_escalation(guild_id)');
+            db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_warn_escalation_tier ON warn_escalation(guild_id, threshold)');
+            db.prepare('INSERT OR REPLACE INTO _migrations (name, applied_at) VALUES (?, ?)')
+                .run('warn_escalation_tiers_v1', Date.now());
+        });
+        apply();
+
+        console.log('[Quasar] Migration warn_escalation_tiers_v1 appliquée — escalade des warns en N paliers.');
+    } catch (err) {
+        console.error('[Quasar] Erreur migration warn_escalation_tiers_v1 :', err.message);
+    }
+}
+
+// --- Migration : escalade historique (modules.autoSanctions) → paliers ---
+//
+// Avant ce chantier, l'escalade vivait dans la configuration JSON du module
+// « moderation » : muteAt / muteDuration / kickAt / banAt, appliqués par une
+// cascade if/else if dans bot/commands/warn.js. Ce chemin est supprimé au
+// profit de la table `warn_escalation` — un serveur qui avait réglé « mute à 3,
+// kick à 5, ban à 8 » doit retrouver exactement ces trois paliers, actifs, sans
+// rien faire.
+//
+// Les paliers migrés sont créés ACTIFS : ils l'étaient. C'est la seule exception
+// à la règle « rien ne s'active tout seul » de ce chantier, et elle va dans le
+// sens de la dégradation gracieuse — ne pas les activer changerait le
+// comportement d'un serveur qui n'a rien demandé.
+//
+// Idempotente à deux niveaux : la ligne _migrations empêche le rejeu, et chaque
+// serveur ayant déjà un palier dans le nouveau système est ignoré — une
+// configuration créée depuis le dashboard n'est jamais écrasée.
+function migrateAutoSanctionsToTiers() {
+    try {
+        db.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+            name TEXT PRIMARY KEY,
+            applied_at INTEGER NOT NULL
+        )`);
+
+        const already = db.prepare('SELECT 1 FROM _migrations WHERE name = ?')
+            .get('warn_escalation_from_autosanctions_v1');
+        if (already) return;
+
+        const cols = db.pragma('table_info(warn_escalation)').map(c => c.name);
+        if (!cols.includes('id')) return;  // rebuild en échec : on ne migre pas dans une table inadaptée
+
+        const rows = db.prepare(
+            "SELECT guild_id, config FROM modules WHERE module_name = 'moderation'"
+        ).all();
+
+        const insert = db.prepare(`
+            INSERT INTO warn_escalation (guild_id, enabled, threshold, punishments)
+            VALUES (?, 1, ?, ?)
+        `);
+        const hasTier = db.prepare('SELECT 1 FROM warn_escalation WHERE guild_id = ? LIMIT 1');
+
+        let guilds = 0;
+        let tiers = 0;
+
+        const apply = db.transaction(() => {
+            for (const row of rows) {
+                let config;
+                try { config = JSON.parse(row.config || '{}'); } catch { continue; }
+                const auto = config?.autoSanctions;
+                if (!auto || typeof auto !== 'object') continue;
+                if (hasTier.get(row.guild_id)) continue; // configuration déjà reprise en main
+
+                // Un seuil n'a de sens qu'entier et strictement positif : l'ancien
+                // formulaire écrivait null quand la case était vide.
+                const seuil = (value) => {
+                    const parsed = Number.parseInt(value, 10);
+                    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+                };
+
+                // Durée de mute stockée en MINUTES par l'ancien réglage, avec 60
+                // pour défaut — la même valeur que la cascade appliquait.
+                const muteMinutes = Number.parseInt(auto.muteDuration, 10);
+                const muteDuration = Number.isInteger(muteMinutes) && muteMinutes > 0 ? muteMinutes : 60;
+
+                // Ordre de gravité croissante. Il départage le cas où deux
+                // réglages partagent le même seuil : la cascade d'origine testait
+                // ban, puis kick, puis mute, et n'en appliquait qu'un — le plus
+                // grave gagnait. Écrire les trois dans cet ordre reproduit ce
+                // départage, la dernière écriture sur un seuil l'emportant.
+                const candidates = [
+                    [seuil(auto.muteAt), `tempmute ${formatMinutes(muteDuration)}`],
+                    [seuil(auto.kickAt), 'kick'],
+                    [seuil(auto.banAt), 'ban'],
+                ];
+
+                const byThreshold = new Map();
+                for (const [threshold, punishments] of candidates) {
+                    if (threshold === null) continue;
+                    byThreshold.set(threshold, punishments);
+                }
+                if (byThreshold.size === 0) continue;
+
+                for (const [threshold, punishments] of byThreshold) {
+                    insert.run(row.guild_id, threshold, punishments);
+                    tiers++;
+                }
+                guilds++;
+            }
+
+            db.prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+                .run('warn_escalation_from_autosanctions_v1', Date.now());
+        });
+        apply();
+
+        if (tiers > 0) {
+            console.log(
+                `[Quasar] Migration warn_escalation_from_autosanctions_v1 appliquée — ` +
+                `${tiers} palier(s) repris sur ${guilds} serveur(s).`
+            );
+        }
+    } catch (err) {
+        console.error('[Quasar] Erreur migration warn_escalation_from_autosanctions_v1 :', err.message);
+    }
+}
+
+/**
+ * Traduit des minutes en durée composable (« 60 » → « 1h »), la forme qu'attend
+ * bot/utils/punishments.js. Volontairement local : la migration ne doit pas
+ * dépendre du module du bot, qui charge discord.js — la base s'ouvre aussi
+ * depuis des contextes qui n'ont pas besoin de lui.
+ */
+function formatMinutes(minutes) {
+    const total = Math.max(1, Math.floor(minutes));
+    const days = Math.floor(total / 1440);
+    const hours = Math.floor((total % 1440) / 60);
+    const rest = total % 60;
+    return `${days ? `${days}d` : ''}${hours ? `${hours}h` : ''}${rest ? `${rest}m` : ''}` || '1m';
 }
 
 module.exports = {
