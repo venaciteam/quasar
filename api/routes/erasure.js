@@ -67,6 +67,65 @@ function eraseExpiredSanctions(db, guildId, subjectId) {
 }
 
 /**
+ * Efface les traces nominatives de modération qui vivent HORS de la table
+ * `sanctions`, apportées par les modules de modération automatique.
+ *
+ *   - defer_cases  : un cas d'arbitrage nomme la personne visée (`target_user_id`),
+ *                    avec le motif et les sanctions proposées. Effacé SANS
+ *                    CONDITION : ce n'est pas une sanction, seulement la trace
+ *                    d'une proposition soumise à l'équipe. Un cas encore en
+ *                    attente disparaît donc lui aussi — le message Discord
+ *                    correspondant reste affiché, et ses boutons répondront
+ *                    « cas introuvable », ce que bot/interactions/defer.js gère
+ *                    déjà explicitement.
+ *   - temp_bans    : bannissements temporaires. Les bannissements ENCORE EN
+ *                    COURS sont CONSERVÉS, les ÉCHUS sont effacés.
+ *
+ * Pourquoi conserver un bannissement temporaire en cours :
+ *   1. c'est exactement la logique de `eraseExpiredSanctions` ci-dessus, qui
+ *      protège déjà les bans en vigueur ;
+ *   2. l'article 17.3 couvre la conservation relevant d'un intérêt légitime ;
+ *   3. et surtout, effacer la ligne d'un ban actif lui ferait perdre sa levée
+ *      automatique (cf. le balayage de bot/utils/punishments.js) : le
+ *      bannissement temporaire deviendrait DÉFINITIF, au détriment de la
+ *      personne même qui demande l'effacement.
+ *
+ * Ces deux tables relèvent de la modération : elles sont traitées avec les
+ * sanctions (catégories `expired_sanction` et `mixed`), jamais par la voie
+ * `non_moderation` — le traitement par catégorie est la règle de ce fichier.
+ *
+ * Réserve connue : une ligne `temp_bans` échue mais pas encore balayée est
+ * supprimée ici, ce qui annule sa levée automatique. La fenêtre est d'une minute
+ * (tick du balayage), sauf si le balayage échoue à répétition faute de
+ * permission « Bannir des membres » — auquel cas la levée est de toute façon
+ * déjà à faire à la main.
+ *
+ * @returns {{ perTable: Object<string, number>, keptActiveTempBans: number }}
+ */
+function eraseModerationTraces(db, guildId, subjectId) {
+    const perTable = {};
+
+    const cases = db.prepare(
+        'DELETE FROM defer_cases WHERE guild_id = ? AND target_user_id = ?'
+    ).run(guildId, subjectId);
+    if (cases.changes > 0) perTable.defer_cases = cases.changes;
+
+    const now = nowSeconds();
+
+    // Comptés pour la traçabilité de l'exécution, comme les bans en vigueur.
+    const keptActiveTempBans = db.prepare(
+        'SELECT COUNT(*) AS c FROM temp_bans WHERE guild_id = ? AND user_id = ? AND expires_at > ?'
+    ).get(guildId, subjectId, now).c;
+
+    const bans = db.prepare(
+        'DELETE FROM temp_bans WHERE guild_id = ? AND user_id = ? AND expires_at <= ?'
+    ).run(guildId, subjectId, now);
+    if (bans.changes > 0) perTable.temp_bans = bans.changes;
+
+    return { perTable, keptActiveTempBans };
+}
+
+/**
  * Efface les données NOMINATIVES du membre hors modération, dans ce serveur :
  *   - tempvoice_preferences : préférences de salons vocaux temporaires ;
  *   - tickets              : métadonnées des tickets ouverts PAR le membre
@@ -105,11 +164,13 @@ function eraseNonModeration(db, guildId, subjectId) {
  *    l'effacement ET la mise à jour du statut dans une seule transaction, pour
  *    garantir qu'on n'efface jamais des données sans tracer l'exécution.
  *
- * @returns {{ total: number, perTable: Object, keptActiveBans: number, warning: string|null }}
+ * @returns {{ total: number, perTable: Object, keptActiveBans: number,
+ *             keptActiveTempBans: number, warning: string|null }}
  */
 function executeErasure(db, guildId, subjectId, category) {
     const perTable = {};
     let keptActiveBans = 0;
+    let keptActiveTempBans = 0;
     let warning = null;
 
     let effectiveCategory = category;
@@ -128,6 +189,10 @@ function executeErasure(db, guildId, subjectId, category) {
         const r = eraseExpiredSanctions(db, guildId, subjectId);
         if (r.deleted > 0) perTable.sanctions = r.deleted;
         keptActiveBans += r.keptActiveBans;
+
+        const traces = eraseModerationTraces(db, guildId, subjectId);
+        Object.assign(perTable, traces.perTable);
+        keptActiveTempBans += traces.keptActiveTempBans;
     }
 
     if (effectiveCategory === 'non_moderation' || effectiveCategory === 'mixed') {
@@ -135,7 +200,7 @@ function executeErasure(db, guildId, subjectId, category) {
     }
 
     const total = Object.values(perTable).reduce((a, b) => a + b, 0);
-    return { total, perTable, keptActiveBans, warning };
+    return { total, perTable, keptActiveBans, keptActiveTempBans, warning };
 }
 
 // ─── Routes ─────────────────────────────────────────────────────────────────────
