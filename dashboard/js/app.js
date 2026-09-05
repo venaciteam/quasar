@@ -94,14 +94,18 @@ async function init() {
 
     if (guilds.length === 0) {
         showNoGuilds();
-        renderServerMenu();
-        checkForUpdate();
-        return;
+    } else {
+        selectGuild(guilds[0]);
     }
-
-    selectGuild(guilds[0]);
     renderServerMenu();
     checkForUpdate();
+
+    // ── Pop-up des nouveautés (premier accès après une mise à jour) ──
+    // En DERNIER et volontairement NON attendu : le dashboard est déjà rendu
+    // quand la requête part. Endpoint lent, en erreur ou journal vide → rien ne
+    // s'ouvre et rien ne change. Exposé par js/nouveautes.js, chargé avant
+    // app.js ; garde défensive au cas où le fichier manquerait.
+    if (window.QuasarNouveautes) window.QuasarNouveautes.autoOpen();
 }
 
 // ═══ Helpers ═══

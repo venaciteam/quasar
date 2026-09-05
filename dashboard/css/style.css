@@ -1443,6 +1443,159 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════ */
+/*   POP-UP DES NOUVEAUTÉS                                             */
+/*                                                                     */
+/*   Le conteneur est la modale du design system (.vnct-modal) : elle   */
+/*   porte déjà le fond, la bordure accent, le défilement interne et    */
+/*   l'adaptation mobile. Ce bloc ne fait que deux choses :             */
+/*     1. élargir la modale pour ce contenu-là, plus dense qu'un        */
+/*        message court (la modale du DS est calibrée à 500 px) ;       */
+/*     2. redonner au markdown rendu la même hiérarchie que la page     */
+/*        publique /nouveautes, dont les règles sont reprises ici à     */
+/*        l'identique — même journal, même lecture.                     */
+/*                                                                     */
+/*   Aucune couleur en dur : tout vient des tokens, donc les thèmes     */
+/*   sombre et clair suivent sans règle dédiée.                        */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/* :has() évite d'aller poser une classe sur un élément que le design system
+   possède et réécrit à chaque ouverture. Sans support, la modale garde
+   simplement sa largeur standard : le contenu reste lisible. */
+.vnct-modal:has(.qnews) {
+    max-width: 620px;
+}
+
+.qnews-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.qnews-entry {
+    padding: var(--space-5) var(--space-4);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    background: var(--bg-tertiary);
+}
+
+/* Hiérarchie du markdown rendu :
+     h2  = « 🌌 Quasar — v4.6.0 » (la version)  -> en-tête de carte, accent
+     h3  = titre humain de la version           -> titre mis en avant
+     > * = date en citation                     -> ligne muted discrète
+     p>strong seul = libellé de section (✨/🔧) -> intertitre compact
+     ul/li = les changements                    -> corps de texte */
+.qnews-entry h2 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--accent);
+    letter-spacing: var(--tracking-wide);
+}
+
+.qnews-entry h3 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-lg);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+}
+
+/* La PREMIÈRE citation après le titre est la ligne de DATE : simple mention
+   muted sans filet. Les autres gardent un filet accent discret. */
+.qnews-entry blockquote {
+    margin: var(--space-4) 0 0;
+    padding: var(--space-1) 0 var(--space-1) var(--space-3);
+    border-left: 2px solid var(--accent-dim);
+}
+
+.qnews-entry blockquote p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.qnews-entry h2 + blockquote,
+.qnews-entry h3 + blockquote {
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    border-left: 0;
+}
+
+.qnews-entry h2 + blockquote p,
+.qnews-entry h3 + blockquote p {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.qnews-entry h2 + blockquote em,
+.qnews-entry h3 + blockquote em {
+    font-style: normal;
+}
+
+.qnews-entry p {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-relaxed);
+}
+
+/* Libellés de section (« **✨ Nouveautés** » seuls dans leur paragraphe) :
+   intertitres compacts. Sans :has(), dégradation propre en paragraphe. */
+.qnews-entry p:has(> strong:only-child) {
+    margin: var(--space-4) 0 var(--space-2);
+}
+
+.qnews-entry strong { color: var(--text-primary); }
+.qnews-entry em { color: var(--text-muted); }
+.qnews-entry a { color: var(--accent); }
+
+.qnews-entry ul {
+    margin: 0 0 var(--space-3);
+    padding-left: 1.2em;
+}
+
+.qnews-entry ul:last-child,
+.qnews-entry p:last-child,
+.qnews-entry blockquote:last-child { margin-bottom: 0; }
+
+.qnews-entry li {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-relaxed);
+}
+
+.qnews-entry li:last-child { margin-bottom: 0; }
+.qnews-entry li::marker { color: var(--text-muted); }
+
+/* Journal vide : encart sobre, bordure pointillée — même traitement que
+   .quasar-news-empty sur la page publique. */
+.qnews-empty {
+    margin: 0;
+    padding: var(--space-4);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--leading-relaxed);
+}
+
+/* Renvoi vers l'historique complet quand toutes les versions manquées ne
+   tiennent pas dans le pop-up. */
+.qnews-more {
+    margin: var(--space-5) 0 0;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    line-height: var(--leading-relaxed);
+}
+
+.qnews-more a { color: var(--accent); }
+
+@media (max-width: 768px) {
+    .qnews-entry { padding: var(--space-4) var(--space-3); }
+    .qnews-entry h3 { font-size: var(--text-base); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
 /*   RESPONSIVE                                                        */
 /* ═══════════════════════════════════════════════════════════════════ */
 

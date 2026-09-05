@@ -329,4 +329,13 @@ function listHtml() {
         + '</section>';
 }
 
-module.exports = { init, list, listHtml, upsert, remove, parseBlock, frDateToISO, splitBlocks };
+// compareVersionsDesc et blockToHtml sont exposés pour api/routes/nouveautes.js
+// (pop-up des nouveautés du dashboard), qui doit filtrer les entrées plus
+// récentes qu'une version donnée et les rendre une par une. Ajout purement
+// additif : aucun comportement existant ne change, et surtout AUCUNE
+// réimplémentation de la comparaison sémantique ailleurs dans le projet — un
+// second comparateur finirait par diverger de celui qui trie l'historique.
+module.exports = {
+    init, list, listHtml, upsert, remove, parseBlock, frDateToISO, splitBlocks,
+    compareVersionsDesc, blockToHtml,
+};

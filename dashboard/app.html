@@ -93,6 +93,15 @@
                 <button class="sidebar-link" data-page="update" id="sidebar-update">
                     <span class="sidebar-link-icon">⬆</span> Mise à jour
                 </button>
+                <!-- Réouverture du pop-up des nouveautés. Volontairement SANS
+                     data-page : ce n'est pas une page, c'est une action, et
+                     app.js ne doit pas l'inscrire dans sa navigation. Le clic est
+                     branché par js/nouveautes.js. Sa place ici, juste sous « Mise
+                     à jour », est celle du sujet : la version installée et ce
+                     qu'elle apporte se lisent au même endroit. -->
+                <button class="sidebar-link" id="sidebar-whatsnew" type="button">
+                    <span class="sidebar-link-icon">✨</span> Nouveautés
+                </button>
                 <!-- Entrées réservées à la propriétaire de l'instance (owner-only) :
                      cachées par défaut, révélées par app.js si /api/presence renvoie isOwner. -->
                 <button class="sidebar-link" data-page="owner" id="sidebar-owner" style="display:none">
@@ -185,6 +194,7 @@
     <script src="/dashboard/js/pages/erasure.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/breach.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/owner.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/nouveautes.js?v=__VERSION__"></script>
     <script src="/dashboard/js/contractGate.js?v=__VERSION__"></script>
     <script src="/dashboard/js/app.js?v=__VERSION__"></script>
     <script>

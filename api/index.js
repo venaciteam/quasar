@@ -264,6 +264,8 @@ function createApi(discordClient, mode = 'bot') {
     const ticketsRoutes = require('./routes/tickets');
     const presenceRoutes = require('./routes/presence');
     const updateRoutes = require('./routes/update');
+    // Lecture du journal des nouveautés par le dashboard (pop-up de mise à jour).
+    const nouveautesRoutes = require('./routes/nouveautes');
     const scheduledRoutes = require('./routes/scheduled');
     const instanceRoutes = require('./routes/instance');
     // Lot 2 conformité RGPD — mêmes contraintes de chargement paresseux : ces
@@ -335,6 +337,13 @@ function createApi(discordClient, mode = 'bot') {
     app.use('/api/breach', breachRoutes);
     app.use('/api/owner', ownerRoutes);
     app.use('/api', updateRoutes);
+    // Route d'INSTANCE, pas de serveur : montée sur /api comme update.js, elle
+    // ne porte aucun segment :guildId. `vitrineMounted` lui dit si la page
+    // publique /nouveautes existe ici — elle n'est servie qu'en mode `public`,
+    // et le pop-up ne doit pas proposer un lien qui finirait en 404 sur une
+    // instance auto-hébergée.
+    app.set('vitrineMounted', mode === 'public');
+    app.use('/api', nouveautesRoutes);
     app.use('/api', instanceRoutes);
 
     mountDashboard(app);
