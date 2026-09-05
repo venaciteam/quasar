@@ -40,7 +40,7 @@
 
 > Rien ne s'active tout seul : les quatre protections arrivent désactivées. Rien ne change sur vos serveurs tant que vous ne les avez pas activées vous-même.
 >
-> Ces quatre protections de modération automatique sont livrées **en bêta** : elles fonctionnent, mais elles sont encore en cours de test. Le reste de la version 4.6.0, pop-up des nouveautés compris, n'est pas concerné. Activez-les progressivement, en commençant par le mode « alerte seule » que chaque onglet propose, et vérifiez leur effet avant d'y associer une sanction. Vos retours sont les bienvenus : depuis le dashboard, le bouton rond en bas à droite de l'écran permet de me signaler un bug ou de proposer une amélioration.
+> Ces quatre protections de modération automatique sont livrées **en bêta** : elles fonctionnent, mais elles sont encore en cours de test. Le reste de la version 4.6.0, pop-up des nouveautés compris, n'est pas concerné. Activez-les progressivement, en commençant par le mode « alerte seule » que chaque onglet propose, et vérifiez leur effet avant d'y associer une sanction. Vos retours sont les bienvenus : depuis le dashboard, le drapeau en bas à droite de l'écran permet de me signaler un bug ou de proposer une amélioration.
 
 ## 🌌 Quasar — v4.5.0
 

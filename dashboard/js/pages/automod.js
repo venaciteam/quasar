@@ -81,22 +81,23 @@ function activeAutomodTab() {
  *
  * Toute l'information est écrite : rien ne dépend d'un survol (inexistant au
  * doigt comme au clavier) ni de la seule couleur du filet d'avertissement.
+ *
+ * Volontairement TRÈS court : à 375 px, la version longue mesurait 429 px de
+ * haut et repoussait la barre d'onglets hors du premier écran — on ne voyait
+ * plus que l'avertissement. Les trois messages (c'est en test / commencez en
+ * « alerte seule » / faites des retours) sont tous là, en une phrase chacun.
+ * Rallonger ce texte, c'est reperdre les onglets.
  */
 function automodBetaBanner() {
     return `
         <div class="automod-beta" role="note">
             <span class="automod-beta-icon" aria-hidden="true">⚠️</span>
             <div class="automod-beta-body">
-                <strong class="automod-beta-title">Modération automatique — fonctionnalité en bêta</strong>
+                <strong class="automod-beta-title">Ces quatre protections sont en bêta</strong>
                 <p>
-                    Ces quatre protections sont encore en cours de test. Activez-les progressivement, en
-                    commençant par le mode « alerte seule » que chaque onglet propose : le déclenchement est
-                    signalé et journalisé sans qu'aucune sanction ne tombe, ce qui vous laisse vérifier l'effet
-                    du réglage sur votre serveur avant de lui associer une sanction.
-                </p>
-                <p>
-                    Un bug, une remarque, une idée d'amélioration ? Le bouton rond en bas à droite de l'écran
-                    ouvre « Signaler un bug » et « Suggestion » : vos retours me parviennent directement.
+                    Activez-les une à une, en commençant par le mode « alerte seule » de chaque onglet :
+                    le déclenchement est journalisé sans qu'aucune sanction ne tombe. Un souci, une idée ?
+                    Le drapeau en bas à droite de l'écran m'envoie vos retours.
                 </p>
             </div>
         </div>

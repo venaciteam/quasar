@@ -147,34 +147,19 @@
         </main>
     </div>
 
-    <template data-kesako-content>
-        <h4>Bienvenue sur Quasar !</h4>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary);">
-            Quasar est un bot Discord custom — il gère la modération, les messages de bienvenue, les rôles automatiques et les embeds personnalisés.
-        </p>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary);">
-            Ce dashboard te permet de tout configurer sans toucher à une seule commande.
-        </p>
-        <p data-instance-operator style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
-            Cette instance est hébergée par la personne ou l'organisation qui l'a installée.
-        </p>
-        <hr style="margin-top: var(--space-5); border: none; border-top: 1px solid var(--border-default);">
-        <p style="margin-top: var(--space-4); color: var(--text-secondary); font-weight: var(--font-medium);">🔍 Pour les curieux</p>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed);">
-            Quasar tourne sur un serveur privé, sans dépendance à un service tiers payant. Les données (sanctions, configs, embeds) sont stockées localement dans une base SQLite. L'authentification passe par Discord OAuth2 — aucun mot de passe n'est stocké, on vérifie juste que tu es admin du serveur.
-        </p>
-        <p data-instance-source style="margin-top: var(--space-4); color: var(--text-muted); font-size: var(--text-sm);">
-            Quasar est un logiciel libre sous licence AGPL-3.0 —
-            <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">code source de cette instance</a>.
-        </p>
-        <p style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
-            Ce logiciel est développé par
-            <a href="https://vena.city" style="color: var(--accent);">Venacity</a>.
-        </p>
-        <div style="margin-top: var(--space-5); display: flex; justify-content: center;">
-            <button class="vnct-btn vnct-btn--primary" onclick="VNCT.Modal.close()">Compris !</button>
-        </div>
-    </template>
+    <!-- Bouton drapeau de signalement. Il vit ici, dans le shell du dashboard,
+         et non dans une page : le dashboard rend toutes ses pages dans #content,
+         un bouton déclaré dans l'une d'elles disparaîtrait aux autres.
+         Pastille iconique (dérogation actée à « texte explicite > icône seule »,
+         comme sur les headers de Prisma et de Maât) : le libellé est porté par
+         title + aria-label. Le SVG est celui du drapeau de la vitrine
+         (public/partials/header.html), pour que les deux surfaces se
+         ressemblent. Le clic est câblé par VNCT.Feedback (vnct-common.js), qui
+         ouvre la modale unifiée « bug ou idée ». -->
+    <button class="vnct-report-fab" type="button" data-vnct-report
+            title="Signaler ou proposer" aria-label="Signaler ou proposer">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+    </button>
 
     <script src="/dashboard/js/vnct-common.js?v=__VERSION__"></script>
     <script>

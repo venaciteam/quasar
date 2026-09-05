@@ -12,7 +12,7 @@
    2. Theme — Toggle clair/sombre
    3. Accent — Rose fixe (pas de personnalisation)
    4. Toast — Système de notifications
-   5. FAB — Floating Action Button (Késako / Bug / Suggestion)
+   5. Feedback — Bouton drapeau flottant + modale de signalement (bug / idée)
    6. PageTransition — Animations de navigation style Windows Phone
    7. Modal — Gestion des modals
    8. Webhook — Envoi vers Discord
@@ -53,7 +53,7 @@
       VNCT.Theme.init();
       VNCT.Accent.init();
       VNCT.Toast.init();
-      VNCT.FAB.init();
+      VNCT.Feedback.init();
       VNCT.Modal.init();
       VNCT.VersionBadge.init();
       VNCT.Nav.init();
@@ -264,170 +264,125 @@
   };
 
   /* ==========================================================================
-     5. FAB — Floating Action Button
-     Menu : Késako / Bug Report / Suggestion
+     5. FEEDBACK — Bouton drapeau flottant + modale unifiée de signalement
+
+     Remplace l'ancien FAB (pastille ronde + menu à trois entrées), résidu du
+     design system historique. Le parcours est désormais celui de la vitrine :
+     UN bouton drapeau, UNE modale, et le choix « bug » ou « idée » se fait
+     DANS la modale.
+
+     Pourquoi une reprise locale et pas VNCT.Feedback du DS centralisé : le
+     dashboard embarque sa propre copie du design system. Charger en plus le DS
+     de design.vena.city ferait cohabiter deux définitions de window.VNCT, donc
+     deux VNCT.Modal et deux VNCT.Theme — le pop-up des nouveautés et la bascule
+     de thème y passeraient. On reproduit donc le parcours ici, à partir des
+     formulaires locaux qui postent déjà sur Sema.
      ========================================================================== */
 
-  VNCT.FAB = {
-    _isOpen: false,
-    _fabEl: null,
-    _menuEl: null,
-    _overlayEl: null,
+  VNCT.Feedback = {
+    _buttonEl: null,
+    // Élément qui avait le focus avant l'ouverture. VNCT.Modal.open() le capture
+    // lui-même, mais chaque étape du parcours (choix → formulaire → retour)
+    // rappelle open() : sans ce report, la fermeture rendrait le focus à un
+    // bouton d'étape déjà retiré du DOM au lieu du drapeau.
+    _opener: null,
 
     init() {
-      // Réutiliser si déjà présent dans le HTML
-      this._fabEl = document.querySelector('.vnct-fab');
-      if (this._fabEl) {
-        this._menuEl = document.querySelector('.vnct-fab-menu');
-        this._overlayEl = document.querySelector('.vnct-fab-overlay');
-        this._bindEvents();
-        return;
-      }
+      // Le bouton est déclaré dans le HTML de la page (dashboard/app.html) :
+      // il s'y relit et s'y revoit. Repli sur un rendu JS pour les pages du
+      // dashboard qui ne le déclarent pas (page de connexion), afin qu'aucune
+      // d'elles ne perde son entrée de signalement.
+      this._buttonEl = document.querySelector('[data-vnct-report]');
+      if (!this._buttonEl) this._render();
 
-      this._render();
-      this._bindEvents();
+      this._buttonEl.addEventListener('click', () => this.open());
     },
 
     _render() {
-      // Overlay
-      this._overlayEl = document.createElement('div');
-      this._overlayEl.className = 'vnct-fab-overlay';
-      this._overlayEl.setAttribute('aria-hidden', 'true');
-
-      // Menu
-      this._menuEl = document.createElement('div');
-      this._menuEl.className = 'vnct-fab-menu';
-      this._menuEl.setAttribute('aria-hidden', 'true');
-      this._menuEl.setAttribute('role', 'menu');
-
-      const items = [
-        { label: 'Késako', icon: '💡', action: 'kesako' },
-        { label: 'Signaler un bug', icon: '🐛', action: 'bug' },
-        { label: 'Suggestion', icon: '✨', action: 'suggestion' },
-      ];
-
-      items.forEach(item => {
-        const el = document.createElement('button');
-        el.className = 'vnct-fab-menu__item';
-        el.setAttribute('role', 'menuitem');
-        el.setAttribute('data-action', item.action);
-        el.innerHTML = `<span class="vnct-fab-menu__icon">${item.icon}</span><span>${item.label}</span>`;
-        this._menuEl.appendChild(el);
-      });
-
-      // FAB button
-      this._fabEl = document.createElement('button');
-      this._fabEl.className = 'vnct-fab';
-      this._fabEl.setAttribute('aria-label', 'Menu');
-      this._fabEl.setAttribute('aria-expanded', 'false');
-      this._fabEl.setAttribute('aria-haspopup', 'true');
-      this._fabEl.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>`;
-
-      document.body.appendChild(this._overlayEl);
-      document.body.appendChild(this._menuEl);
-      document.body.appendChild(this._fabEl);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'vnct-report-fab';
+      btn.setAttribute('data-vnct-report', '');
+      btn.setAttribute('title', 'Signaler ou proposer');
+      btn.setAttribute('aria-label', 'Signaler ou proposer');
+      btn.innerHTML = VNCT.Feedback._FLAG_SVG;
+      document.body.appendChild(btn);
+      this._buttonEl = btn;
     },
 
-    _bindEvents() {
-      if (this._fabEl) {
-        this._fabEl.addEventListener('click', () => this.toggle());
-      }
+    /** Drapeau du chrome de la vitrine (public/partials/header.html), à l'identique. */
+    _FLAG_SVG: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>',
 
-      if (this._overlayEl) {
-        this._overlayEl.addEventListener('click', () => this.close());
-      }
-
-      if (this._menuEl) {
-        this._menuEl.addEventListener('click', (e) => {
-          const item = e.target.closest('.vnct-fab-menu__item');
-          if (!item) return;
-
-          const action = item.getAttribute('data-action');
-          this._handleAction(action);
-          this.close();
-        });
-      }
-
-      // Fermer avec Escape
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && this._isOpen) {
-          this.close();
-        }
-      });
-    },
-
-    toggle() {
-      this._isOpen ? this.close() : this.open();
-    },
-
+    /** Point d'entrée unique : ouvre l'écran de choix. */
     open() {
-      this._isOpen = true;
-      this._fabEl.classList.add('vnct-fab--open');
-      this._fabEl.setAttribute('aria-expanded', 'true');
-      this._menuEl.setAttribute('aria-hidden', 'false');
-      this._overlayEl.setAttribute('aria-hidden', 'false');
+      this._opener = document.activeElement;
+      this._openChoice();
+    },
 
-      // Force re-trigger des animations d'entrée sur chaque item
-      this._menuEl.querySelectorAll('.vnct-fab-menu__item').forEach(item => {
-        VNCT._forceReflow(item);
+    /** Étape 1 — quel type de retour ? */
+    _openChoice() {
+      VNCT.Modal.open({
+        title: 'Signaler ou proposer',
+        body: `
+          <p class="vnct-feedback-intro">Que souhaitez-vous m'envoyer ?</p>
+          <div class="vnct-feedback-choices">
+            <button type="button" class="vnct-feedback-choice" data-feedback-choice="bug">
+              <span class="vnct-feedback-choice__icon" aria-hidden="true">🐛</span>
+              <span class="vnct-feedback-choice__text">
+                <span class="vnct-feedback-choice__title">Signaler un bug</span>
+                <span class="vnct-feedback-choice__desc">Quelque chose ne fonctionne pas comme prévu.</span>
+              </span>
+            </button>
+            <button type="button" class="vnct-feedback-choice" data-feedback-choice="suggestion">
+              <span class="vnct-feedback-choice__icon" aria-hidden="true">✨</span>
+              <span class="vnct-feedback-choice__text">
+                <span class="vnct-feedback-choice__title">Proposer une idée</span>
+                <span class="vnct-feedback-choice__desc">Une amélioration ou une fonctionnalité à me suggérer.</span>
+              </span>
+            </button>
+          </div>
+        `,
+        isHtml: true,
+      });
+      this._restoreOpenerFocusTarget();
+
+      VNCT.Modal._modalEl.querySelectorAll('[data-feedback-choice]').forEach((btn) => {
+        btn.addEventListener('click', () => this._openForm(btn.getAttribute('data-feedback-choice')));
       });
     },
 
-    close() {
-      this._isOpen = false;
-      this._fabEl.classList.remove('vnct-fab--open');
-      this._fabEl.setAttribute('aria-expanded', 'false');
+    /**
+     * Étape 2 — le formulaire correspondant au choix.
+     * @param {'bug'|'suggestion'} type
+     */
+    _openForm(type) {
+      const isBug = type === 'bug';
 
-      // Animate out before hiding
-      this._menuEl.classList.add('vnct-fab-menu--closing');
-      this._overlayEl.classList.add('vnct-fab-overlay--closing');
+      VNCT.Modal.open({
+        title: isBug ? '🐛 Signaler un bug' : '✨ Proposer une idée',
+        body: isBug ? this._buildBugForm() : this._buildSuggestionForm(),
+        isHtml: true,
+      });
+      this._restoreOpenerFocusTarget();
 
-      // Wait for animation to finish, then hide
-      setTimeout(() => {
-        this._menuEl.classList.remove('vnct-fab-menu--closing');
-        this._menuEl.setAttribute('aria-hidden', 'true');
-        this._overlayEl.classList.remove('vnct-fab-overlay--closing');
-        this._overlayEl.setAttribute('aria-hidden', 'true');
-      }, 250);
+      // L'ordre compte : _initUploadField câble un HTML qui doit déjà être dans
+      // le DOM. Appelé avant Modal.open(), il ne trouverait rien.
+      this._initUploadField(VNCT.Modal._modalEl);
+
+      const back = VNCT.Modal._modalEl.querySelector('[data-feedback-back]');
+      if (back) back.addEventListener('click', () => this._openChoice());
     },
 
-    _handleAction(action) {
-      switch (action) {
-        case 'kesako':
-          VNCT.Modal.open({
-            title: '💡 C\'est quoi ' + VNCT.config.serviceName + ' ?',
-            body: document.querySelector('[data-kesako-content]')?.innerHTML
-              || '<p>Bienvenue sur ' + VNCT.config.serviceName + ' !</p><p>Ce service fait partie de l\'écosystème Venacity.</p>',
-            isHtml: true,
-          });
-          break;
-
-        case 'bug':
-          VNCT.Modal.open({
-            title: '🐛 Signaler un bug',
-            body: VNCT.FAB._buildBugForm(),
-            isHtml: true,
-          });
-          // Initialiser le champ upload après injection dans le DOM
-          VNCT.FAB._initUploadField(VNCT.Modal._modalEl);
-          break;
-
-        case 'suggestion':
-          VNCT.Modal.open({
-            title: '✨ Proposer une idée',
-            body: VNCT.FAB._buildSuggestionForm(),
-            isHtml: true,
-          });
-          VNCT.FAB._initUploadField(VNCT.Modal._modalEl);
-          break;
-      }
+    /** Rend à VNCT.Modal la cible de focus d'origine après un changement d'étape. */
+    _restoreOpenerFocusTarget() {
+      if (this._opener) VNCT.Modal._previousFocus = this._opener;
     },
 
-    /** Formulaire Bug Report — calqué sur l'ancien FAB */
+    /** Formulaire Bug Report */
     _buildBugForm() {
-      const techInfo = VNCT.FAB._getTechInfo();
+      const techInfo = VNCT.Feedback._getTechInfo();
       return `
-        <form class="vnct-fab-feedback-form" data-feedback-type="bug">
+        <form class="vnct-feedback-form" data-feedback-type="bug">
           <label class="vnct-label">DESCRIPTION DU PROBLÈME</label>
           <textarea class="vnct-textarea" name="description" rows="4"
             placeholder="Décrivez le problème rencontré..."
@@ -438,7 +393,7 @@
             placeholder="1. J'ai ouvert la page\n2. J'ai cliqué sur...\n3. ..."></textarea>
 
           <label class="vnct-label" style="margin-top: var(--space-4);">CAPTURES D'ÉCRAN <span style="color: var(--text-muted); font-weight: var(--font-normal); text-transform: none;">optionnel, max 12 Mo par image</span></label>
-          ${VNCT.FAB._buildUploadField()}
+          ${VNCT.Feedback._buildUploadField()}
 
           <label class="vnct-label" style="margin-top: var(--space-4);">CONTACT <span style="color: var(--text-muted); font-weight: var(--font-normal); text-transform: none;">optionnel</span></label>
           <input class="vnct-input" name="contact" type="text"
@@ -452,26 +407,23 @@
             <div>Date : ${techInfo.date}</div>
           </div>
 
-          <div style="margin-top: var(--space-6); display: flex; justify-content: flex-end; gap: var(--space-3);">
-            <button type="button" class="vnct-btn vnct-btn--ghost" onclick="VNCT.Modal.close()">Annuler</button>
-            <button type="submit" class="vnct-btn vnct-btn--primary">Envoyer</button>
-          </div>
+          ${VNCT.Feedback._buildFormActions()}
         </form>
       `;
     },
 
-    /** Formulaire Suggestion — calqué sur l'ancien FAB */
+    /** Formulaire Suggestion */
     _buildSuggestionForm() {
-      const techInfo = VNCT.FAB._getTechInfo();
+      const techInfo = VNCT.Feedback._getTechInfo();
       return `
-        <form class="vnct-fab-feedback-form" data-feedback-type="suggestion">
-          <label class="vnct-label">TON IDÉE OU SUGGESTION</label>
+        <form class="vnct-feedback-form" data-feedback-type="suggestion">
+          <label class="vnct-label">VOTRE IDÉE OU SUGGESTION</label>
           <textarea class="vnct-textarea" name="description" rows="4"
             placeholder="J'aimerais pouvoir..."
             required></textarea>
 
           <label class="vnct-label" style="margin-top: var(--space-4);">CAPTURES D'ÉCRAN <span style="color: var(--text-muted); font-weight: var(--font-normal); text-transform: none;">optionnel, max 12 Mo par image</span></label>
-          ${VNCT.FAB._buildUploadField()}
+          ${VNCT.Feedback._buildUploadField()}
 
           <label class="vnct-label" style="margin-top: var(--space-4);">CONTACT <span style="color: var(--text-muted); font-weight: var(--font-normal); text-transform: none;">optionnel</span></label>
           <input class="vnct-input" name="contact" type="text"
@@ -485,11 +437,21 @@
             <div>Date : ${techInfo.date}</div>
           </div>
 
-          <div style="margin-top: var(--space-6); display: flex; justify-content: flex-end; gap: var(--space-3);">
-            <button type="button" class="vnct-btn vnct-btn--ghost" onclick="VNCT.Modal.close()">Annuler</button>
-            <button type="submit" class="vnct-btn vnct-btn--primary">Envoyer</button>
-          </div>
+          ${VNCT.Feedback._buildFormActions()}
         </form>
+      `;
+    },
+
+    /**
+     * Pied des deux formulaires. « Retour » ramène au choix : personne ne doit
+     * avoir à refermer la modale pour corriger le type de retour choisi.
+     */
+    _buildFormActions() {
+      return `
+        <div class="vnct-feedback-actions">
+          <button type="button" class="vnct-btn vnct-btn--ghost" data-feedback-back>Retour</button>
+          <button type="submit" class="vnct-btn vnct-btn--primary">Envoyer</button>
+        </div>
       `;
     },
 
@@ -719,7 +681,7 @@
 
       // Écouter les soumissions de formulaire feedback
       document.addEventListener('submit', async (e) => {
-        const form = e.target.closest('.vnct-fab-feedback-form');
+        const form = e.target.closest('.vnct-feedback-form');
         if (!form) return;
         e.preventDefault();
         const type = form.getAttribute('data-feedback-type');
@@ -835,18 +797,19 @@
 
     /**
      * Récupère les éléments à animer dans le body du modal.
-     * Si le body contient un formulaire (.vnct-fab-feedback-form),
+     * Si le body contient un formulaire (.vnct-feedback-form),
      * anime les enfants du form (chaque champ) au lieu du form en bloc.
      */
     _getAnimTargets() {
       const body = this._modalEl.querySelector('.vnct-modal__body');
       if (!body) return [];
-      const form = body.querySelector('.vnct-fab-feedback-form');
+      const form = body.querySelector('.vnct-feedback-form');
       if (form) {
         // Animer chaque enfant direct du form (label, textarea, input, div, etc.)
         return Array.from(form.children);
       }
-      // Pas de form → animer les enfants directs du body (ex: Késako)
+      // Pas de form → animer les enfants directs du body (écran de choix du
+      // signalement, pop-up des nouveautés…)
       return Array.from(body.children);
     },
 
@@ -916,7 +879,7 @@
       // et permet à chaque instance Quasar de remonter les reports.
       const relayUrl = VNCT.config.discordWebhookUrl || '/api/feedback/vnct';
 
-      const techInfo = VNCT.FAB._getTechInfo();
+      const techInfo = VNCT.Feedback._getTechInfo();
       const screenshots = data.screenshots || [];
 
       // Construction du FormData (multipart/form-data)
