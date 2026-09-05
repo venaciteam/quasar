@@ -1443,6 +1443,107 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════ */
+/*   MARQUAGE BÊTA — modération automatique                            */
+/*                                                                     */
+/*   Deux repères pour une seule information : la pastille de la barre  */
+/*   latérale, et le bandeau en haut de la page (le porteur principal). */
+/*   AUCUN des deux ne dépend d'un survol : le survol n'existe pas au   */
+/*   doigt, ni au clavier. Le texte est donc toujours écrit à l'écran ; */
+/*   le `title` natif du HTML n'est qu'un confort de plus sur           */
+/*   ordinateur, jamais le seul canal.                                  */
+/*                                                                     */
+/*   Zéro couleur en dur : --warning porte déjà ses déclinaisons sombre */
+/*   et claire. Le fond du bandeau reste neutre et seul un filet à      */
+/*   gauche est coloré — même parti pris que les toasts du design       */
+/*   system. Le titre et le corps restent en texte standard : une bêta  */
+/*   est un avertissement, pas une alarme, et le sens doit tenir sans   */
+/*   la couleur.                                                        */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/* Pastille de la barre latérale. Le mot « bêta » est écrit à côté du
+   triangle : une icône seule ne porte jamais une information, et un
+   triangle ne dit rien à qui ne le voit pas. `margin-left: auto` la cale
+   au bout de l'entrée sans toucher à l'alignement du libellé ni à celui
+   des autres entrées. */
+.sidebar-badge-beta {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2em;
+    padding: 0.05rem var(--space-2);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-full);
+    /* Le MOT reste en texte courant, pas en --warning : en thème clair, l'orange
+       du design system plafonne à ~3:1 sur fond blanc, insuffisant pour du texte
+       de 11 px. La couleur d'avertissement porte le filet et le triangle (des
+       graphiques, seuil 3:1), jamais le sens — qui tient dans le mot lui-même. */
+    color: var(--text-secondary);
+    /* Sous --text-xs : c'est un repère, il ne doit pas concurrencer le libellé. */
+    font-size: 0.6875rem;
+    font-weight: var(--font-medium);
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+.sidebar-badge-beta-icon {
+    color: var(--warning);
+}
+
+/* Bandeau de la page. Rendu par le conteneur d'onglets, donc au-dessus de
+   la barre d'onglets : il reste visible quel que soit l'onglet ouvert. */
+.automod-beta {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: var(--space-5);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-md);
+}
+
+.automod-beta-icon {
+    flex-shrink: 0;
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+.automod-beta-body {
+    /* Sans ça, un mot long (une URL collée un jour dans ce texte) pousserait
+       le bandeau au-delà de la largeur de la page sur mobile. */
+    min-width: 0;
+}
+
+.automod-beta-title {
+    display: block;
+    margin-bottom: var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+}
+
+.automod-beta p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-light);
+    line-height: var(--leading-relaxed);
+}
+
+.automod-beta p + p {
+    margin-top: var(--space-3);
+}
+
+@media (max-width: 480px) {
+    .automod-beta {
+        padding: var(--space-4);
+        gap: var(--space-2);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
 /*   POP-UP DES NOUVEAUTÉS                                             */
 /*                                                                     */
 /*   Le conteneur est la modale du design system (.vnct-modal) : elle   */

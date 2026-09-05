@@ -57,8 +57,19 @@
                 <button class="sidebar-link" data-page="moderation">
                     <span class="sidebar-link-icon">🛡️</span> Modération
                 </button>
+                <!-- Repère bêta. Le mot « bêta » est ÉCRIT à côté du triangle :
+                     une info portée par la seule forme de l'icône, ou par le
+                     seul survol, n'existe ni au doigt ni au clavier. Le `title`
+                     n'est donc qu'un confort supplémentaire sur ordinateur, et
+                     le complément lecteur d'écran dit la même chose que ce que
+                     l'œil voit. Le porteur principal de l'information reste le
+                     bandeau en haut de la page. -->
                 <button class="sidebar-link" data-page="automod">
                     <span class="sidebar-link-icon">🤖</span> Modération auto
+                    <span class="sidebar-badge-beta"
+                          title="Modération automatique en bêta : fonctionnalité en cours de test, vos retours sont les bienvenus.">
+                        <span class="sidebar-badge-beta-icon" aria-hidden="true">⚠</span>bêta<span class="vnct-sr-only"> — fonctionnalité en cours de test</span>
+                    </span>
                 </button>
                 <button class="sidebar-link" data-page="welcome">
                     <span class="sidebar-link-icon">👋</span> Welcome / Leave

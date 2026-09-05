@@ -66,6 +66,43 @@ function activeAutomodTab() {
     return tabs.find(t => t.id === _automodState.activeTabId) || tabs[0];
 }
 
+/**
+ * Bandeau « bêta » de la page.
+ *
+ * Il est rendu par le conteneur, au-dessus de la barre d'onglets : c'est le
+ * seul endroit qui reste à l'écran quel que soit l'onglet ouvert. Le mettre
+ * dans les quatre fichiers d'onglet l'aurait répété quatre fois, avec quatre
+ * occasions de le laisser diverger.
+ *
+ * Volontairement NON fermable : un avertissement qu'un clic fait disparaître
+ * disparaît pour toujours, y compris pour qui revient configurer autre chose
+ * trois semaines plus tard. Il reste tant que la fonctionnalité est en bêta ;
+ * le retirer, c'est supprimer cette fonction et son appel.
+ *
+ * Toute l'information est écrite : rien ne dépend d'un survol (inexistant au
+ * doigt comme au clavier) ni de la seule couleur du filet d'avertissement.
+ */
+function automodBetaBanner() {
+    return `
+        <div class="automod-beta" role="note">
+            <span class="automod-beta-icon" aria-hidden="true">⚠️</span>
+            <div class="automod-beta-body">
+                <strong class="automod-beta-title">Modération automatique — fonctionnalité en bêta</strong>
+                <p>
+                    Ces quatre protections sont encore en cours de test. Activez-les progressivement, en
+                    commençant par le mode « alerte seule » que chaque onglet propose : le déclenchement est
+                    signalé et journalisé sans qu'aucune sanction ne tombe, ce qui vous laisse vérifier l'effet
+                    du réglage sur votre serveur avant de lui associer une sanction.
+                </p>
+                <p>
+                    Un bug, une remarque, une idée d'amélioration ? Le bouton rond en bas à droite de l'écran
+                    ouvre « Signaler un bug » et « Suggestion » : vos retours me parviennent directement.
+                </p>
+            </div>
+        </div>
+    `;
+}
+
 async function loadAutomod(container, guildId) {
     _automodState.guildId = guildId;
     const tabs = sortedAutomodTabs();
@@ -75,6 +112,7 @@ async function loadAutomod(container, guildId) {
             <h1 class="main-title">🤖 Modération automatique</h1>
             <p class="main-subtitle">Configurez les protections qui agissent sans intervention humaine : filtres Discord, escalade des avertissements, anti-raid et salon piège.</p>
         </div>
+        ${automodBetaBanner()}
         ${tabs.length ? `
             <div class="automod-tabs" role="tablist" id="automod-tabs">
                 ${tabs.map(tab => `
