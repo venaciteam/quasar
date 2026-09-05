@@ -47,7 +47,7 @@ async function loadModeration(container, guildId) {
             <div class="card-title">🗃️ Conservation des sanctions</div>
             <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
                 Au-delà de cette durée, les sanctions sont supprimées définitivement de la base.
-                Elles contiennent des données nominatives (membre visé, modérateur, motif) : c'est toi,
+                Elles contiennent des données nominatives (membre visé, modérateur, motif) : c'est vous,
                 administrateur de ce serveur, qui décides combien de temps les garder.
             </p>
             <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;max-width:500px">
@@ -68,7 +68,7 @@ async function loadModeration(container, guildId) {
         <!-- Logs activés -->
         <div class="card">
             <div class="card-title">📋 Types de logs</div>
-            <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Coche les événements que tu veux voir dans le channel de logs.</p>
+            <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Cochez les événements que vous voulez voir dans le channel de logs.</p>
             <div id="log-toggles"><p style="color:var(--text-muted)">Chargement...</p></div>
         </div>
 

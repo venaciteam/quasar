@@ -107,7 +107,7 @@ async function deliverTranscript({ guild, moderator, embed, file }) {
     try {
         await moderator.send({
             content:
-                '📄 Transcript du ticket que tu viens de fermer.\n' +
+                '📄 Transcript du ticket que vous venez de fermer.\n' +
                 'Il t\'arrive en privé parce que ce serveur n\'a pas de salon de logs configuré, ' +
                 'ou que Quasar ne peut pas y écrire. Ce fichier est la seule copie de la conversation : ' +
                 'le bot n\'en garde aucune.',

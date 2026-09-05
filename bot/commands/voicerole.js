@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
+const { checkAssignableRole, describeRefusal } = require('../utils/assignableRole');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -41,6 +42,11 @@ module.exports = {
             const channel = interaction.options.getChannel('salon');
             const role = interaction.options.getRole('role');
 
+            // Un rôle vocal inattribuable échoue à chaque connexion en vocal,
+            // en silence côté administrateur : autant refuser tout de suite.
+            const refusal = checkAssignableRole(interaction.guild, role);
+            if (refusal) return userError(interaction, describeRefusal(refusal, role));
+
             db.prepare(`
                 INSERT INTO voice_roles (guild_id, channel_id, role_id)
                 VALUES (?, ?, ?)
@@ -70,7 +76,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Aucun rôle vocal pour ce salon',
                     cause: 'Ce salon vocal n\'a pas de rôle associé : personne ne reçoit de rôle en le rejoignant.',
-                    action: 'Consulte la configuration avec `/voicerole list`, ou ajoute une règle avec `/voicerole set`.',
+                    action: 'Consultez la configuration avec `/voicerole list`, ou ajoutez une règle avec `/voicerole set`.',
                 });
             }
 

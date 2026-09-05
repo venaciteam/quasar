@@ -16,7 +16,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Membre introuvable',
                 cause: 'Cette personne n\'est plus sur le serveur.',
-                action: 'Vérifie qu\'elle en est toujours membre.',
+                action: 'Vérifiez qu\'elle en est toujours membre.',
             });
         }
 
@@ -34,7 +34,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Je ne peux pas lever cette exclusion',
                 cause: 'Soit il me manque la permission **Exclure temporairement des membres**, soit ce membre a un rôle situé au-dessus du mien.',
-                action: 'Vérifie mes permissions, et place mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
+                action: 'Vérifiez mes permissions, et placez mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
             });
         }
 

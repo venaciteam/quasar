@@ -32,8 +32,8 @@ async function handleTicketInteraction(interaction) {
             const existingChannel = interaction.guild.channels.cache.get(existing.channel_id);
             if (existingChannel) {
                 return userError(interaction, {
-                    title: 'Tu as déjà un ticket ouvert',
-                    cause: `Ton ticket en cours est <#${existing.channel_id}>. Un seul ticket à la fois est autorisé, pour éviter les doublons côté staff.`,
+                    title: 'Vous avez déjà un ticket ouvert',
+                    cause: `Votre ticket en cours est <#${existing.channel_id}>. Un seul ticket à la fois est autorisé, pour éviter les doublons côté staff.`,
                     action: 'Poursuis la discussion dans ce salon. S\'il est résolu, ferme-le avec `/ticket close` avant d\'en ouvrir un nouveau.',
                 });
             }
@@ -96,7 +96,7 @@ async function handleTicketInteraction(interaction) {
         const ticketId = result.lastInsertRowid;
 
         // Envoyer le message d'accueil
-        const welcomeText = config.welcome_message || 'Un membre du staff va te répondre sous peu. Décris ton problème en détail.';
+        const welcomeText = config.welcome_message || 'Un membre du staff va vous répondre sous peu. Décrivez votre problème en détail.';
 
         const welcomeEmbed = new EmbedBuilder()
             .setTitle(`🎫 Ticket #${ticketId}`)
@@ -118,7 +118,7 @@ async function handleTicketInteraction(interaction) {
 
         await ticketChannel.send({ content: `${interaction.user} | <@&${config.staff_role_id}>`, embeds: [welcomeEmbed], components: [closeRow] });
 
-        await interaction.reply({ content: `✅ Ton ticket a été créé : <#${ticketChannel.id}>`, ephemeral: true });
+        await interaction.reply({ content: `✅ Votre ticket a été créé : <#${ticketChannel.id}>`, ephemeral: true });
 
         // Log
         const logEmbed = new EmbedBuilder()

@@ -7,7 +7,7 @@ const router = express.Router({ mergeParams: true });
 const ACCENT_COLOR = 0xDE3163;
 
 const DEFAULT_PANEL_TITLE = '🎫 Support — Ouvrir un ticket';
-const DEFAULT_PANEL_DESC = 'Clique sur le bouton ci-dessous pour ouvrir un ticket.\nUn membre du staff te répondra dès que possible.';
+const DEFAULT_PANEL_DESC = 'Cliquez sur le bouton ci-dessous pour ouvrir un ticket.\nUn membre du staff vous répondra dès que possible.';
 
 function buildPanelEmbed(config) {
     return new EmbedBuilder()

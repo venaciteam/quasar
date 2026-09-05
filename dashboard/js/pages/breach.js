@@ -369,7 +369,7 @@ async function previewBreach(incidentId) {
                 </p>
                 <p style="font-size:.76rem;color:var(--text-secondary);margin:0 0 .75rem">
                     En confirmant, la notification est enfilée pour envoi à tous les destinataires listés ci-dessus
-                    (message privé, avec repli salon en cas d'échec). Vérifie le texte une dernière fois.
+                    (message privé, avec repli salon en cas d'échec). Vérifiez le texte une dernière fois.
                 </p>
                 <button class="btn" id="breach-confirm-btn" style="background:var(--danger);color:#fff;border-color:var(--danger)" onclick="confirmSendBreach()">
                     ✅ Confirmer l'envoi (phase ${preview.phase})

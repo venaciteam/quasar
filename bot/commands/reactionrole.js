@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
+const { checkAssignableRole, describeRefusal } = require('../utils/assignableRole');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -49,7 +50,7 @@ module.exports = {
         if (sub === 'create') {
             const channel = interaction.options.getChannel('channel');
             const titre = interaction.options.getString('titre');
-            const description = interaction.options.getString('description') || 'Clique sur un emoji pour obtenir le rôle correspondant.';
+            const description = interaction.options.getString('description') || 'Cliquez sur un emoji pour obtenir le rôle correspondant.';
             const mode = interaction.options.getString('mode') || 'multiple';
 
             // Créer le panel en DB
@@ -81,7 +82,7 @@ module.exports = {
                         { name: 'Channel', value: `${channel}`, inline: true },
                         { name: 'Mode', value: mode, inline: true }
                     )
-                    .setDescription(`Utilise \`/reactionrole add panel_id:${panelId} emoji:🎮 role:@Role\` pour ajouter des rôles.`)
+                    .setDescription(`Utilisez \`/reactionrole add panel_id:${panelId} emoji:🎮 role:@Role\` pour ajouter des rôles.`)
                     .setTimestamp()],
                 ephemeral: true
             });
@@ -99,9 +100,14 @@ module.exports = {
                 return userError(interaction, {
                 title: 'Panel introuvable',
                 cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
-                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+                action: 'Retrouvez le bon identifiant avec `/reactionrole list`.',
             });
             }
+
+            // Un rôle inattribuable ne se voit qu'au premier clic sur l'emoji,
+            // dans les logs du bot : le refus arrive ici, avec son motif.
+            const refusal = checkAssignableRole(interaction.guild, role);
+            if (refusal) return userError(interaction, describeRefusal(refusal, role));
 
             db.prepare(`
                 INSERT INTO reaction_roles (panel_id, emoji, role_id, description)
@@ -139,7 +145,7 @@ module.exports = {
             if (!panel) return userError(interaction, {
                 title: 'Panel introuvable',
                 cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
-                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+                action: 'Retrouvez le bon identifiant avec `/reactionrole list`.',
             });
 
             db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji);
@@ -161,7 +167,7 @@ module.exports = {
             if (!panel) return userError(interaction, {
                 title: 'Panel introuvable',
                 cause: 'Aucun panel de rôles-réactions ne porte cet identifiant sur ce serveur.',
-                action: 'Retrouve le bon identifiant avec `/reactionrole list`.',
+                action: 'Retrouvez le bon identifiant avec `/reactionrole list`.',
             });
 
             // Supprimer le message Discord
@@ -209,7 +215,7 @@ async function refreshPanel(guild, channelId, messageId, panelId, db) {
         const msg = await channel.messages.fetch(messageId).catch(() => null);
         if (!msg) return;
 
-        let description = 'Clique sur un emoji pour obtenir le rôle correspondant.\n\n';
+        let description = 'Cliquez sur un emoji pour obtenir le rôle correspondant.\n\n';
 
         if (entries.length === 0) {
             description += '*(Aucun rôle configuré)*';

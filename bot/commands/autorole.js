@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
+const { checkAssignableRole, describeRefusal } = require('../utils/assignableRole');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -29,13 +30,8 @@ module.exports = {
         if (sub === 'add') {
             const role = interaction.options.getRole('role');
 
-            if (role.managed) {
-                return userError(interaction, {
-                    title: 'Ce rôle ne peut pas être attribué',
-                    cause: 'Il est géré automatiquement par une intégration (bot, abonnement Twitch, boost du serveur…). Discord interdit à un autre bot d\'y toucher.',
-                    action: 'Crée un rôle classique et utilise celui-ci à la place.',
-                });
-            }
+            const refusal = checkAssignableRole(interaction.guild, role);
+            if (refusal) return userError(interaction, describeRefusal(refusal, role));
 
             db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)')
                 .run(interaction.guild.id, role.id);
@@ -57,7 +53,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce rôle n\'est pas un autorôle',
                     cause: 'Il ne fait pas partie des rôles attribués automatiquement à l\'arrivée.',
-                    action: 'Consulte la liste avec `/autorole list`.',
+                    action: 'Consultez la liste avec `/autorole list`.',
                 });
             }
 

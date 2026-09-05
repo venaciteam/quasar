@@ -22,7 +22,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Je ne peux pas bannir ce membre',
                 cause: 'Soit il me manque la permission **Bannir des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
-                action: 'Vérifie mes permissions, et place mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
+                action: 'Vérifiez mes permissions, et placez mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
             });
         }
 

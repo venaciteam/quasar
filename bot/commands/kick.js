@@ -20,14 +20,14 @@ module.exports = {
             return userError(interaction, {
                 title: 'Membre introuvable',
                 cause: 'Cette personne n\'est plus sur le serveur — elle est peut-être déjà partie.',
-                action: 'Vérifie la liste des membres du serveur.',
+                action: 'Vérifiez la liste des membres du serveur.',
             });
         }
         if (!member.kickable) {
             return userError(interaction, {
                 title: 'Je ne peux pas expulser ce membre',
                 cause: 'Soit il me manque la permission **Expulser des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
-                action: 'Vérifie mes permissions, et place mon rôle au-dessus du sien dans Paramètres du serveur → Rôles.',
+                action: 'Vérifiez mes permissions, et placez mon rôle au-dessus du sien dans Paramètres du serveur → Rôles.',
             });
         }
 

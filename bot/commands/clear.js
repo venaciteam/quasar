@@ -48,7 +48,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Messages trop anciens',
                     cause: 'Discord interdit la suppression groupée des messages de plus de 14 jours.',
-                    action: 'Supprime-les manuellement, ou relance la commande avec un nombre plus petit pour ne viser que les messages récents.',
+                    action: 'Supprimez-les manuellement, ou relancez la commande avec un nombre plus petit pour ne viser que les messages récents.',
                 });
             }
             return reportIncident(interaction, e, { command: '/clear' });

@@ -2,6 +2,21 @@ const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
 const router = express.Router({ mergeParams: true });
+const { checkAssignableRole, describeForApi } = require('../../bot/utils/assignableRole');
+
+// Les rôles automatiques (autorôles, rôles vocaux) passent tous par la même
+// vérification : cf. bot/utils/assignableRole.js. Résout le rôle dans le cache du
+// serveur et renvoie soit { role }, soit { status, error } prêt à renvoyer.
+function resolveAssignableRole(req, roleId) {
+    const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
+    if (!guild) return { status: 404, error: 'Ce serveur est introuvable pour le bot.' };
+
+    const role = guild.roles.cache.get(roleId);
+    const refusal = checkAssignableRole(guild, role);
+    if (refusal) return { status: 400, error: describeForApi(refusal, role) };
+
+    return { role };
+}
 
 // Autoroles
 router.get('/autoroles', requireAuth, requireGuildAdmin, (req, res) => {
@@ -9,9 +24,20 @@ router.get('/autoroles', requireAuth, requireGuildAdmin, (req, res) => {
     res.json(db.prepare('SELECT role_id FROM autoroles WHERE guild_id = ?').all(req.params.guildId));
 });
 
+// Les mêmes gardes que `/autorole add`, qui manquaient ici : un rôle
+// inattribuable s'insérait sans broncher et n'échouait qu'à l'arrivée du premier
+// membre, dans un `console.error` que personne ne lit. Depuis la v4.6.1 les
+// autorôles s'appliquent sur tous les serveurs, plus seulement ceux qui ont un
+// message de bienvenue : autant refuser tout de suite, avec un motif.
 router.post('/autoroles', requireAuth, requireGuildAdmin, (req, res) => {
+    const roleId = typeof req.body?.role_id === 'string' ? req.body.role_id.trim() : '';
+    if (!roleId) return res.status(400).json({ error: 'Aucun rôle fourni.' });
+
+    const resolved = resolveAssignableRole(req, roleId);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+
     const db = getDb();
-    db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)').run(req.params.guildId, req.body.role_id);
+    db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)').run(req.params.guildId, roleId);
     res.json({ success: true });
 });
 
@@ -29,11 +55,30 @@ router.get('/voiceroles', requireAuth, requireGuildAdmin, (req, res) => {
     } catch { res.json([]); }
 });
 
+// Mêmes gardes que pour les autorôles : un rôle vocal inattribuable échoue à
+// chaque connexion en vocal, en silence côté administrateur.
 router.post('/voiceroles', requireAuth, requireGuildAdmin, (req, res) => {
+    const channelId = typeof req.body?.channel_id === 'string' ? req.body.channel_id.trim() : '';
+    const roleId = typeof req.body?.role_id === 'string' ? req.body.role_id.trim() : '';
+    if (!channelId || !roleId) return res.status(400).json({ error: 'Salon ou rôle manquant.' });
+
+    const resolved = resolveAssignableRole(req, roleId);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+
+    // Le salon doit exister et être vocal : la table est indexée dessus, une
+    // ligne pointant un salon textuel ne se déclencherait jamais.
+    const { ChannelType } = require('discord.js');
+    const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
+    const channel = guild?.channels.cache.get(channelId);
+    if (!channel) return res.status(400).json({ error: 'Ce salon n\'existe pas sur ce serveur.' });
+    if (channel.type !== ChannelType.GuildVoice && channel.type !== ChannelType.GuildStageVoice) {
+        return res.status(400).json({ error: 'Ce salon n\'est pas un salon vocal.' });
+    }
+
     const db = getDb();
     db.exec(`CREATE TABLE IF NOT EXISTS voice_roles (guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, role_id TEXT NOT NULL, PRIMARY KEY (guild_id, channel_id))`);
     db.prepare(`INSERT INTO voice_roles (guild_id, channel_id, role_id) VALUES (?, ?, ?) ON CONFLICT(guild_id, channel_id) DO UPDATE SET role_id = ?`)
-        .run(req.params.guildId, req.body.channel_id, req.body.role_id, req.body.role_id);
+        .run(req.params.guildId, channelId, roleId, roleId);
     res.json({ success: true });
 });
 
@@ -100,7 +145,7 @@ router.post('/panels', requireAuth, requireGuildAdmin, async (req, res) => {
     const { EmbedBuilder } = require('discord.js');
     const embed = new EmbedBuilder()
         .setTitle(title)
-        .setDescription((description || 'Clique sur un emoji pour obtenir le rôle correspondant.') + '\n\n*(Aucun rôle configuré)*')
+        .setDescription((description || 'Cliquez sur un emoji pour obtenir le rôle correspondant.') + '\n\n*(Aucun rôle configuré)*')
         .setColor(0xc86e8e)
         .setFooter({ text: `Panel #${panelId} • Mode ${mode || 'multiple'}` });
 
@@ -123,9 +168,16 @@ router.post('/panels/:panelId/entries', requireAuth, requireGuildAdmin, async (r
         .get(panelId, req.params.guildId);
     if (!panel) return res.status(404).json({ error: 'Panel introuvable' });
 
+    // Mêmes gardes que les autorôles et les rôles vocaux : sans elles, un rôle
+    // inattribuable n'échoue qu'au premier clic sur l'emoji.
+    const roleId = typeof role_id === 'string' ? role_id.trim() : '';
+    if (!roleId) return res.status(400).json({ error: 'Aucun rôle fourni.' });
+    const resolved = resolveAssignableRole(req, roleId);
+    if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
+
     db.prepare(`INSERT INTO reaction_roles (panel_id, emoji, role_id, description) VALUES (?, ?, ?, ?)
         ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?`)
-        .run(panelId, emoji, role_id, description || null, role_id, description || null);
+        .run(panelId, emoji, roleId, description || null, roleId, description || null);
 
     // Refresh le panel Discord
     await refreshPanelFromApi(req, panel, panelId, db);
@@ -193,7 +245,7 @@ async function refreshPanelFromApi(req, panel, panelId, db) {
 
         const p = db.prepare('SELECT * FROM reaction_panels WHERE id = ?').get(panelId);
 
-        let description = 'Clique sur un emoji pour obtenir le rôle correspondant.\n\n';
+        let description = 'Cliquez sur un emoji pour obtenir le rôle correspondant.\n\n';
         if (entries.length === 0) {
             description += '*(Aucun rôle configuré)*';
         } else {

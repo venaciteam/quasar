@@ -13,7 +13,7 @@ async function loadEmbeds(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">📝 Embeds Custom</h1>
-            <p class="main-subtitle">Crée et gère tes embeds Discord personnalisés</p>
+            <p class="main-subtitle">Créez et gérez vos embeds Discord personnalisés</p>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start">
             <!-- Builder -->

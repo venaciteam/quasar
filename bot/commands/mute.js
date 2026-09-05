@@ -22,14 +22,14 @@ module.exports = {
             return userError(interaction, {
                 title: 'Membre introuvable',
                 cause: 'Cette personne n\'est plus sur le serveur.',
-                action: 'Vérifie qu\'elle en est toujours membre.',
+                action: 'Vérifiez qu\'elle en est toujours membre.',
             });
         }
         if (target.bot) {
             return userError(interaction, {
                 title: 'Les bots ne peuvent pas être exclus temporairement',
                 cause: 'Discord n\'applique pas les exclusions temporaires aux bots.',
-                action: 'Retire ses permissions, ou expulse-le du serveur.',
+                action: 'Retirez ses permissions, ou expulsez-le du serveur.',
             });
         }
 
@@ -39,7 +39,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Durée invalide',
                 cause: 'Je n\'ai pas compris la durée, ou elle dépasse la limite de 28 jours imposée par Discord.',
-                action: 'Utilise un nombre suivi de `m` (minutes), `h` (heures) ou `d` (jours). Par exemple : `10m`, `2h`, `1d`.',
+                action: 'Utilisez un nombre suivi de `m` (minutes), `h` (heures) ou `d` (jours). Par exemple : `10m`, `2h`, `1d`.',
             });
         }
 
@@ -49,7 +49,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Je ne peux pas exclure ce membre',
                 cause: 'Soit il me manque la permission **Exclure temporairement des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
-                action: 'Vérifie mes permissions, et place mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
+                action: 'Vérifiez mes permissions, et placez mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
             });
         }
 

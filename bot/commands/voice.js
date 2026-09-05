@@ -17,10 +17,10 @@ function getOwnedChannel(interaction) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('voice')
-        .setDescription('Personnaliser ton salon vocal temporaire')
+        .setDescription('Personnaliser votre salon vocal temporaire')
         .addSubcommand(sub =>
             sub.setName('name')
-                .setDescription('Renommer ton salon')
+                .setDescription('Renommer votre salon')
                 .addStringOption(opt =>
                     opt.setName('nom')
                         .setDescription('Nouveau nom du salon')
@@ -41,11 +41,11 @@ module.exports = {
         )
         .addSubcommand(sub =>
             sub.setName('lock')
-                .setDescription('Verrouiller ton salon (personne ne peut rejoindre)')
+                .setDescription('Verrouiller votre salon (personne ne peut rejoindre)')
         )
         .addSubcommand(sub =>
             sub.setName('unlock')
-                .setDescription('Déverrouiller ton salon')
+                .setDescription('Déverrouiller votre salon')
         )
         .addSubcommand(sub =>
             sub.setName('permit')
@@ -58,7 +58,7 @@ module.exports = {
         )
         .addSubcommand(sub =>
             sub.setName('kick')
-                .setDescription('Expulser quelqu\'un de ton salon')
+                .setDescription('Expulser quelqu\'un de votre salon')
                 .addUserOption(opt =>
                     opt.setName('utilisateur')
                         .setDescription('L\'utilisateur à expulser')
@@ -67,7 +67,7 @@ module.exports = {
         )
         .addSubcommand(sub =>
             sub.setName('reset')
-                .setDescription('Réinitialiser tes préférences mémorisées')
+                .setDescription('Réinitialiser vos préférences mémorisées')
         ),
 
     async execute(interaction) {
@@ -79,9 +79,9 @@ module.exports = {
         const owned = getOwnedChannel(interaction);
         if (!owned) {
             return userError(interaction, {
-                title: 'Tu n\'es pas dans un salon vocal temporaire',
-                cause: 'Cette commande ne fonctionne que si tu es connecté à un salon vocal temporaire dont tu es propriétaire.',
-                action: 'Rejoins le salon d\'accueil pour créer ton salon, puis relance la commande depuis celui-ci.',
+                title: 'Vous n\'êtes pas dans un salon vocal temporaire',
+                cause: 'Cette commande ne fonctionne que si vous êtes connecté·e à un salon vocal temporaire dont vous êtes propriétaire.',
+                action: 'Rejoignez le salon d\'accueil pour créer votre salon, puis relancez la commande depuis celui-ci.',
             });
         }
 
@@ -138,7 +138,7 @@ module.exports = {
                 Connect: true,
                 ViewChannel: true
             });
-            return interaction.reply({ content: `✅ ${target} peut maintenant rejoindre ton salon.`, ephemeral: true });
+            return interaction.reply({ content: `✅ ${target} peut maintenant rejoindre votre salon.`, ephemeral: true });
         }
 
         if (sub === 'kick') {
@@ -147,16 +147,16 @@ module.exports = {
 
             if (!targetMember || targetMember.voice.channelId !== channel.id) {
                 return userError(interaction, {
-                    title: 'Cette personne n\'est pas dans ton salon',
+                    title: 'Cette personne n\'est pas dans votre salon',
                     cause: 'Elle a quitté le salon, ou n\'y est jamais entrée.',
-                    action: 'Vérifie qui est connecté à ton salon vocal.',
+                    action: 'Vérifiez qui est connecté à votre salon vocal.',
                 });
             }
 
             if (targetMember.id === userId) {
                 return userError(interaction, {
-                    title: 'Tu ne peux pas t\'expulser toi-même',
-                    cause: 'Tu es propriétaire de ce salon.',
+                    title: 'Vous ne pouvez pas vous expulser vous-même',
+                    cause: 'Vous êtes propriétaire de ce salon.',
                     action: 'Pour partir, quitte simplement le salon vocal — il se supprimera s\'il devient vide.',
                 });
             }
@@ -168,7 +168,7 @@ module.exports = {
         if (sub === 'reset') {
             db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
                 .run(guildId, userId, categoryId);
-            return interaction.reply({ content: '✅ Tes préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
+            return interaction.reply({ content: '✅ Vos préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
         }
     }
 };

@@ -101,11 +101,11 @@ async function loadReactionRoles(container, guildId) {
             <div style="display:flex;flex-direction:column;gap:.75rem">
                 <div>
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Titre du panel</label>
-                    <input class="input" id="panel-title" placeholder="Ex: Choisis tes rôles">
+                    <input class="input" id="panel-title" placeholder="Ex : Choisissez vos rôles">
                 </div>
                 <div>
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Description (optionnel)</label>
-                    <input class="input" id="panel-desc" placeholder="Clique sur un emoji pour obtenir le rôle">
+                    <input class="input" id="panel-desc" placeholder="Cliquez sur un emoji pour obtenir le rôle">
                 </div>
                 <div style="display:flex;gap:.75rem;flex-wrap:wrap">
                     <div style="flex:1;min-width:180px">
@@ -257,9 +257,10 @@ async function addPanelEntry(panelId) {
 
     if (!emoji || !role_id) return showToast('❌ Emoji et rôle requis.', 'error');
 
-    await API.post(`/api/guilds/${window._guildId}/reactionroles/panels/${panelId}/entries`, {
+    const res = await API.post(`/api/guilds/${window._guildId}/reactionroles/panels/${panelId}/entries`, {
         emoji, role_id
     });
+    if (!res || res.error) return showToast(res?.error || 'Le rôle n\'a pas pu être ajouté au panel.', 'error');
 
     showToast('✅ Rôle ajouté au panel !');
     const container = document.getElementById('rr-content').parentElement;
@@ -330,7 +331,11 @@ function selectEmoji(panelId, identifier, url) {
 async function addAutorole() {
     const roleId = document.getElementById('add-autorole-select').value;
     if (!roleId) return;
-    await API.post(`/api/guilds/${window._guildId}/reactionroles/autoroles`, { role_id: roleId });
+    // La route peut refuser le rôle (géré par une intégration, au-dessus de
+    // Quasar dans la hiérarchie…). Sans ce test, le toast annonçait un succès
+    // sur un ajout qui n'avait pas eu lieu.
+    const res = await API.post(`/api/guilds/${window._guildId}/reactionroles/autoroles`, { role_id: roleId });
+    if (!res || res.error) return showToast(res?.error || 'L\'autorôle n\'a pas pu être ajouté.', 'error');
     showToast('✅ Autorole ajouté !');
     const container = document.getElementById('rr-content').parentElement;
     loadReactionRoles(container, window._guildId);
@@ -348,8 +353,9 @@ async function removeAutorole(roleId) {
 async function addVoiceRole() {
     const channelId = document.getElementById('add-voicerole-channel').value;
     const roleId = document.getElementById('add-voicerole-role').value;
-    if (!channelId || !roleId) return showToast('❌ Sélectionne un salon et un rôle.', 'error');
-    await API.post(`/api/guilds/${window._guildId}/reactionroles/voiceroles`, { channel_id: channelId, role_id: roleId });
+    if (!channelId || !roleId) return showToast('❌ Sélectionnez un salon et un rôle.', 'error');
+    const res = await API.post(`/api/guilds/${window._guildId}/reactionroles/voiceroles`, { channel_id: channelId, role_id: roleId });
+    if (!res || res.error) return showToast(res?.error || 'Le rôle vocal n\'a pas pu être ajouté.', 'error');
     showToast('✅ Rôle vocal ajouté !');
     const container = document.getElementById('rr-content').parentElement;
     loadReactionRoles(container, window._guildId);

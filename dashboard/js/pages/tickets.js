@@ -22,7 +22,7 @@ async function loadTickets(container, guildId) {
             <div class="card">
                 <div class="card-title">🚀 Configurer le système de tickets</div>
                 <p style="font-size:.85rem;color:var(--text-secondary);margin-bottom:1.5rem">
-                    Configure le système de tickets pour ton serveur. Un message avec un bouton 🎫 sera envoyé dans le salon choisi.
+                    Configurez le système de tickets pour votre serveur. Un message avec un bouton 🎫 sera envoyé dans le salon choisi.
                 </p>
 
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
@@ -59,7 +59,7 @@ async function loadTickets(container, guildId) {
                         </div>
                         <div style="grid-column:1/-1">
                             <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Description</label>
-                            <textarea class="input" id="setup-panel-desc" rows="2" placeholder="Clique sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff te répondra dès que possible." style="width:100%;resize:vertical"></textarea>
+                            <textarea class="input" id="setup-panel-desc" rows="2" placeholder="Cliquez sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff vous répondra dès que possible." style="width:100%;resize:vertical"></textarea>
                         </div>
                     </div>
                     <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Laissez vide pour utiliser le message par défaut.</p>
@@ -87,8 +87,8 @@ async function loadTickets(container, guildId) {
             const categoryId = document.getElementById('setup-category').value;
             const welcomeMessage = document.getElementById('setup-welcome').value;
 
-            if (!channelId) { showToast('Choisis un salon d\'ouverture.', 'error'); return; }
-            if (!staffRoleId) { showToast('Choisis un rôle staff.', 'error'); return; }
+            if (!channelId) { showToast('Choisissez un salon d\'ouverture.', 'error'); return; }
+            if (!staffRoleId) { showToast('Choisissez un rôle staff.', 'error'); return; }
 
             const panelTitle = document.getElementById('setup-panel-title').value;
             const panelDesc = document.getElementById('setup-panel-desc').value;
@@ -163,7 +163,7 @@ async function loadTickets(container, guildId) {
                     </div>
                     <div style="grid-column:1/-1">
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Description</label>
-                        <textarea class="input" id="tickets-panel-desc" rows="2" placeholder="Clique sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff te répondra dès que possible." style="width:100%;resize:vertical">${_escapeHtml(config.panel_description || '')}</textarea>
+                        <textarea class="input" id="tickets-panel-desc" rows="2" placeholder="Cliquez sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff vous répondra dès que possible." style="width:100%;resize:vertical">${_escapeHtml(config.panel_description || '')}</textarea>
                     </div>
                 </div>
                 <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Laissez vide pour le message par défaut. Les changements s'appliquent au prochain renvoi du panel.</p>

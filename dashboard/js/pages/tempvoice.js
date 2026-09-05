@@ -123,7 +123,7 @@ async function loadTempVoice(container, guildId) {
     // Ajouter un trigger
     document.getElementById('tv-add-btn').addEventListener('click', async () => {
         const channelId = document.getElementById('tv-add-channel').value;
-        if (!channelId) { showToast('Choisis un salon vocal.', 'error'); return; }
+        if (!channelId) { showToast('Choisissez un salon vocal.', 'error'); return; }
 
         const res = await API.post(`/api/guilds/${guildId}/tempvoice/triggers`, { channel_id: channelId });
         if (res.error) {

@@ -40,7 +40,7 @@ module.exports = {
                 embeds: [buildErrorEmbed({
                     title: 'À utiliser sur un serveur',
                     cause: 'Quasar traite des données par serveur : en message privé, il n\'y a pas de serveur auquel les rattacher.',
-                    action: 'Lance /mes-donnees depuis un salon du serveur qui te concerne.',
+                    action: 'Lancez /mes-donnees depuis un salon du serveur qui vous concerne.',
                 })],
                 ephemeral: true,
             });
@@ -73,17 +73,17 @@ module.exports = {
             .setTitle('🔒 Les données que Quasar traite te concernant')
             .setColor(ACCENT_COLOR)
             .setDescription(
-                `Voici les catégories de données que Quasar traite à ton sujet **sur le serveur ${interaction.guild.name}**. ` +
-                'Ces informations ne sont visibles que par toi.'
+                `Voici les catégories de données que Quasar traite à votre sujet **sur le serveur ${interaction.guild.name}**. ` +
+                'Ces informations ne sont visibles que par vous.'
             );
 
         // 1. Identifiants Discord — cette catégorie s'applique toujours : dès que
         //    tu es concerné par quoi que ce soit, c'est via ton identifiant Discord.
         embed.addFields({
-            name: '🪪 Ton identifiant Discord',
+            name: '🪪 Votre identifiant Discord',
             value:
-                'Quasar te reconnaît par ton identifiant technique Discord, uniquement là où tu es concerné ' +
-                '(une sanction, un ticket, une préférence). Il ne stocke ni ton nom réel, ni ton e-mail, ni ton mot de passe.',
+                'Quasar vous reconnaît par votre identifiant technique Discord, uniquement là où vous êtes concerné·e ' +
+                '(une sanction, un ticket, une préférence). Il ne stocke ni votre nom réel, ni votre e-mail, ni votre mot de passe.',
         });
 
         // 2. Sanctions — on donne le nombre, jamais le détail (potentiellement
@@ -93,18 +93,18 @@ module.exports = {
             value: sanctions.total > 0
                 ? `**${sanctions.total}** sanction(s) enregistrée(s) te concernant ici` +
                   (sanctions.actives > 0 ? `, dont **${sanctions.actives}** encore active(s).` : ' (aucune active actuellement).') +
-                  '\nPour en connaître le détail, adresse-toi à l\'équipe d\'administration du serveur.'
+                  '\nPour en connaître le détail, adressez-vous à l\'équipe d\'administration du serveur.'
                 : 'Aucune sanction enregistrée te concernant sur ce serveur.',
         });
 
         // 3. Tickets ouverts à ton nom — on rappelle que le contenu des échanges
         //    n'est jamais conservé par Quasar (seules les métadonnées le sont).
         embed.addFields({
-            name: '🎫 Tickets que tu as ouverts',
+            name: '🎫 Tickets que vous avez ouverts',
             value: ticketsCount > 0
-                ? `**${ticketsCount}** ticket(s) ouvert(s) à ton nom sur ce serveur. ` +
+                ? `**${ticketsCount}** ticket(s) ouvert(s) à votre nom sur ce serveur. ` +
                   'Le contenu des conversations n\'est jamais conservé par Quasar, seulement le fait qu\'un ticket a existé.'
-                : 'Aucun ticket ouvert à ton nom sur ce serveur.',
+                : 'Aucun ticket ouvert à votre nom sur ce serveur.',
         });
 
         // 4. Préférences de salons vocaux temporaires — n'existent que si tu as
@@ -113,7 +113,7 @@ module.exports = {
             embed.addFields({
                 name: '🔊 Préférences de salons vocaux temporaires',
                 value:
-                    'Tes préférences de salon vocal temporaire (nom du salon, limite de membres) sont mémorisées ' +
+                    'Vos préférences de salon vocal temporaire (nom du salon, limite de membres) sont mémorisées ' +
                     'pour te les réappliquer automatiquement la prochaine fois.',
             });
         }
@@ -121,18 +121,18 @@ module.exports = {
         // 5. Exercice des droits — fidèle au partage des rôles : l'admin décide,
         //    Venacity route et exécute.
         embed.addFields({
-            name: '✅ Comment exercer tes droits',
+            name: '✅ Comment exercer vos droits',
             value:
-                'Tu peux demander à accéder à ces données, à les corriger ou à les supprimer.\n' +
-                '• **En premier lieu, l\'équipe d\'administration de ce serveur** : elle est responsable de tes données ici, ' +
+                'Vous pouvez demander à accéder à ces données, à les corriger ou à les supprimer.\n' +
+                '• **En premier lieu, l\'équipe d\'administration de ce serveur** : elle est responsable de vos données ici, ' +
                 'c\'est elle qui prend les décisions.\n' +
-                `• **Venacity** (${VENACITY_CONTACT}) héberge Quasar en tant que sous-traitant : elle transmet ta demande ` +
+                `• **Venacity** (${VENACITY_CONTACT}) héberge Quasar en tant que sous-traitant : elle transmet votre demande ` +
                 'à l\'équipe du serveur et exécute sa décision, sans se substituer à elle.\n' +
                 `Plus de détails dans la politique de confidentialité publique de Venacity (${VENACITY_LEGAL_SITE}).`,
         });
 
         embed.setFooter({
-            text: 'Tu peux aussi déposer une demande de suppression directement ci-dessous.',
+            text: 'Vous pouvez aussi déposer une demande de suppression directement ci-dessous.',
         });
 
         // Bouton de dépôt d'une demande de suppression, routé à l'admin responsable.
@@ -169,7 +169,7 @@ async function handleMesDonneesButton(interaction) {
             embeds: [buildErrorEmbed({
                 title: 'À utiliser sur un serveur',
                 cause: 'Une demande de suppression se rattache à un serveur précis, indisponible en message privé.',
-                action: 'Relance /mes-donnees depuis le serveur concerné.',
+                action: 'Relancez /mes-donnees depuis le serveur concerné.',
             })],
             ephemeral: true,
         });
@@ -203,7 +203,7 @@ async function handleMesDonneesButton(interaction) {
                         'Une demande de suppression te concernant est **déjà en attente de traitement** sur ce serveur. ' +
                         'Inutile d\'en déposer une nouvelle : l\'équipe d\'administration du serveur en a été informée ' +
                         'et dispose d\'un mois pour y répondre.\n\n' +
-                        `Pour un suivi ou une précision, tu peux contacter l\'équipe du serveur ou Venacity (${VENACITY_CONTACT}).`
+                        `Pour un suivi ou une précision, vous pouvez contacter l\'équipe du serveur ou Venacity (${VENACITY_CONTACT}).`
                     ),
             ],
             ephemeral: true,
@@ -226,14 +226,14 @@ async function handleMesDonneesButton(interaction) {
                 .setTitle('✅ Demande de suppression transmise')
                 .setColor(ACCENT_COLOR)
                 .setDescription(
-                    'Ta demande de suppression a été **transmise à l\'équipe d\'administration de ce serveur**, ' +
-                    'qui est responsable de tes données et décide des suites à donner. ' +
+                    'Votre demande de suppression a été **transmise à l\'équipe d\'administration de ce serveur**, ' +
+                    'qui est responsable de vos données et décide des suites à donner. ' +
                     'Elle dispose d\'**un mois** pour y répondre.\n\n' +
-                    `Venacity (${VENACITY_CONTACT}), qui héberge Quasar, a acheminé ta demande et exécutera la décision de l\'équipe. ` +
+                    `Venacity (${VENACITY_CONTACT}), qui héberge Quasar, a acheminé votre demande et exécutera la décision de l\'équipe. ` +
                     'Certaines données peuvent devoir être conservées (par exemple une sanction encore active) ; ' +
                     'le cas échéant, l\'équipe du serveur te le fera savoir.'
                 )
-                .setFooter({ text: 'Tu peux fermer ce message : ta demande est enregistrée.' }),
+                .setFooter({ text: 'Vous pouvez fermer ce message : votre demande est enregistrée.' }),
         ],
         ephemeral: true,
     });

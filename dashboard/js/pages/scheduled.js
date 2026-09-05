@@ -53,7 +53,7 @@ async function loadScheduled(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">⏰ Rappels</h1>
-            <p class="main-subtitle">Programme l'envoi automatique de messages dans tes channels, avec mentions et récurrence.</p>
+            <p class="main-subtitle">Programme l'envoi automatique de messages dans vos channels, avec mentions et récurrence.</p>
         </div>
         <div id="scheduled-tz-bar"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start" id="scheduled-grid">
@@ -116,7 +116,7 @@ function openTimezoneEditor() {
     editor.hidden = false;
     editor.innerHTML = `
         <div class="card" style="padding:1rem">
-            <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:.5rem">Choisis dans la liste ou utilise "Autre" pour une zone IANA personnalisée.</div>
+            <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:.5rem">Choisissez dans la liste ou utilise "Autre" pour une zone IANA personnalisée.</div>
             <div style="display:flex;flex-direction:column;gap:.5rem">
                 <select class="input" id="tz-select" onchange="onTimezoneSelectChange()">
                     ${TIMEZONES_FR.map(t => `<option value="${t.id}" ${t.id === selectValue ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
@@ -152,7 +152,7 @@ async function saveTimezone() {
     let tz = sel.value;
     if (tz === '__custom__') {
         tz = (custom?.value || '').trim();
-        if (!tz) { showToast('Renseigne une timezone IANA', 'error'); return; }
+        if (!tz) { showToast('Renseignez une timezone IANA', 'error'); return; }
     }
     const res = await API.put(`/api/guilds/${_scheduledState.guildId}/settings`, { timezone: tz });
     if (res?.success) {
@@ -240,7 +240,7 @@ function renderScheduledForm(existing = null) {
                 </div>
                 <div id="sm-embed-wrap" style="${data.content_type === 'embed' ? '' : 'display:none'}">
                     <select class="input" id="sm-embed-id">${embedOptions}</select>
-                    <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Crée tes embeds dans la page 📝 Embeds.</p>
+                    <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Créez vos embeds dans la page 📝 Embeds.</p>
                 </div>
             </div>
 
@@ -397,10 +397,10 @@ async function saveScheduled() {
     const payload = readScheduledForm();
     if (!payload.name) { showToast('Nom requis', 'error'); return; }
     if (payload.content_type === 'text' && !payload.content_text?.trim()) { showToast('Texte requis', 'error'); return; }
-    if (payload.content_type === 'embed' && !payload.embed_id) { showToast('Sélectionne un embed', 'error'); return; }
+    if (payload.content_type === 'embed' && !payload.embed_id) { showToast('Sélectionnez un embed', 'error'); return; }
     if (payload.schedule_type === 'once' && !payload.schedule_date) { showToast('Date requise', 'error'); return; }
     if (payload.schedule_type === 'weekly' && (!payload.schedule_days || !payload.schedule_days.length)) {
-        showToast('Sélectionne au moins un jour de la semaine', 'error'); return;
+        showToast('Sélectionnez au moins un jour de la semaine', 'error'); return;
     }
 
     const guildId = _scheduledState.guildId;
