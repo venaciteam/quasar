@@ -10,7 +10,8 @@
 
 | Module | Description |
 |--------|-------------|
-| 🛡️ **Modération** | Warn, mute, kick, ban, clear, logs automatiques, sanctions auto |
+| 🛡️ **Modération** | Warn, mute, kick, ban, clear, historique des sanctions, logs automatiques |
+| 🤖 **Modération auto** — *bêta* | AutoMod de Discord piloté depuis le dashboard, escalade par avertissements, anti-raid, salon piège et arbitrage. Tout arrive désactivé |
 | 👋 **Welcome / Leave** | Messages de bienvenue et départ avec embed + avatar |
 | 🎭 **Reaction Roles** | Panels avec emojis, mode unique ou multiple, toggle au clic |
 | ✅ **Autoroles** | Rôles attribués automatiquement à l'arrivée |
@@ -79,8 +80,8 @@ cp .env.example .env
 | `BIND_ADDRESS` | **Exposition du dashboard en Docker** — `127.0.0.1` (défaut) = accessible seulement depuis la machine hôte, `0.0.0.0` = ouvert au réseau |
 | `DASHBOARD_HOST` | Équivalent hors Docker (lancement direct par `node index.js`). Ne pas y toucher en conteneur : le Dockerfile le force à `0.0.0.0` |
 | `BOT_OWNER_ID` | Ton ID Discord — active les fonctions admin dans le dashboard (gestion du statut du bot). Pour le trouver : active le mode développeur dans Discord → clic droit sur ton profil → Copier l'identifiant |
-| `INSTANCE_OPERATOR_NAME` | Qui héberge cette instance — affiché dans le dashboard (optionnel) |
-| `INSTANCE_LEGAL_URL` | Lien vers tes mentions légales (optionnel) |
+| `INSTANCE_OPERATOR_NAME` | Qui héberge cette instance — affiché dans le badge de version, sur toutes les pages du dashboard (optionnel) |
+| `INSTANCE_LEGAL_URL` | Lien vers tes mentions légales (optionnel) — affiché au même endroit |
 | `CONTRACT_PUBLIC_URL` | Lien vers ton contrat de sous-traitance, **utilisé uniquement en `QUASAR_MODE=public`**. Vide : le contrat de l'instance Venacity |
 | `INSTANCE_SOURCE_URL` | Code source de ta version — **requis par l'AGPL si tu as modifié Quasar et que ton dashboard est accessible à d'autres** |
 | `ABUSE_REPORT_URL` | Où reçois-tu les signalements d'abus (`/signaler abus`). **Vide par défaut** : sans ça, aucun signalement d'abus ne quitte ton instance |
@@ -124,6 +125,8 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 
+> Quasar demande aussi deux intents liés à l'AutoMod de Discord (`AutoModerationConfiguration` et `AutoModerationExecution`). Ils ne sont **pas** privilégiés : ils n'apparaissent nulle part dans le Developer Portal, et il n'y a rien à activer ni à faire approuver.
+
 **Onglet Installation.** Garde **Guild Install**, décoche **User Install** : Quasar est un bot de serveur. Mets *Install Link* sur **None** — l'invitation se fait avec l'URL de la section suivante.
 
 **Onglet Bot — à désactiver.** Dans cet ordre, après l'onglet Installation :
@@ -147,7 +150,17 @@ Sur le Developer Portal → **OAuth2 → URL Generator** :
 
 Le dashboard génère aussi cette URL pour toi, une fois le bot lancé.
 
-> Pourquoi Administrator : ça évite de revenir ajuster les permissions à chaque module activé. Si tu préfères le principe du moindre privilège, le bot a besoin au minimum de gérer les salons (tickets et vocaux temporaires), gérer les rôles (autoroles, reaction roles), expulser et bannir (modération), gérer les messages (purge), et **bannir des membres** — cette dernière sert aussi à vérifier quels bannissements sont encore en vigueur avant de purger d'anciennes sanctions.
+> Pourquoi Administrator : ça évite de revenir ajuster les permissions à chaque module activé. Si tu préfères le principe du moindre privilège, voici le minimum, et à quoi sert chaque permission :
+>
+> - **Gérer les salons** — tickets et salons vocaux temporaires ;
+> - **Gérer les rôles** — autoroles, reaction roles, rôles vocaux ;
+> - **Gérer les messages** — `/clear` ;
+> - **Expulser des membres** — `/kick` et les expulsions automatiques ;
+> - **Bannir des membres** — `/ban`, mais aussi vérifier quels bannissements sont encore en vigueur avant de purger d'anciennes sanctions, et lever un bannissement temporaire à son échéance ;
+> - **Modérer les membres** — toutes les exclusions temporaires : `/mute`, l'escalade par avertissements, l'anti-raid, et celles posées par une règle AutoMod ;
+> - **Gérer le serveur** — tout ce qui touche à l'AutoMod de Discord, **y compris la simple lecture de tes règles**, et la mise en pause des invitations du mode panique anti-raid.
+>
+> Les deux dernières sont les plus faciles à oublier, et ce sont celles qui rendent la modération automatique inopérante. Sans **Gérer le serveur**, l'onglet AutoMod du dashboard refuse d'afficher quoi que ce soit — il te dit au moins laquelle activer —, et le mode panique de l'anti-raid échoue sans rien dire ailleurs que dans les logs du bot. Sans **Modérer les membres**, aucune exclusion temporaire n'est possible : ni `/mute`, ni un palier d'escalade, ni une règle AutoMod qui exclut.
 
 ---
 
@@ -166,7 +179,7 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 ## 🔧 Commandes
 
 <details>
-<summary>Voir toutes les commandes (32)</summary>
+<summary>Voir toutes les commandes (26 déployées)</summary>
 
 ### Modération
 | Commande | Description |
@@ -218,6 +231,9 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 | `/cmd create/edit/delete/list` | Commandes personnalisées |
 
 ### Musique
+
+> **Ces commandes ne sont pas déployées** depuis la v3.2.0 : YouTube bloque la lecture et la maintenance était trop lourde. Le code est resté en place ([`bot/utils/disabledCommands.js`](bot/utils/disabledCommands.js)) — les neuf commandes ci-dessous ne comptent donc pas dans le total.
+
 | Commande | Description |
 |----------|-------------|
 | `/play [lien ou recherche]` | Jouer une musique |
@@ -240,6 +256,31 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 | `/mes-donnees` | Voir les données que Quasar traite te concernant sur ce serveur, et demander leur suppression |
 
 </details>
+
+---
+
+## 🤖 Modération automatique — *bêta*
+
+Une page « Modération auto » du dashboard, quatre onglets, quatre protections indépendantes. Elles sont **livrées en bêta** et **arrivent toutes désactivées** : une instance qui se met à jour ne se réveille pas en sanctionnant. Chaque onglet propose un mode « alerte seule », sans aucune sanction associée — c'est par là qu'il faut commencer.
+
+Le détail des réglages se fait dans le dashboard, qui les explique au fil de l'eau. Voici seulement ce qu'il faut savoir avant de s'y mettre.
+
+| Protection | Ce qu'elle fait |
+|---|---|
+| **AutoMod Discord** | Crée et gère les règles de l'AutoMod **natif de Discord** : mots interdits, liens, spam, mentions en masse, filtre de profil |
+| **Escalade par avertissements** | Des paliers configurables — à N avertissements, telle sanction |
+| **Anti-raid** | Détecte les vagues d'arrivées (N arrivées en X secondes), peut exiger un âge de compte minimum, et dispose d'un mode panique |
+| **Salon piège et arbitrage** | Un salon où quiconque écrit est traité comme un compte automatisé, et un salon où l'équipe tranche au lieu de laisser la sanction tomber |
+
+**Quasar ne lit pas tes messages pour autant.** L'onglet AutoMod pilote les règles de Discord, il n'embarque aucun moteur de scan : c'est Discord qui filtre, en amont du bot, et les messages bloqués n'arrivent même pas jusqu'à Quasar. Ce qui remonte, c'est le déclenchement — journalisé dans le salon de logs et rangé dans l'historique des sanctions (`/sanctions`), au même titre qu'une sanction manuelle. Quasar n'ajoute jamais de sanction par-dessus celle de Discord : ce serait punir deux fois le même message.
+
+**L'escalade remplace les anciennes sanctions automatiques.** La cascade « mute à 3, kick à 5, ban à 8 » du module Modération n'existe plus ; les paliers la remplacent, avec des sanctions composables (`delete, tempmute 20m`) et jusqu'à dix paliers par serveur. **Tes réglages existants sont repris automatiquement au premier démarrage**, actifs, à l'identique — tu n'as rien à ressaisir. Un seul palier s'applique par avertissement : le plus haut atteint.
+
+Le comptage des avertissements reste borné par la durée de conservation du serveur (voir plus bas) : un avertissement trop ancien pour être conservé ne peut plus déclencher de sanction.
+
+**Le mode panique met les invitations en pause** via l'action d'incident native de Discord, qui porte sa propre échéance. Il se lève tout seul, même si le bot redémarre entre-temps, et il ne touche à aucune permission de salon. Si les invitations étaient déjà en pause avant son déclenchement, la levée ne les rouvre pas.
+
+**Le salon piège exempte d'office** l'équipe de modération, l'administration, la personne propriétaire du serveur, les bots et les webhooks — sans case à cocher. Sans ça, la première personne qui va tester son propre piège se ferait sanctionner par son propre outil.
 
 ---
 
@@ -287,10 +328,12 @@ quasar/
 ├── index.js              # Point d'entrée
 ├── setup.sh              # Script d'installation
 ├── bot/
-│   ├── commands/         # Commandes slash (32)
+│   ├── commands/         # Commandes slash (26 déployées, 9 de musique désactivées)
 │   ├── events/           # Event handlers Discord
 │   ├── interactions/     # Button/select handlers
-│   ├── modules/          # Modules complexes (musique)
+│   ├── modules/          # Modules à part entière : antiraid, defer (arbitrage),
+│   │                     #   breach (violation de données), erasure (effacement),
+│   │                     #   retention (conservation et purge), scheduler, music
 │   └── utils/            # Utilitaires partagés
 ├── api/
 │   ├── routes/           # Routes API REST
@@ -346,7 +389,11 @@ La page `/nouveautes` lit `data/nouveautes.json`, sur le volume persistant. Le f
 
 L'authentification se fait par clé d'API, en en-tête `X-API-Key` (ou `Authorization: Bearer`). **Sans `QUASAR_ADMIN_API_KEY`, ces routes répondent 503** : rien n'est publiable par défaut.
 
-L'upsert se fait par couple (date + version) : re-poster un bloc corrigé de la même version le même jour remplace l'entrée au lieu d'en créer une seconde. Au tout premier démarrage sur un volume neuf, l'historique est initialisé depuis `content/nouveautes.md`, versionné dans le dépôt ; ensuite ce fichier n'est plus relu — l'éditer ne publie donc rien sur une instance déjà déployée.
+Publier deux fois le même bloc ne crée pas de doublon : l'entrée est identifiée par le couple (date + version), donc re-poster une version corrigée le même jour remplace la précédente.
+
+> **Le piège à connaître.** Le fichier `content/nouveautes.md` versionné dans le dépôt n'est qu'une **amorce** : il initialise l'historique au tout premier démarrage sur un volume neuf, et **n'est plus jamais relu ensuite**. Sur une instance déjà déployée, l'éditer ne publie strictement rien — seule la route `POST /api/admin/nouveautes` alimente le journal. Modifier le fichier en croyant publier, puis chercher pourquoi la page ne bouge pas, est l'erreur la plus coûteuse de cette partie.
+
+Le même journal alimente le **pop-up des nouveautés** du dashboard : au premier accès suivant une mise à jour, il s'ouvre pour présenter ce qui a changé. L'entrée « Nouveautés » de la barre latérale le rouvre à volonté. La version déjà vue est mémorisée dans le navigateur (`localStorage`) et nulle part ailleurs — pas de table associant un identifiant Discord à un numéro de version pour un simple confort d'affichage. Contrepartie assumée : le pop-up réapparaît sur un autre navigateur.
 
 ---
 
@@ -378,6 +425,13 @@ La diffusion emprunte trois canaux, pour ne pas dépendre d'un seul point de dé
 
 Un membre peut demander l'effacement de ses données avec `/mes-donnees`. La demande n'est pas tranchée par l'hébergeur : elle est **routée à l'administrateur du serveur**, seul responsable de traitement et seul à pouvoir décider. Le traitement se fait **par catégorie** — une sanction encore en vigueur peut être conservée avec un refus motivé, une sanction expirée doit être effacée, le reste s'efface sans discussion. La décision et sa motivation sont conservées, et un rappel est émis avant l'échéance légale d'un mois.
 
+Quand l'effacement porte sur la modération, il emporte aussi les traces laissées hors de l'historique des sanctions :
+
+- les **cas d'arbitrage** qui nomment la personne sont effacés **sans condition**, y compris ceux encore en attente — ce n'est pas une sanction, seulement une proposition soumise à l'équipe. Le message reste affiché dans le salon d'arbitrage, mais ses boutons répondent « cas introuvable » ;
+- les **bannissements temporaires échus** sont effacés, les **bannissements encore en cours sont conservés**.
+
+Ce dernier point est un arbitrage explicite, pas un oubli. La ligne d'un bannissement temporaire est ce qui porte sa **levée automatique** : l'effacer transformerait un bannissement de sept jours en bannissement définitif, au détriment exact de la personne qui demande l'effacement. C'est la même logique que pour les bannissements déjà en vigueur, et l'article 17.3 du RGPD couvre cette conservation.
+
 ### Suspendre un serveur
 
 Le propriétaire de l'instance peut **couper Quasar sur un serveur précis**, sans toucher aux autres. La suspension ne supprime aucune donnée et ne retire pas le bot du serveur : c'est un drapeau réversible. Elle permet de refuser un usage sans fermer le service pour tout le monde. Un compteur des serveurs connectés est affiché à côté, pour repérer un changement d'échelle.
@@ -390,9 +444,14 @@ Le propriétaire de l'instance peut **couper Quasar sur un serveur précis**, sa
 | Conversations de tickets | **Jamais stockées.** Le transcript est envoyé en pièce jointe dans Discord à la fermeture, puis oublié |
 | Configurations, embeds, rôles, rappels | Tant que le bot est sur le serveur |
 | Préférences de salons vocaux temporaires | 90 jours après la dernière utilisation |
+| Cas d'arbitrage (membre visé, motif, sanction proposée) | Tant que le bot est sur le serveur. **Le message incriminé n'est jamais copié en base** : la preuve est un lien vers Discord, affiché dans l'embed |
+| Bannissements temporaires en attente de levée | Jusqu'à leur échéance, puis effacés par le balayage qui lève le bannissement |
+| Règles AutoMod | Seul un **miroir** est gardé (identifiant, salon de logs, état). Les mots, expressions et actions vivent chez Discord, qui en est la source de vérité, et sont relus chez lui à chaque affichage |
 | Toutes les données d'un serveur | **Supprimées 7 jours après le retrait du bot** (délai réglable). Réinviter le bot avant l'échéance annule la suppression |
 
-La durée de conservation des sanctions sert aussi de fenêtre aux sanctions automatiques : un avertissement trop ancien pour être conservé ne compte plus dans le déclenchement d'un mute, kick ou ban automatique. Un seul réglage commande les deux, pour éviter qu'une sanction supprimée continue à produire ses effets.
+La purge d'un serveur emporte bien tout ce que la modération automatique a écrit — règles, paliers d'escalade, anti-raid, salon piège, cas d'arbitrage, bannissements temporaires. Ce n'est pas une question de propreté : un cas d'arbitrage nomme la personne visée, le laisser derrière serait un manquement.
+
+La durée de conservation des sanctions sert aussi de fenêtre à l'escalade par avertissements : un avertissement trop ancien pour être conservé ne compte plus dans le déclenchement du palier suivant. Un seul réglage commande les deux, pour éviter qu'une sanction supprimée continue à produire ses effets.
 
 ### Les transcripts de tickets
 
@@ -435,7 +494,7 @@ Tu peux utiliser, modifier et redistribuer Quasar librement. En contrepartie, de
 - Si tu redistribues Quasar, modifié ou non, tu le fais sous la même licence, code source inclus.
 - **Si tu héberges Quasar et que des personnes utilisent son dashboard à distance, tu dois leur proposer le code source de ta version** — y compris tes modifications. C'est la clause réseau (article 13), la différence entre l'AGPL et la GPL classique.
 
-Concrètement, pour un auto-hébergeur : si ton dashboard n'est accessible qu'à toi sur ta machine, tu n'as rien à faire. Si tu l'ouvres à d'autres et que tu as modifié le code, publie ton dépôt et mets le lien dans le dashboard.
+Concrètement, pour un auto-hébergeur : si ton dashboard n'est accessible qu'à toi sur ta machine, tu n'as rien à faire. Si tu l'ouvres à d'autres et que tu as modifié le code, publie ton dépôt et renseigne `INSTANCE_SOURCE_URL`. Le lien apparaît alors dans le **badge de version**, présent sur toutes les pages du dashboard, y compris avant connexion : il se lit sans avoir à cliquer où que ce soit, ce qu'exige l'article 13.
 
 ### Noms et logos
 
@@ -445,7 +504,7 @@ Tu peux dire que ton service fonctionne avec Quasar. Tu ne peux pas te présente
 
 Si tu publies une version modifiée, donne-lui ton propre nom. Détail dans [NOTICE](NOTICE).
 
-> La seule instance opérée par Venacity est [dashboard.vena.city](https://dashboard.vena.city). Toute autre instance est opérée par un tiers, sous sa propre responsabilité.
+> La seule instance opérée par Venacity est [quasar.vena.city](https://quasar.vena.city). Toute autre instance est opérée par un tiers, sous sa propre responsabilité.
 
 ---
 

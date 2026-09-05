@@ -27,7 +27,7 @@
 
 ### La modération automatique, en quatre protections
 
-> *4 septembre 2026*
+> *5 septembre 2026*
 
 **✨ Nouveautés**
 
