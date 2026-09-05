@@ -1,6 +1,6 @@
 # 🌌 Quasar — Bot Discord Self-Hosted
 
-> Toutes les fonctionnalités premium d'un bot Discord — modération, tickets, musique, reaction roles, embeds, TempVoice et dashboard web. 100% self-hosted, open source, 0 abonnement.
+> Toutes les fonctionnalités premium d'un bot Discord — modération, tickets, reaction roles, embeds, TempVoice et dashboard web. 100% self-hosted, open source, 0 abonnement.
 
 ![Quasar Dashboard Preview](dashboard/img/preview.png)
 
@@ -19,7 +19,6 @@
 | 📝 **Embeds Custom** | Créer, sauvegarder et envoyer des embeds personnalisés |
 | ⚡ **Commandes Custom** | Commandes personnalisées avec texte ou embed |
 | 🎫 **Tickets** | Système de tickets, panel personnalisable — transcript envoyé dans Discord à la fermeture, jamais stocké en base |
-| 🎵 **Musique** | Play depuis YouTube, Spotify, Apple Music, Deezer et + |
 | 🔊 **TempVoice** | Salons vocaux temporaires avec boutons interactifs |
 | 🌐 **Dashboard Web** | Tout configurer depuis un navigateur — thème clair/sombre |
 | ⬆ **Auto-update** | Mise à jour en un clic depuis le dashboard avec logs temps réel |
@@ -172,7 +171,7 @@ Quasar tourne confortablement sur un **Raspberry Pi 4** (2 Go minimum). La stack
 curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash
 ```
 
-> **Note :** Le build initial peut prendre quelques minutes sur Pi (compilation des modules natifs comme `better-sqlite3` et `sodium-native`).
+> **Note :** Le build initial peut prendre quelques minutes sur Pi (compilation du module natif `better-sqlite3`).
 
 ---
 
@@ -229,18 +228,6 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 |----------|-------------|
 | `/embed create/send/edit/preview/list/delete` | Embeds personnalisés |
 | `/cmd create/edit/delete/list` | Commandes personnalisées |
-
-### Musique
-
-> **Ces commandes ne sont pas déployées** depuis la v3.2.0 : YouTube bloque la lecture et la maintenance était trop lourde. Le code est resté en place ([`bot/utils/disabledCommands.js`](bot/utils/disabledCommands.js)) — les neuf commandes ci-dessous ne comptent donc pas dans le total.
-
-| Commande | Description |
-|----------|-------------|
-| `/play [lien ou recherche]` | Jouer une musique |
-| `/pause` `/resume` `/skip` `/stop` | Contrôles de lecture |
-| `/queue` `/np` | File d'attente et piste en cours |
-| `/disconnect` | Déconnecter du vocal |
-| `/music setchannel/removechannel/status` | Config du salon musique |
 
 ### Utilitaire
 | Commande | Description |
@@ -315,8 +302,6 @@ Le système supporte les deux modes de déploiement :
 - **Node.js 22** + **discord.js v14**
 - **Express** (API + dashboard)
 - **SQLite** via better-sqlite3 (données persistées en volume Docker)
-- **yt-dlp** + **ffmpeg** (musique)
-- **Odesli API** (conversion de liens musicaux cross-plateforme)
 - HTML/CSS/JS vanilla (dashboard — pas de framework)
 
 ---
@@ -328,12 +313,12 @@ quasar/
 ├── index.js              # Point d'entrée
 ├── setup.sh              # Script d'installation
 ├── bot/
-│   ├── commands/         # Commandes slash (26 déployées, 9 de musique désactivées)
+│   ├── commands/         # Commandes slash (26 déployées)
 │   ├── events/           # Event handlers Discord
 │   ├── interactions/     # Button/select handlers
 │   ├── modules/          # Modules à part entière : antiraid, defer (arbitrage),
 │   │                     #   breach (violation de données), erasure (effacement),
-│   │                     #   retention (conservation et purge), scheduler, music
+│   │                     #   retention (conservation et purge), scheduler
 │   └── utils/            # Utilitaires partagés
 ├── api/
 │   ├── routes/           # Routes API REST
@@ -354,6 +339,8 @@ quasar/
 ├── NOTICE                # Noms et marques (non couverts par la licence)
 └── data/                 # Volume Docker (SQLite + nouveautes.json)
 ```
+
+> **Un module inerte reste dans le dépôt.** La lecture audio a été coupée en v3.2.0 : `bot/modules/music/` et trois fichiers de commandes sont toujours là, mais rien ne tournerait en l'état — les commandes ne sont plus déployées ([`bot/utils/disabledCommands.js`](bot/utils/disabledCommands.js)), `ffmpeg` et `yt-dlp` ne sont plus installés dans l'image, et les dépendances npm de lecture audio ne sont plus dans `package.json`. Pour la remettre sur ton fork, la marche à suivre est en commentaire dans `disabledCommands.js` et en tête du [`Dockerfile`](Dockerfile) ; les dépendances npm sont à réinstaller en plus.
 
 Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique du projet (`public/`) — les deux vivaient auparavant dans deux dépôts séparés. Ce qu'un déploiement sert dépend de la variable `QUASAR_MODE` :
 
