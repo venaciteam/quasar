@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('disc
 const { getDb } = require('../../api/services/database');
 const { sendModLog } = require('../utils/modlog');
 const { countWarnsInEscalationWindow, getRetentionMonths } = require('../modules/retention/sanctions');
+const { runWarnEscalation, formatEscalationFeedback } = require('../utils/warnEscalation');
 const { userError } = require('../utils/errors');
 
 module.exports = {
@@ -75,39 +76,35 @@ module.exports = {
 
         await interaction.reply({ embeds: [embed] });
 
-        // Vérifier les sanctions auto
-        await checkAutoSanctions(interaction, target, member, warnCount);
+        // Escalade automatique. UN SEUL chemin d'escalade existe désormais : la
+        // cascade if/else if qui lisait modules.config.autoSanctions a été
+        // retirée d'ici au profit de bot/utils/warnEscalation.js, et les paliers
+        // qu'elle portait ont été repris en base par la migration
+        // warn_escalation_from_autosanctions_v1. Faire cohabiter les deux aurait
+        // appliqué deux sanctions pour un même avertissement.
+        //
+        // `warnCount` est passé tel quel : il est déjà borné par la durée de
+        // conservation du serveur (voir plus haut). Le recompter dans le module
+        // d'escalade ferait sauter cette limite sans que personne ne le voie.
+        const escalation = await runWarnEscalation({
+            guild: interaction.guild,
+            member,
+            userId: target.id,
+            warnCount,
+            moderatorId: interaction.client.user.id,
+            channel: interaction.channel,
+        });
+
+        const feedback = formatEscalationFeedback(escalation, warnCount);
+        if (feedback) {
+            // Un échec d'envoi ici ne doit pas transformer un avertissement
+            // enregistré et une sanction appliquée en commande en erreur.
+            await interaction.followUp({ content: feedback }).catch(err => {
+                console.error('[Quasar Escalade] Message de suivi non envoyé :', err.message);
+            });
+        }
 
         // Log
         await sendModLog(interaction.guild, embed, 'mod_warn');
     }
 };
-
-async function checkAutoSanctions(interaction, target, member, warnCount) {
-    const db = getDb();
-    const modConfig = db.prepare(`
-        SELECT config FROM modules WHERE guild_id = ? AND module_name = 'moderation'
-    `).get(interaction.guild.id);
-
-    if (!modConfig) return;
-    const config = JSON.parse(modConfig.config || '{}');
-    const auto = config.autoSanctions || {};
-
-    if (auto.banAt && warnCount >= auto.banAt) {
-        try {
-            await member.ban({ reason: `Auto-ban : ${warnCount} avertissements atteints` });
-            await interaction.followUp({ content: `🔴 ${target} a été **banni automatiquement** (${warnCount} warns).` });
-        } catch (e) { console.error('[Quasar] Auto-ban failed:', e); }
-    } else if (auto.kickAt && warnCount >= auto.kickAt) {
-        try {
-            await member.kick(`Auto-kick : ${warnCount} avertissements atteints`);
-            await interaction.followUp({ content: `🟠 ${target} a été **kick automatiquement** (${warnCount} warns).` });
-        } catch (e) { console.error('[Quasar] Auto-kick failed:', e); }
-    } else if (auto.muteAt && warnCount >= auto.muteAt) {
-        const duration = (auto.muteDuration || 60) * 60 * 1000; // minutes → ms
-        try {
-            await member.timeout(duration, `Auto-mute : ${warnCount} avertissements atteints`);
-            await interaction.followUp({ content: `🟡 ${target} a été **mute automatiquement** pour ${auto.muteDuration || 60} min (${warnCount} warns).` });
-        } catch (e) { console.error('[Quasar] Auto-mute failed:', e); }
-    }
-}

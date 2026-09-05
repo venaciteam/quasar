@@ -130,7 +130,17 @@ function createBot() {
             GatewayIntentBits.GuildMessageReactions,
             GatewayIntentBits.GuildVoiceStates,
             GatewayIntentBits.GuildPresences,
-            GatewayIntentBits.MessageContent
+            GatewayIntentBits.MessageContent,
+            // AutoMod natif de Discord. Ces deux intents ne sont PAS privilégiés
+            // (seuls GuildMembers, GuildPresences et MessageContent le sont) : rien
+            // à activer dans le portail développeur, aucune demande d'approbation.
+            //  - Configuration : tient à jour le cache des règles quand elles sont
+            //    modifiées ailleurs que depuis Quasar.
+            //  - Execution : indispensable pour recevoir AUTO_MODERATION_ACTION_EXECUTION,
+            //    l'événement qui permet d'historiser et de journaliser les
+            //    déclenchements (cf. bot/events/autoModerationActionExecution.js).
+            GatewayIntentBits.AutoModerationConfiguration,
+            GatewayIntentBits.AutoModerationExecution
         ],
         partials: [
             Partials.Message,
@@ -180,6 +190,7 @@ function createBot() {
     // Handler d'interactions
     const { handleTempVoiceInteraction } = require('./interactions/tempvoice');
     const { handleTicketInteraction } = require('./interactions/ticket');
+    const { handleDeferInteraction } = require('./interactions/defer');
 
     // Rate limit autocomplete : max 5 par utilisateur par 10 secondes
     const autocompleteLimits = new Map();
@@ -238,6 +249,15 @@ function createBot() {
 
             if (interaction.customId.startsWith('ticket_')) {
                 try { await handleTicketInteraction(interaction); } catch (e) {
+                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
+                }
+                return;
+            }
+
+            // Arbitrage : les boutons portent l'identifiant du cas et restent
+            // fonctionnels après un redémarrage, sans état en mémoire.
+            if (interaction.customId.startsWith('defer_')) {
+                try { await handleDeferInteraction(interaction); } catch (e) {
                     reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
                 }
                 return;
@@ -459,6 +479,26 @@ function createBot() {
             require('./modules/erasure').start(client);
         } catch (e) {
             console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
+        }
+
+        // Modération automatique — Levée des bannissements temporaires arrivés à
+        // terme. Discord n'a pas de ban à durée : sans ce balayage, un `tempban`
+        // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
+        // n'est en base (un SELECT indexé par minute).
+        try {
+            require('./utils/punishments').startTempBanSweeper(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
+        }
+
+        // Anti-raid — Levée des modes panique arrivés a terme. Meme raison que
+        // ci-dessus, en plus critique : un mode panique pose puis oublie parce que
+        // le processus a redemarre laisserait un serveur ferme indefiniment. Le
+        // balayage relit l'echeance en base et rend au serveur son etat d'origine.
+        try {
+            require('./modules/antiraid').startPanicSweeper(client);
+        } catch (e) {
+            console.error('[Quasar] Erreur demarrage anti-raid:', e.message || e);
         }
     });
 

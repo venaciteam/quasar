@@ -29,34 +29,16 @@
         </a>
     </div>
 
-    <template data-kesako-content>
-        <h4>Bienvenue sur Quasar !</h4>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary);">
-            Quasar est un bot Discord custom — il gère la modération, les messages de bienvenue, les rôles automatiques et les embeds personnalisés.
-        </p>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary);">
-            Ce dashboard te permet de tout configurer sans toucher à une seule commande.
-        </p>
-        <p data-instance-operator style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
-            Cette instance est hébergée par la personne ou l'organisation qui l'a installée.
-        </p>
-        <hr style="margin-top: var(--space-5); border: none; border-top: 1px solid var(--border-default);">
-        <p style="margin-top: var(--space-4); color: var(--text-secondary); font-weight: var(--font-medium);">🔍 Pour les curieux</p>
-        <p style="margin-top: var(--space-3); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed);">
-            Quasar tourne sur un serveur privé, sans dépendance à un service tiers payant. Les données (sanctions, configs, embeds) sont stockées localement dans une base SQLite. L'authentification passe par Discord OAuth2 — aucun mot de passe n'est stocké, on vérifie juste que tu es admin du serveur.
-        </p>
-        <p data-instance-source style="margin-top: var(--space-4); color: var(--text-muted); font-size: var(--text-sm);">
-            Quasar est un logiciel libre sous licence AGPL-3.0 —
-            <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">code source de cette instance</a>.
-        </p>
-        <p style="margin-top: var(--space-3); color: var(--text-muted); font-size: var(--text-sm);">
-            Ce logiciel est développé par
-            <a href="https://vena.city" style="color: var(--accent);">Venacity</a>.
-        </p>
-        <div style="margin-top: var(--space-5); display: flex; justify-content: center;">
-            <button class="vnct-btn vnct-btn--primary" onclick="VNCT.Modal.close()">Compris !</button>
-        </div>
-    </template>
+    <!-- Le panneau « Késako » qui vivait ici a été retiré : le bouton flottant
+         qui l'ouvrait n'existe plus depuis le passage au drapeau de signalement,
+         et le <template> ne servait donc plus qu'à emprisonner deux mentions
+         obligatoires — le lien vers le code source de cette instance (AGPL-3.0,
+         article 13) et l'identité de qui l'héberge. Ces deux mentions sont
+         maintenant écrites dans le badge de version, visible en permanence en
+         bas de page (VNCT.VersionBadge + js/instance.js). Le reste du panneau
+         (présentation du bot, « Pour les curieux ») a disparu avec lui : son
+         contenu technique est repris, à jour et au bon registre, par
+         dashboard/legal/contrat.html. -->
 
     <!-- Auto-redirect vers le dashboard si un token valide est deja present (session 7j) -->
     <script>

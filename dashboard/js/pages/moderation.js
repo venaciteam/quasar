@@ -26,30 +26,20 @@ async function loadModeration(container, guildId) {
             </div>
         </div>
 
-        <!-- Sanctions auto -->
+        <!-- Sanctions auto : déplacées vers « Modération auto » → onglet « Escalade ».
+             La carte qui vivait ici (mute-at / mute-duration / kick-at / ban-at) écrivait
+             dans modules.config.autoSanctions, un champ que plus aucun code ne lit depuis
+             que l'escalade à paliers multiples l'a remplacé. Régler « ban après 5 » n'y
+             produisait plus rien : une interface muette est pire que pas d'interface,
+             alors elle est retirée plutôt que laissée en décor. -->
         <div class="card">
             <div class="card-title">⚡ Sanctions automatiques</div>
-            <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1.5rem">Après X warns actifs, une sanction est appliquée automatiquement.</p>
-            <div style="display:grid;gap:1rem;max-width:500px">
-                <div style="display:flex;gap:1rem;align-items:center">
-                    <label style="width:140px;font-size:.9rem">Mute après</label>
-                    <input class="input" type="number" id="mute-at" min="0" max="50" value="${config.autoSanctions?.muteAt || ''}" placeholder="Désactivé" style="width:80px">
-                    <span style="color:var(--text-secondary);font-size:.85rem">warns</span>
-                    <input class="input" type="number" id="mute-duration" min="1" max="10080" value="${config.autoSanctions?.muteDuration || 60}" placeholder="60" style="width:80px">
-                    <span style="color:var(--text-secondary);font-size:.85rem">minutes</span>
-                </div>
-                <div style="display:flex;gap:1rem;align-items:center">
-                    <label style="width:140px;font-size:.9rem">Kick après</label>
-                    <input class="input" type="number" id="kick-at" min="0" max="50" value="${config.autoSanctions?.kickAt || ''}" placeholder="Désactivé" style="width:80px">
-                    <span style="color:var(--text-secondary);font-size:.85rem">warns</span>
-                </div>
-                <div style="display:flex;gap:1rem;align-items:center">
-                    <label style="width:140px;font-size:.9rem">Ban après</label>
-                    <input class="input" type="number" id="ban-at" min="0" max="50" value="${config.autoSanctions?.banAt || ''}" placeholder="Désactivé" style="width:80px">
-                    <span style="color:var(--text-secondary);font-size:.85rem">warns</span>
-                </div>
-                <button class="btn btn-primary" onclick="saveModConfig()" style="align-self:flex-start">Enregistrer</button>
-            </div>
+            <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
+                Les sanctions déclenchées par l'accumulation d'avertissements se règlent désormais
+                dans <strong>Modération auto</strong>, onglet <strong>Escalade</strong> : autant de paliers que vous voulez,
+                des sanctions composables, et une portée par rôle ou par salon.
+            </p>
+            <button class="btn btn-primary" onclick="openEscalationSettings()">Ouvrir l'onglet Escalade</button>
         </div>
 
         <!-- Conservation des sanctions -->
@@ -68,8 +58,8 @@ async function loadModeration(container, guildId) {
                 <button class="btn btn-primary" onclick="saveModConfig()">Enregistrer</button>
             </div>
             <p style="color:var(--text-muted);font-size:.8rem;margin-top:1rem;line-height:1.5">
-                ⚠️ Cette durée sert aussi de fenêtre aux sanctions automatiques ci-dessus : un warn
-                plus ancien ne compte plus dans le déclenchement d'un mute, kick ou ban automatique.<br>
+                ⚠️ Cette durée sert aussi de fenêtre à l'escalade des avertissements : un warn
+                plus ancien ne compte plus dans le déclenchement d'un palier.<br>
                 Les bannissements <strong>encore en vigueur</strong> ne sont jamais supprimés, quelle que soit leur ancienneté.<br>
                 <code>0</code> désactive la suppression — les sanctions sont alors conservées sans limite de durée.
             </p>
@@ -92,6 +82,10 @@ async function loadModeration(container, guildId) {
                     <option value="mute">🔇 Mutes</option>
                     <option value="kick">🔴 Kicks</option>
                     <option value="ban">🔨 Bans</option>
+                    <!-- Type écrit par les déclenchements de l'AutoMod natif de Discord.
+                         Ces lignes existaient déjà en base et s'affichaient en « Tous types » :
+                         il ne manquait que l'entrée pour les filtrer. -->
+                    <option value="automod">🤖 AutoMod Discord</option>
                 </select>
             </div>
             <div id="sanctions-list"><p style="color:var(--text-secondary)">Chargement...</p></div>
@@ -124,10 +118,6 @@ async function loadModeration(container, guildId) {
 // qui faisait disparaître les types de logs cochés à chaque « Enregistrer ».
 function _buildModConfig() {
     const logChannel = document.getElementById('log-channel').value;
-    const muteAt = parseInt(document.getElementById('mute-at').value) || null;
-    const muteDuration = parseInt(document.getElementById('mute-duration').value) || 60;
-    const kickAt = parseInt(document.getElementById('kick-at').value) || null;
-    const banAt = parseInt(document.getElementById('ban-at').value) || null;
 
     const retentionField = document.getElementById('sanction-retention');
     const retentionRaw = retentionField ? retentionField.value : '';
@@ -144,12 +134,27 @@ function _buildModConfig() {
         enabledLogs = (window._modConfig && window._modConfig.enabledLogs) || {};
     }
 
+    // `autoSanctions` n'est PLUS écrit : le champ ne pilotait plus rien depuis que
+    // l'escalade à paliers multiples l'a remplacé, et l'API remplace la config
+    // entière — le réécrire ici l'aurait maintenu en vie pour rien. Les
+    // configurations existantes ont déjà été reprises en base par la migration
+    // warn_escalation_from_autosanctions_v1.
     return {
         logChannel: logChannel || null,
-        autoSanctions: { muteAt, muteDuration, kickAt, banAt },
         sanctionRetentionMonths,
         enabledLogs
     };
+}
+
+/**
+ * Ouvre la page « Modération auto » directement sur l'onglet « Escalade ».
+ * L'onglet actif est choisi au rendu : il faut donc attendre que la page soit
+ * montée avant de basculer, sinon le changement porte sur une page qui n'existe
+ * pas encore.
+ */
+async function openEscalationSettings() {
+    await loadPage('automod');
+    if (typeof switchAutomodTab === 'function') await switchAutomodTab('escalation');
 }
 
 let _savingMod = false;
@@ -183,7 +188,7 @@ async function loadSanctions() {
         return;
     }
 
-    const icons = { warn: '⚠️', mute: '🔇', kick: '🔴', ban: '🔨' };
+    const icons = { warn: '⚠️', mute: '🔇', kick: '🔴', ban: '🔨', automod: '🤖' };
     list.innerHTML = `<div style="display:flex;flex-direction:column;gap:.5rem">
         ${sanctions.map(s => `
             <div style="display:flex;gap:1rem;align-items:center;padding:.75rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.85rem">
@@ -244,3 +249,4 @@ window.removeLogChannel = removeLogChannel;
 window.loadSanctions = loadSanctions;
 window.loadModeration = loadModeration;
 window.saveLogToggles = saveLogToggles;
+window.openEscalationSettings = openEscalationSettings;

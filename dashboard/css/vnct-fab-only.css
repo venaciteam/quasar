@@ -1,9 +1,18 @@
 /* ============================================================================
-   VNCT FAB + Modals — Subset du Design System pour Quasar
+   VNCT Modals + signalement — Subset du Design System pour Quasar
    Quasar a son propre CSS complet, on ne charge que les composants VNCT nécessaires.
+
+   Le nom du fichier est historique : il portait le FAB, retiré depuis. Il
+   est CONSERVÉ tel quel : dashboard/index.html et l'APP_SHELL du service worker
+   le référencent, et un renommage y ferait un 404 (page de connexion sans style
+   de modale, mise en cache du shell en échec).
+
+   Ce que ce fichier porte encore : les modales du design system (dont vit le
+   pop-up des nouveautés), les champs de formulaire et d'upload, les toasts, le
+   badge de version, et le bouton drapeau de signalement.
    ============================================================================ */
 
-/* Variables nécessaires au FAB */
+/* Variables nécessaires aux composants ci-dessous */
 :root {
   --accent-h: 330;
   --accent-s: 90%;
@@ -38,7 +47,6 @@
   --font-bold: 700;
   --leading-relaxed: 1.7;
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-smooth: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   --duration-fast: 150ms;
   --duration-normal: 250ms;
 }
@@ -51,19 +59,6 @@
   --neon-shadow-md: 0 0 12px hsla(185, 80%, 45%, 0.5), 0 0 24px hsla(185, 80%, 45%, 0.2);
   --neon-shadow-lg: 0 0 16px hsla(185, 80%, 45%, 0.6), 0 0 32px hsla(185, 80%, 45%, 0.3);
 }
-[data-theme="light"] .vnct-fab {
-  box-shadow: 0 0 12px hsla(185, 80%, 45%, 0.5);
-}
-[data-theme="light"] .vnct-fab-menu__item {
-  background: rgba(255, 255, 255, 0.95);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #1a1a2e;
-}
-[data-theme="light"] .vnct-fab-menu__item:hover {
-  border-color: hsl(185, 80%, 45%);
-  box-shadow: 0 0 6px hsla(185, 80%, 45%, 0.3);
-}
-[data-theme="light"] .vnct-fab-overlay { background: rgba(0, 0, 0, 0.15); }
 [data-theme="light"] .vnct-modal-overlay {
   --text-primary: #1a1a2e; --text-secondary: rgba(0,0,0,.55); --text-muted: rgba(0,0,0,.35);
   --bg-secondary: #ffffff; --bg-tertiary: #f0f0f4; --border-default: rgba(0,0,0,.1);
@@ -78,61 +73,12 @@
 [data-theme="light"] .modal .btn-primary {
   background: hsl(185, 80%, 45%); border-color: hsl(185, 80%, 45%); color: #fff;
 }
-[data-theme="light"] .vnct-version-badge { color: #9090a5; }
-
 /* Quasar utilise ses propres variables de couleur */
-.vnct-fab { --bg-glass: rgba(18, 18, 26, 0.7); --border-default: rgba(255, 255, 255, 0.08); --text-primary: #f0f0f5; --text-secondary: #a0a0b5; --text-muted: #606075; --bg-secondary: #12121a; --bg-tertiary: #1a1a28; --surface-hover: rgba(255, 255, 255, 0.05); --surface-active: rgba(255, 255, 255, 0.08); }
-.vnct-fab-menu { --bg-glass: rgba(18, 18, 26, 0.7); --border-default: rgba(255, 255, 255, 0.08); --text-primary: #f0f0f5; }
-.vnct-fab-overlay { --border-default: rgba(255, 255, 255, 0.08); }
 .vnct-modal-overlay { --bg-secondary: #12121a; --border-default: rgba(255, 255, 255, 0.08); --text-primary: #f0f0f5; --text-secondary: #a0a0b5; --text-muted: #606075; --bg-tertiary: #1a1a28; --surface-hover: rgba(255, 255, 255, 0.05); }
-.vnct-version-badge { --text-muted: #606075; }
-
-/* FAB */
-.vnct-fab {
-  position: fixed; bottom: var(--space-6); right: var(--space-6); z-index: 900;
-  width: 56px; height: 56px; border-radius: var(--radius-full);
-  background: var(--accent); color: #000; border: none; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: var(--neon-shadow-md); transition: all 0.3s ease;
-}
-.vnct-fab:hover { transform: scale(1.08); box-shadow: var(--neon-shadow-lg); }
-.vnct-fab:active { transform: scale(0.95); }
-.vnct-fab--open { transform: rotate(45deg); }
-.vnct-fab--open:hover { transform: rotate(45deg) scale(1.08); }
-
-.vnct-fab-menu {
-  position: fixed; bottom: calc(56px + var(--space-8)); right: var(--space-6); z-index: 899;
-  display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3);
-  animation: vnct-scale-in var(--duration-fast) var(--ease-spring);
-}
-.vnct-fab-menu[aria-hidden="true"] { display: none; }
-.vnct-fab-menu--closing { animation: vnct-fab-menu-out 200ms var(--ease-smooth) forwards; }
-.vnct-fab-menu--closing .vnct-fab-menu__item { animation: vnct-fab-item-out 150ms ease forwards; }
-.vnct-fab-menu--closing .vnct-fab-menu__item:nth-child(3) { animation-delay: 0s; }
-.vnct-fab-menu--closing .vnct-fab-menu__item:nth-child(2) { animation-delay: 0.04s; }
-.vnct-fab-menu--closing .vnct-fab-menu__item:nth-child(1) { animation-delay: 0.08s; }
-
-.vnct-fab-menu__item {
-  background: var(--bg-glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-default); border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-5); color: var(--text-primary);
-  font-family: var(--font-family); font-size: var(--text-sm); font-weight: var(--font-medium);
-  cursor: pointer; transition: all 0.3s ease; white-space: nowrap;
-  text-align: left; display: flex; align-items: center; justify-content: flex-start;
-  gap: var(--space-3);
-  animation: vnct-fab-item-in var(--duration-normal) var(--ease-spring) backwards;
-}
-.vnct-fab-menu__item:nth-child(1) { animation-delay: 0.06s; }
-.vnct-fab-menu__item:nth-child(2) { animation-delay: 0.12s; }
-.vnct-fab-menu__item:nth-child(3) { animation-delay: 0.18s; }
-.vnct-fab-menu__item:hover { border-color: var(--accent); box-shadow: var(--neon-shadow-sm); }
-.vnct-fab-menu__icon { font-size: var(--text-base); line-height: 1; flex-shrink: 0; }
-
-.vnct-fab-overlay {
-  position: fixed; inset: 0; z-index: 898;
-  background: rgba(0, 0, 0, 0.3); animation: vnct-fade-in var(--duration-fast) ease;
-}
-.vnct-fab-overlay[aria-hidden="true"] { display: none; }
+/* Le badge de version figeait ici ses couleurs en dur (--text-muted: #606075 en
+   sombre, color: #9090a5 en clair), ce qui doublait les tokens du design system
+   déjà chargé sur les deux pages. Retiré : il suit maintenant --text-secondary
+   et --text-muted, qui se déclinent seuls en sombre et en clair. */
 
 /* Modal */
 .vnct-modal-overlay {
@@ -169,17 +115,192 @@
   .vnct-modal__body { font-size: var(--text-sm); }
   .vnct-modal__body h4 { font-size: var(--text-base); }
   .vnct-modal__body p { font-size: var(--text-sm); }
-  .vnct-fab { bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
-  .vnct-fab-menu { bottom: calc(56px + var(--space-8) + env(safe-area-inset-bottom)); }
-  .vnct-fab-menu__item { min-height: 44px; }
 }
 
-/* Version badge */
+/* ============================================================================
+   Bouton drapeau de signalement — remplace le FAB rond, retiré du dashboard.
+
+   Même emplacement que lui (flottant, en bas à droite), mais une seule action :
+   ouvrir la modale de signalement. Le SVG est celui du drapeau du chrome de la
+   vitrine, pour que les deux surfaces se ressemblent vraiment.
+
+   Pastille iconique : dérogation actée à la règle « texte explicite > icône
+   seule », comme sur les headers de Prisma et de Maât. Le libellé est porté par
+   title + aria-label sur le bouton.
+
+   Aucune couleur en dur : tout vient des tokens, donc les thèmes sombre et
+   clair suivent sans règle dédiée.
+   ============================================================================ */
+.vnct-report-fab {
+  position: fixed;
+  bottom: var(--space-6);
+  right: var(--space-6);
+  /* Volontairement SOUS .vnct-modal-overlay (1000) et sous .modal-overlay de
+     style.css (9500) : une modale ouverte doit recouvrir le drapeau, jamais
+     l'inverse. Reprend le z-index qu'avait le FAB. */
+  z-index: 900;
+  /* 44px = cible tactile minimale. Plus discret que les 56px du FAB, qui
+     mordait sur les actions de bas de page. */
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--duration-normal) ease,
+              border-color var(--duration-normal) ease,
+              box-shadow var(--duration-normal) ease,
+              transform var(--duration-normal) ease;
+}
+.vnct-report-fab:hover,
+.vnct-report-fab:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: var(--neon-shadow-sm);
+}
+.vnct-report-fab:active { transform: scale(0.94); }
+
+@media (max-width: 768px) {
+  /* Barre d'accueil iOS : sans ça, le drapeau tombe dessous. */
+  .vnct-report-fab { bottom: calc(var(--space-6) + env(safe-area-inset-bottom)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vnct-report-fab { transition: none; }
+  .vnct-report-fab:active { transform: none; }
+}
+
+/* ============================================================================
+   Modale unifiée de signalement — écran de choix puis formulaire
+   ============================================================================ */
+.vnct-feedback-intro {
+  margin-bottom: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.vnct-feedback-choices { display: flex; flex-direction: column; gap: var(--space-3); }
+.vnct-feedback-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4);
+  text-align: left;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: border-color var(--duration-normal) ease, box-shadow var(--duration-normal) ease;
+}
+.vnct-feedback-choice:hover,
+.vnct-feedback-choice:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--neon-shadow-sm);
+}
+.vnct-feedback-choice__icon { flex-shrink: 0; font-size: var(--text-lg); line-height: 1.2; }
+.vnct-feedback-choice__text {
+  /* Sans ça, un libellé long pousserait la carte hors de la modale. */
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.vnct-feedback-choice__title { font-size: var(--text-base); font-weight: var(--font-semibold); color: var(--text-primary); }
+.vnct-feedback-choice__desc { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.4; }
+
+.vnct-feedback-actions {
+  margin-top: var(--space-6);
+  display: flex;
+  /* « Retour » à gauche, « Envoyer » à droite : le retour arrière n'est pas une
+     action de validation, il ne doit pas se ramasser à côté du bouton d'envoi. */
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+@media (prefers-reduced-motion: reduce) {
+  .vnct-feedback-choice { transition: none; }
+}
+
+/* ============================================================================
+   Badge de version — et porteur des mentions de licence AGPL-3.0
+
+   Le pourquoi du placement est dans VNCT.VersionBadge (js/vnct-common.js). Ici,
+   quatre points de vigilance :
+
+   • CONTRASTE. Le badge était en --text-muted à `opacity: .6`, soit 1,87:1 en
+     sombre et 1,80:1 en clair — illisible, et intenable pour du texte porteur
+     d'un lien. Il passe à --text-secondary sans opacité : 7,70:1 en sombre,
+     7,19:1 en clair.
+
+   • LE LIEN NE SE DISTINGUE PAS PAR LA SEULE COULEUR : il est souligné, et
+     prend la couleur du texte qui l'entoure. --accent est écarté volontairement
+     — en thème clair il vaut hsl(185, 80%, 45%), soit 2,06:1 sur le fond : il
+     aurait recréé exactement le défaut qu'on corrige.
+
+   • IL NE DOIT PAS ATTEINDRE LE DRAPEAU DE SIGNALEMENT, fixe en bas à droite.
+     D'où la largeur maximale, qui lui laisse sa colonne : 44 px de bouton, plus
+     son décalage (--space-6) et une respiration (--space-4).
+
+   • IL RESTE SOUS LES MODALES. z-index 1, contre 900 pour le drapeau, 1000 pour
+     .vnct-modal-overlay et 9500 pour .modal-overlay de style.css.
+
+   `--vnct-badge-left` permet à une page de le décaler sans redéclarer la règle :
+   le shell du dashboard s'en sert pour le sortir de sous sa barre latérale
+   (voir style.css). La largeur maximale s'en déduit toute seule.
+   ============================================================================ */
 .vnct-version-badge {
-  position: fixed; bottom: var(--space-2); left: var(--space-3);
-  font-size: var(--text-xs); color: var(--text-muted);
-  font-family: var(--font-family); z-index: 1; opacity: 0.6;
-  user-select: none;
+  position: fixed;
+  bottom: var(--space-2);
+  left: var(--vnct-badge-left, var(--space-3));
+  max-width: min(46rem, calc(100vw - var(--vnct-badge-left, var(--space-3)) - 44px - var(--space-6) - var(--space-4)));
+  font-family: var(--font-family);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  z-index: 1;
+  opacity: 1;
+  /* Le texte porte une URL qu'on peut vouloir copier : la sélection reste
+     possible, contrairement au badge purement décoratif d'origine. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Fente que /api/instance n'a pas remplie : rien à afficher, et surtout pas un
+   séparateur orphelin. */
+.vnct-version-badge__item:empty { display: none; }
+
+.vnct-version-badge__item + .vnct-version-badge__item::before {
+  content: " · ";
+  color: var(--text-muted);
+}
+
+.vnct-version-badge__link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.vnct-version-badge__link:hover,
+.vnct-version-badge__link:focus-visible {
+  color: var(--text-primary);
+}
+.vnct-version-badge__link:focus-visible {
+  /* currentColor plutôt que --accent : le contour hérite du contraste du texte
+     au lieu de retomber sur les 2,06:1 de l'accent clair. */
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  /* Barre d'accueil iOS. La règle équivalente du design system est écrasée par
+     le `bottom` ci-dessus, chargé après elle : elle doit être reprise ici. */
+  .vnct-version-badge { bottom: calc(var(--space-2) + env(safe-area-inset-bottom)); }
 }
 
 /* Bouton VNCT */
@@ -198,9 +319,6 @@
 @keyframes vnct-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes vnct-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes vnct-scale-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-@keyframes vnct-fab-item-in { from { opacity: 0; transform: translateY(8px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes vnct-fab-item-out { to { opacity: 0; transform: translateY(8px) scale(0.95); } }
-@keyframes vnct-fab-menu-out { to { opacity: 0; transform: scale(0.95); } }
 
 /* Upload / Drop zone */
 .vnct-upload { position: relative; }

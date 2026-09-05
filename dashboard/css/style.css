@@ -1072,6 +1072,41 @@
     box-shadow: 0 0 8px hsla(0, 80%, 55%, 0.3);
 }
 
+/* Etat desactive — commun a toutes les variantes.
+   Sans cette regle, un bouton `disabled` etait strictement indiscernable d'un
+   bouton actif : meme fond, meme curseur, meme effet au survol. Cela concerne
+   autant les boutons desactives par une regle metier (quota atteint) que ceux
+   que withDebounce() neutralise le temps d'un enregistrement — on cliquait dans
+   le vide sans comprendre pourquoi. Aucune teinte nouvelle : seulement une
+   opacite reduite et la suppression des retours d'interaction. */
+.btn:disabled,
+.btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: none;
+    box-shadow: none;
+}
+
+/* Neutralisation du survol, variante par variante : chacune a son fond au repos,
+   il faut le lui rendre plutot que d'en imposer un seul a toutes. */
+.btn:disabled:hover { background: var(--bg-secondary); border-color: var(--border-default); }
+.btn-primary:disabled:hover { background: var(--accent); border-color: var(--accent); }
+.btn-blue:disabled:hover,
+.btn-secondary:disabled:hover,
+.btn-gold:disabled:hover { background: transparent; border-color: var(--accent); }
+.btn-danger:disabled:hover { background: transparent; border-color: var(--danger); }
+
+.btn:disabled:hover,
+.btn[disabled]:hover {
+    filter: none;
+    box-shadow: none;
+}
+
+.btn:disabled:active,
+.btn[disabled]:active {
+    transform: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════════ */
 /*   MODULES GRID (page d'accueil)                                     */
 /* ═══════════════════════════════════════════════════════════════════ */
@@ -1234,9 +1269,6 @@
 .modal h2 { font-size: var(--text-lg); font-weight: var(--font-bold); margin-bottom: var(--space-4); }
 .modal p { color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed); margin-bottom: var(--space-3); }
 .modal .curious { color: var(--text-muted); font-size: var(--text-xs); font-style: italic; margin-top: var(--space-4); }
-.kesako-section p { color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-relaxed); margin-bottom: var(--space-2); }
-.kesako-divider { border: none; border-top: 1px solid var(--border-default); margin: var(--space-4) 0; }
-.kesako-section h4 { color: var(--text-primary); font-size: var(--text-base); font-style: normal; font-weight: var(--font-bold); margin-bottom: var(--space-3); }
 .modal .close-btn {
     margin-top: var(--space-6);
     width: 100%;
@@ -1354,6 +1386,314 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════ */
+/*   MODÉRATION AUTOMATIQUE — barre d'onglets                          */
+/*                                                                     */
+/*   Quatre modules sous une seule entrée de sidebar. Aucune couleur en */
+/*   dur : les tokens du design system portent déjà les déclinaisons    */
+/*   sombre et claire, l'onglet actif se signale par l'accent.          */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+.automod-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border-default);
+}
+
+.automod-tab {
+    padding: var(--space-2) var(--space-4);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-medium);
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.automod-tab:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.automod-tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.automod-tab.is-active {
+    background: var(--bg-tertiary);
+    border-color: var(--accent);
+    color: var(--text-primary);
+    font-weight: var(--font-semibold);
+}
+
+.automod-tab-loading {
+    padding: var(--space-8);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*   MARQUAGE BÊTA — modération automatique                            */
+/*                                                                     */
+/*   Deux repères pour une seule information : la pastille de la barre  */
+/*   latérale, et le bandeau en haut de la page (le porteur principal). */
+/*   AUCUN des deux ne dépend d'un survol : le survol n'existe pas au   */
+/*   doigt, ni au clavier. Le texte est donc toujours écrit à l'écran ; */
+/*   le `title` natif du HTML n'est qu'un confort de plus sur           */
+/*   ordinateur, jamais le seul canal.                                  */
+/*                                                                     */
+/*   Zéro couleur en dur : --warning porte déjà ses déclinaisons sombre */
+/*   et claire. Le fond du bandeau reste neutre et seul un filet à      */
+/*   gauche est coloré — même parti pris que les toasts du design       */
+/*   system. Le titre et le corps restent en texte standard : une bêta  */
+/*   est un avertissement, pas une alarme, et le sens doit tenir sans   */
+/*   la couleur.                                                        */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/* Pastille de la barre latérale. Le mot « bêta » est écrit à côté du
+   triangle : une icône seule ne porte jamais une information, et un
+   triangle ne dit rien à qui ne le voit pas. `margin-left: auto` la cale
+   au bout de l'entrée sans toucher à l'alignement du libellé ni à celui
+   des autres entrées. */
+.sidebar-badge-beta {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2em;
+    padding: 0.05rem var(--space-2);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-full);
+    /* Le MOT reste en texte courant, pas en --warning : en thème clair, l'orange
+       du design system plafonne à ~3:1 sur fond blanc, insuffisant pour du texte
+       de 11 px. La couleur d'avertissement porte le filet et le triangle (des
+       graphiques, seuil 3:1), jamais le sens — qui tient dans le mot lui-même. */
+    color: var(--text-secondary);
+    /* Sous --text-xs : c'est un repère, il ne doit pas concurrencer le libellé. */
+    font-size: 0.6875rem;
+    font-weight: var(--font-medium);
+    line-height: 1.6;
+    white-space: nowrap;
+}
+
+.sidebar-badge-beta-icon {
+    color: var(--warning);
+}
+
+/* Bandeau de la page. Rendu par le conteneur d'onglets, donc au-dessus de
+   la barre d'onglets : il reste visible quel que soit l'onglet ouvert.
+
+   Calibré serré A DESSEIN : ce bandeau pousse la barre d'onglets vers le bas,
+   et à 375 px la version large (429 px de haut) la sortait du premier écran.
+   Interligne resserré, titre collé à son paragraphe, un seul paragraphe. */
+.automod-beta {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-4);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-left: 3px solid var(--warning);
+    border-radius: var(--radius-md);
+}
+
+.automod-beta-icon {
+    flex-shrink: 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+}
+
+.automod-beta-body {
+    /* Sans ça, un mot long (une URL collée un jour dans ce texte) pousserait
+       le bandeau au-delà de la largeur de la page sur mobile. */
+    min-width: 0;
+}
+
+.automod-beta-title {
+    display: block;
+    margin-bottom: var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--text-primary);
+}
+
+.automod-beta p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--font-light);
+    line-height: var(--leading-normal);
+}
+
+@media (max-width: 480px) {
+    .automod-beta {
+        padding: var(--space-3);
+        gap: var(--space-2);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*   POP-UP DES NOUVEAUTÉS                                             */
+/*                                                                     */
+/*   Le conteneur est la modale du design system (.vnct-modal) : elle   */
+/*   porte déjà le fond, la bordure accent, le défilement interne et    */
+/*   l'adaptation mobile. Ce bloc ne fait que deux choses :             */
+/*     1. élargir la modale pour ce contenu-là, plus dense qu'un        */
+/*        message court (la modale du DS est calibrée à 500 px) ;       */
+/*     2. redonner au markdown rendu la même hiérarchie que la page     */
+/*        publique /nouveautes, dont les règles sont reprises ici à     */
+/*        l'identique — même journal, même lecture.                     */
+/*                                                                     */
+/*   Aucune couleur en dur : tout vient des tokens, donc les thèmes     */
+/*   sombre et clair suivent sans règle dédiée.                        */
+/* ═══════════════════════════════════════════════════════════════════ */
+
+/* :has() évite d'aller poser une classe sur un élément que le design system
+   possède et réécrit à chaque ouverture. Sans support, la modale garde
+   simplement sa largeur standard : le contenu reste lisible. */
+.vnct-modal:has(.qnews) {
+    max-width: 620px;
+}
+
+.qnews-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.qnews-entry {
+    padding: var(--space-5) var(--space-4);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    background: var(--bg-tertiary);
+}
+
+/* Hiérarchie du markdown rendu :
+     h2  = « 🌌 Quasar — v4.6.0 » (la version)  -> en-tête de carte, accent
+     h3  = titre humain de la version           -> titre mis en avant
+     > * = date en citation                     -> ligne muted discrète
+     p>strong seul = libellé de section (✨/🔧) -> intertitre compact
+     ul/li = les changements                    -> corps de texte */
+.qnews-entry h2 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: var(--font-semibold);
+    color: var(--accent);
+    letter-spacing: var(--tracking-wide);
+}
+
+.qnews-entry h3 {
+    margin: 0 0 var(--space-1);
+    font-size: var(--text-lg);
+    color: var(--text-primary);
+    line-height: var(--leading-tight);
+}
+
+/* La PREMIÈRE citation après le titre est la ligne de DATE : simple mention
+   muted sans filet. Les autres gardent un filet accent discret. */
+.qnews-entry blockquote {
+    margin: var(--space-4) 0 0;
+    padding: var(--space-1) 0 var(--space-1) var(--space-3);
+    border-left: 2px solid var(--accent-dim);
+}
+
+.qnews-entry blockquote p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.qnews-entry h2 + blockquote,
+.qnews-entry h3 + blockquote {
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    border-left: 0;
+}
+
+.qnews-entry h2 + blockquote p,
+.qnews-entry h3 + blockquote p {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.qnews-entry h2 + blockquote em,
+.qnews-entry h3 + blockquote em {
+    font-style: normal;
+}
+
+.qnews-entry p {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-relaxed);
+}
+
+/* Libellés de section (« **✨ Nouveautés** » seuls dans leur paragraphe) :
+   intertitres compacts. Sans :has(), dégradation propre en paragraphe. */
+.qnews-entry p:has(> strong:only-child) {
+    margin: var(--space-4) 0 var(--space-2);
+}
+
+.qnews-entry strong { color: var(--text-primary); }
+.qnews-entry em { color: var(--text-muted); }
+.qnews-entry a { color: var(--accent); }
+
+.qnews-entry ul {
+    margin: 0 0 var(--space-3);
+    padding-left: 1.2em;
+}
+
+.qnews-entry ul:last-child,
+.qnews-entry p:last-child,
+.qnews-entry blockquote:last-child { margin-bottom: 0; }
+
+.qnews-entry li {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: var(--leading-relaxed);
+}
+
+.qnews-entry li:last-child { margin-bottom: 0; }
+.qnews-entry li::marker { color: var(--text-muted); }
+
+/* Journal vide : encart sobre, bordure pointillée — même traitement que
+   .quasar-news-empty sur la page publique. */
+.qnews-empty {
+    margin: 0;
+    padding: var(--space-4);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    line-height: var(--leading-relaxed);
+}
+
+/* Renvoi vers l'historique complet quand toutes les versions manquées ne
+   tiennent pas dans le pop-up. */
+.qnews-more {
+    margin: var(--space-5) 0 0;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    line-height: var(--leading-relaxed);
+}
+
+.qnews-more a { color: var(--accent); }
+
+@media (max-width: 768px) {
+    .qnews-entry { padding: var(--space-4) var(--space-3); }
+    .qnews-entry h3 { font-size: var(--text-base); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
 /*   RESPONSIVE                                                        */
 /* ═══════════════════════════════════════════════════════════════════ */
 
@@ -1447,4 +1787,54 @@
     .sched-item-row { flex-direction: column; align-items: stretch; gap: .75rem; }
     .sched-actions { width: 100%; gap: .5rem; }
     .sched-actions .btn { width: auto; flex: 1; padding: .55rem; font-size: 1rem; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*   RÉSERVE DU BOUTON DRAPEAU FLOTTANT                                */
+/*                                                                     */
+/*   Le drapeau de signalement est en position: fixed en bas à droite.  */
+/*   Sans cette réserve, il recouvre la dernière action d'une page      */
+/*   longue — typiquement un « Enregistrer » en bas de formulaire.      */
+/*                                                                     */
+/*   Déclarée ICI, tout en bas de la feuille, ET PAS dans le bloc       */
+/*   `.main` du haut : les media queries responsives redéfinissent      */
+/*   `padding` en raccourci (768 px puis 480 px), ce qui réinitialise   */
+/*   padding-bottom à chaque fois. Une règle unique en fin de fichier   */
+/*   survit aux trois. Si `.main` gagne un jour un quatrième raccourci  */
+/*   `padding`, il devra rester AVANT cette règle.                     */
+/*                                                                     */
+/*   44px = taille du bouton, var(--space-6) = son décalage bas,        */
+/*   var(--space-4) = respiration, env() = barre d'accueil iOS.         */
+/* ═══════════════════════════════════════════════════════════════════ */
+.main {
+    padding-bottom: calc(44px + var(--space-6) + var(--space-4) + env(safe-area-inset-bottom));
+}
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*   BADGE DE VERSION — DÉCALAGE SOUS LE SHELL DU DASHBOARD            */
+/*                                                                     */
+/*   Le badge porte les mentions de licence AGPL (lien vers le code     */
+/*   source de l'instance, hébergeur). Il est fixe en bas à gauche,     */
+/*   en z-index 1 — donc SOUS la barre latérale, qui est fixe, large    */
+/*   de 260px, à gauche, et en z-index 100. Sur app.html en desktop,    */
+/*   il était purement et simplement recouvert : invisible.             */
+/*                                                                     */
+/*   On le décale de la largeur de la barre. `--vnct-badge-left` est lu */
+/*   par vnct-fab-only.css pour `left` ET pour la largeur maximale, qui */
+/*   réserve sa colonne au drapeau de signalement : une seule valeur à  */
+/*   changer si la barre change de largeur.                            */
+/*                                                                     */
+/*   Sélecteur en frère général : le badge est ajouté au <body> par     */
+/*   VNCT.VersionBadge, après .dashboard et après le drapeau. La page   */
+/*   de connexion n'a pas de .dashboard, elle garde le retrait normal.  */
+/* ═══════════════════════════════════════════════════════════════════ */
+.dashboard ~ .vnct-version-badge {
+    --vnct-badge-left: calc(260px + var(--space-3));
+}
+
+@media (max-width: 768px) {
+    /* Barre latérale hors écran (translateX(-100%)) : plus rien à contourner. */
+    .dashboard ~ .vnct-version-badge {
+        --vnct-badge-left: var(--space-3);
+    }
 }

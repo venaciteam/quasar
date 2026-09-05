@@ -264,6 +264,8 @@ function createApi(discordClient, mode = 'bot') {
     const ticketsRoutes = require('./routes/tickets');
     const presenceRoutes = require('./routes/presence');
     const updateRoutes = require('./routes/update');
+    // Lecture du journal des nouveautés par le dashboard (pop-up de mise à jour).
+    const nouveautesRoutes = require('./routes/nouveautes');
     const scheduledRoutes = require('./routes/scheduled');
     const instanceRoutes = require('./routes/instance');
     // Lot 2 conformité RGPD — mêmes contraintes de chargement paresseux : ces
@@ -272,6 +274,13 @@ function createApi(discordClient, mode = 'bot') {
     const breachRoutes = require('./routes/breach');
     const ownerRoutes = require('./routes/owner');
     const erasureRoutes = require('./routes/erasure');
+    // Modération automatique — quatre modules qui partagent le socle commun
+    // (punitions composables, portée par règle, salon d'arbitrage).
+    const automodRoutes = require('./routes/automod');
+    const warnEscalationRoutes = require('./routes/warnEscalation');
+    const antiraidRoutes = require('./routes/antiraid');
+    const honeypotRoutes = require('./routes/honeypot');
+    const deferRoutes = require('./routes/defer');
     const { isSuspended } = require('../bot/utils/suspension');
 
     const app = express();
@@ -315,11 +324,26 @@ function createApi(discordClient, mode = 'bot') {
     app.use('/api/guilds/:guildId/tickets', ticketsRoutes);
     app.use('/api/guilds/:guildId/scheduled', scheduledRoutes);
     app.use('/api/guilds/:guildId/erasure', erasureRoutes);
+    // Montés après le garde-fou de suspension ci-dessus, comme tous les routeurs
+    // guild-scoped : une écriture de configuration reste refusée sur un serveur
+    // suspendu, sans que chaque module ait à y penser.
+    app.use('/api/guilds/:guildId/automod', automodRoutes);
+    app.use('/api/guilds/:guildId/warn-escalation', warnEscalationRoutes);
+    app.use('/api/guilds/:guildId/antiraid', antiraidRoutes);
+    app.use('/api/guilds/:guildId/honeypot', honeypotRoutes);
+    app.use('/api/guilds/:guildId/defer', deferRoutes);
     app.use('/api/presence', presenceRoutes);
     app.use('/api/contract', contractRoutes);
     app.use('/api/breach', breachRoutes);
     app.use('/api/owner', ownerRoutes);
     app.use('/api', updateRoutes);
+    // Route d'INSTANCE, pas de serveur : montée sur /api comme update.js, elle
+    // ne porte aucun segment :guildId. `vitrineMounted` lui dit si la page
+    // publique /nouveautes existe ici — elle n'est servie qu'en mode `public`,
+    // et le pop-up ne doit pas proposer un lien qui finirait en 404 sur une
+    // instance auto-hébergée.
+    app.set('vitrineMounted', mode === 'public');
+    app.use('/api', nouveautesRoutes);
     app.use('/api', instanceRoutes);
 
     mountDashboard(app);

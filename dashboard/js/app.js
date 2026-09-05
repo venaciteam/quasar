@@ -94,14 +94,18 @@ async function init() {
 
     if (guilds.length === 0) {
         showNoGuilds();
-        renderServerMenu();
-        checkForUpdate();
-        return;
+    } else {
+        selectGuild(guilds[0]);
     }
-
-    selectGuild(guilds[0]);
     renderServerMenu();
     checkForUpdate();
+
+    // ── Pop-up des nouveautés (premier accès après une mise à jour) ──
+    // En DERNIER et volontairement NON attendu : le dashboard est déjà rendu
+    // quand la requête part. Endpoint lent, en erreur ou journal vide → rien ne
+    // s'ouvre et rien ne change. Exposé par js/nouveautes.js, chargé avant
+    // app.js ; garde défensive au cas où le fichier manquerait.
+    if (window.QuasarNouveautes) window.QuasarNouveautes.autoOpen();
 }
 
 // ═══ Helpers ═══
@@ -475,6 +479,7 @@ async function loadPage(page) {
     switch (page) {
         case 'overview':   await loadOverview(content); break;
         case 'moderation': await loadModeration(content, currentGuild.id); break;
+        case 'automod':    await loadAutomod(content, currentGuild.id); break;
         case 'welcome':    await loadWelcome(content, currentGuild.id); break;
         case 'reactionroles': await loadReactionRoles(content, currentGuild.id); break;
         case 'embeds':     await loadEmbeds(content, currentGuild.id); break;
