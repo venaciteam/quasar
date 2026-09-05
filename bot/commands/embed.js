@@ -79,7 +79,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Embed vide',
                     cause: 'Un embed sans titre ni description n\'affiche rien : Discord le refuserait.',
-                    action: 'Renseigne au moins le titre ou la description.',
+                    action: 'Renseignez au moins le titre ou la description.',
                 });
             }
 
@@ -115,7 +115,7 @@ module.exports = {
             if (!embedRow) return userError(interaction, {
                 title: 'Embed introuvable',
                 cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
-                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+                action: 'Consultez la liste avec `/embed list` — les noms sont sensibles à la casse.',
             });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
@@ -141,7 +141,7 @@ module.exports = {
             if (!embedRow) return userError(interaction, {
                 title: 'Embed introuvable',
                 cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
-                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+                action: 'Consultez la liste avec `/embed list` — les noms sont sensibles à la casse.',
             });
 
             try {
@@ -166,7 +166,7 @@ module.exports = {
                 await userError(interaction, {
                     title: 'Message introuvable',
                     cause: 'Aucun message ne correspond à cet identifiant dans ce salon. Il a peut-être été supprimé, ou se trouve ailleurs.',
-                    action: 'Vérifie l\'identifiant (clic droit sur le message → Copier l\'identifiant) et lance la commande depuis le bon salon.',
+                    action: 'Vérifiez l\'identifiant (clic droit sur le message → Copier l\'identifiant) et lancez la commande depuis le bon salon.',
                 });
             }
 
@@ -198,7 +198,7 @@ module.exports = {
             if (result.changes === 0) return userError(interaction, {
                 title: 'Embed introuvable',
                 cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
-                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+                action: 'Consultez la liste avec `/embed list` — les noms sont sensibles à la casse.',
             });
             await interaction.reply({ content: `🗑️ Embed **${nom}** supprimé.`, ephemeral: true });
 
@@ -210,7 +210,7 @@ module.exports = {
             if (!embedRow) return userError(interaction, {
                 title: 'Embed introuvable',
                 cause: `Aucun embed enregistré ne s'appelle **${nom}** sur ce serveur.`,
-                action: 'Consulte la liste avec `/embed list` — les noms sont sensibles à la casse.',
+                action: 'Consultez la liste avec `/embed list` — les noms sont sensibles à la casse.',
             });
 
             const embed = buildDiscordEmbed(JSON.parse(embedRow.data));

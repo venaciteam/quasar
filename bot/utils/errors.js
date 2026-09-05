@@ -40,12 +40,12 @@ const DISCORD_ERRORS = {
     10003: {
         title: 'Salon introuvable',
         cause: 'Le salon concerné n\'existe plus, ou je n\'y ai plus accès.',
-        action: 'Vérifie qu\'il n\'a pas été supprimé, puis recommence avec un autre salon.',
+        action: 'Vérifiez qu\'il n\'a pas été supprimé, puis recommencez avec un autre salon.',
     },
     10008: {
         title: 'Message introuvable',
         cause: 'Le message a été supprimé, ou il est dans un salon que je ne vois pas.',
-        action: 'Vérifie qu\'il existe encore et que j\'ai accès à son salon.',
+        action: 'Vérifiez qu\'il existe encore et que j\'ai accès à son salon.',
     },
     10011: {
         title: 'Rôle introuvable',
@@ -55,17 +55,17 @@ const DISCORD_ERRORS = {
     10013: {
         title: 'Utilisateur introuvable',
         cause: 'Cet utilisateur n\'existe pas, ou a supprimé son compte Discord.',
-        action: 'Vérifie l\'identifiant saisi.',
+        action: 'Vérifiez l\'identifiant saisi.',
     },
     10026: {
         title: 'Bannissement introuvable',
         cause: 'Cette personne n\'est pas bannie de ce serveur.',
-        action: 'Vérifie la liste des bannissements dans les paramètres du serveur.',
+        action: 'Vérifiez la liste des bannissements dans les paramètres du serveur.',
     },
     30003: {
         title: 'Trop de messages épinglés',
         cause: 'Discord limite à 50 messages épinglés par salon.',
-        action: 'Détache un message épinglé, puis recommence.',
+        action: 'Détache un message épinglé, puis recommencez.',
     },
     40005: {
         title: 'Fichier trop volumineux',
@@ -75,7 +75,7 @@ const DISCORD_ERRORS = {
     50001: {
         title: 'Accès refusé',
         cause: 'Je n\'ai pas accès à ce salon ou à cette ressource.',
-        action: 'Vérifie mes permissions sur le salon concerné, notamment « Voir le salon ».',
+        action: 'Vérifiez mes permissions sur le salon concerné, notamment « Voir le salon ».',
     },
     50007: {
         title: 'Message privé impossible',
@@ -85,22 +85,22 @@ const DISCORD_ERRORS = {
     50013: {
         title: 'Permission manquante',
         cause: 'Il me manque une permission pour faire ça.',
-        action: 'Vérifie mes permissions sur le serveur et sur le salon concerné. Mon rôle doit aussi être placé au-dessus des rôles que je dois gérer.',
+        action: 'Vérifiez mes permissions sur le serveur et sur le salon concerné. Mon rôle doit aussi être placé au-dessus des rôles que je dois gérer.',
     },
     50034: {
         title: 'Messages trop anciens',
         cause: 'Discord interdit la suppression groupée des messages de plus de 14 jours.',
-        action: 'Supprime-les manuellement, ou limite la purge aux messages récents.',
+        action: 'Supprimez-les manuellement, ou limitez la purge aux messages récents.',
     },
     50035: {
         title: 'Valeur refusée par Discord',
         cause: 'Une des valeurs envoyées n\'a pas été acceptée : souvent un salon d\'un type inattendu, ou un texte trop long.',
-        action: 'Vérifie les options choisies. Si le problème persiste, transmets le code ci-dessous.',
+        action: 'Vérifiez les options choisies. Si le problème persiste, transmettez le code ci-dessous.',
     },
     160002: {
         title: 'Fil déjà archivé',
         cause: 'Ce fil de discussion est archivé et ne peut plus être modifié.',
-        action: 'Désarchive-le, puis recommence.',
+        action: 'Désarchive-le, puis recommencez.',
     },
 };
 
@@ -109,17 +109,17 @@ const SQLITE_ERRORS = {
     SQLITE_CONSTRAINT_FOREIGNKEY: {
         title: 'Donnée liée manquante',
         cause: 'Une donnée nécessaire n\'existe pas encore en base — souvent le serveur lui-même, s\'il vient d\'être ajouté.',
-        action: 'Réessaie dans quelques secondes. Si ça persiste, redémarre le bot.',
+        action: 'Réessayez dans quelques secondes. Si ça persiste, redémarrez le bot.',
     },
     SQLITE_CONSTRAINT_UNIQUE: {
         title: 'Entrée déjà existante',
         cause: 'Cette entrée existe déjà et ne peut pas être créée en double.',
-        action: 'Modifie l\'existante plutôt que d\'en créer une nouvelle.',
+        action: 'Modifiez l\'existante plutôt que d\'en créer une nouvelle.',
     },
     SQLITE_BUSY: {
         title: 'Base de données occupée',
         cause: 'Une autre opération écrit en base au même moment.',
-        action: 'Réessaie dans quelques secondes.',
+        action: 'Réessayez dans quelques secondes.',
     },
     SQLITE_READONLY: {
         title: 'Base de données en lecture seule',
@@ -161,7 +161,7 @@ function explain(error) {
             return {
                 title: 'Service injoignable',
                 cause: 'La connexion à un service externe a échoué.',
-                action: 'Réessaie dans quelques minutes. Si ça persiste, le problème vient du réseau de l\'hébergeur.',
+                action: 'Réessayez dans quelques minutes. Si ça persiste, le problème vient du réseau de l\'hébergeur.',
             };
         }
     }
@@ -171,7 +171,7 @@ function explain(error) {
         return {
             title: 'Délai dépassé',
             cause: 'L\'opération a pris trop de temps et Discord a coupé la connexion.',
-            action: 'Réessaie. Si ça se reproduit, c\'est que le serveur est surchargé.',
+            action: 'Réessayez. Si ça se reproduit, c\'est que le serveur est surchargé.',
         };
     }
 

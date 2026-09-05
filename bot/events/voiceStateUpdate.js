@@ -303,10 +303,10 @@ async function createTempVoice(guild, member, triggerChannel, categoryId, db) {
 
         await channel.send({
             embeds: [{
-                title: `🎧 C'est ton salon, ${member.displayName} !`,
+                title: `🎧 C'est votre salon, ${member.displayName} !`,
                 description:
                     `Personnalise-le avec les boutons ci-dessous ou les commandes \`/voice\`.\n\n` +
-                    `Tes préférences (nom, limite) seront **mémorisées** pour cette catégorie. ✨`,
+                    `Vos préférences (nom, limite) seront **mémorisées** pour cette catégorie. ✨`,
                 color: 0xc86e8e,
                 footer: { text: 'Ce salon sera supprimé quand tout le monde sera parti.' }
             }],

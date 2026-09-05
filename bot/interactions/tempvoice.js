@@ -25,9 +25,9 @@ async function handleTempVoiceInteraction(interaction) {
         const active = checkOwner(interaction, channelId);
         if (!active) {
             return userError(interaction, {
-                title: 'Tu n\'es pas propriétaire de ce salon',
+                title: 'Vous n\'êtes pas propriétaire de ce salon',
                 cause: 'Seule la personne qui a créé ce salon vocal temporaire peut en modifier les réglages.',
-                action: 'Demande-lui de faire la modification, ou crée ton propre salon en rejoignant le salon d\'accueil.',
+                action: 'Demandez-lui de faire la modification, ou créez votre propre salon en rejoignant le salon d\'accueil.',
             });
         }
 
@@ -36,7 +36,7 @@ async function handleTempVoiceInteraction(interaction) {
             return userError(interaction, {
                 title: 'Ce salon n\'existe plus',
                 cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
-                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+                action: 'Rejoignez le salon d\'accueil pour en créer un nouveau.',
             });
         }
 
@@ -100,7 +100,7 @@ async function handleTempVoiceInteraction(interaction) {
                     .setMinValues(1)
                     .setMaxValues(1)
             );
-            return interaction.reply({ content: '✅ Qui veux-tu autoriser ?', components: [row], ephemeral: true });
+            return interaction.reply({ content: '✅ Qui voulez-vous autoriser ?', components: [row], ephemeral: true });
         }
 
         if (action === 'kick') {
@@ -109,8 +109,8 @@ async function handleTempVoiceInteraction(interaction) {
             if (members.size === 0) {
                 return userError(interaction, {
                     title: 'Personne d\'autre dans le salon',
-                    cause: 'Tu es seul ici : il n\'y a personne à qui transférer la propriété.',
-                    action: 'Attends que quelqu\'un rejoigne, puis réessaie.',
+                    cause: 'Vous êtes seul·e ici : il n\'y a personne à qui transférer la propriété.',
+                    action: 'Attendez que quelqu\'un rejoigne, puis réessaie.',
                 });
             }
 
@@ -121,14 +121,14 @@ async function handleTempVoiceInteraction(interaction) {
                     .setMinValues(1)
                     .setMaxValues(1)
             );
-            return interaction.reply({ content: '👋 Qui veux-tu expulser ?', components: [row], ephemeral: true });
+            return interaction.reply({ content: '👋 Qui voulez-vous expulser ?', components: [row], ephemeral: true });
         }
 
         if (action === 'reset') {
             const db = getDb();
             db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
                 .run(interaction.guild.id, interaction.user.id, active.category_id);
-            return interaction.reply({ content: '✅ Tes préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
+            return interaction.reply({ content: '✅ Vos préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
         }
     }
 
@@ -144,9 +144,9 @@ async function handleTempVoiceInteraction(interaction) {
         const active = checkOwner(interaction, channelId);
         if (!active) {
             return userError(interaction, {
-                title: 'Tu n\'es pas propriétaire de ce salon',
+                title: 'Vous n\'êtes pas propriétaire de ce salon',
                 cause: 'Seule la personne qui a créé ce salon vocal peut effectuer cette action.',
-                action: 'Demande-lui, ou crée ton propre salon depuis le salon d\'accueil.',
+                action: 'Demandez-lui, ou créez votre propre salon depuis le salon d\'accueil.',
             });
         }
 
@@ -155,7 +155,7 @@ async function handleTempVoiceInteraction(interaction) {
             return userError(interaction, {
                 title: 'Ce salon n\'existe plus',
                 cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
-                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+                action: 'Rejoignez le salon d\'accueil pour en créer un nouveau.',
             });
         }
 
@@ -170,13 +170,13 @@ async function handleTempVoiceInteraction(interaction) {
                 });
             }
             await channel.permissionOverwrites.edit(targetId, { Connect: true, ViewChannel: true });
-            return interaction.update({ content: `✅ ${target} peut maintenant rejoindre ton salon.`, components: [] });
+            return interaction.update({ content: `✅ ${target} peut maintenant rejoindre votre salon.`, components: [] });
         }
 
         if (action === 'kick') {
             if (!target || target.voice.channelId !== channelId) {
                 return interaction.update({
-                    content: '❌ **Cette personne n\'est pas dans ton salon** — elle l\'a quitté, ou n\'y est jamais entrée.',
+                    content: '❌ **Cette personne n\'est pas dans votre salon** — elle l\'a quitté, ou n\'y est jamais entrée.',
                     components: [],
                 });
             }
@@ -197,9 +197,9 @@ async function handleTempVoiceInteraction(interaction) {
         const active = checkOwner(interaction, channelId);
         if (!active) {
             return userError(interaction, {
-                title: 'Tu n\'es pas propriétaire de ce salon',
+                title: 'Vous n\'êtes pas propriétaire de ce salon',
                 cause: 'Seule la personne qui a créé ce salon vocal peut effectuer cette action.',
-                action: 'Demande-lui, ou crée ton propre salon depuis le salon d\'accueil.',
+                action: 'Demandez-lui, ou créez votre propre salon depuis le salon d\'accueil.',
             });
         }
 
@@ -208,7 +208,7 @@ async function handleTempVoiceInteraction(interaction) {
             return userError(interaction, {
                 title: 'Ce salon n\'existe plus',
                 cause: 'Le salon vocal a été supprimé, probablement parce qu\'il s\'est vidé.',
-                action: 'Rejoins le salon d\'accueil pour en créer un nouveau.',
+                action: 'Rejoignez le salon d\'accueil pour en créer un nouveau.',
             });
         }
 
@@ -237,7 +237,7 @@ async function handleTempVoiceInteraction(interaction) {
                 return userError(interaction, {
                     title: 'Nombre de places invalide',
                     cause: 'La limite doit être un nombre entre 0 et 99. Discord n\'accepte rien d\'autre.',
-                    action: 'Saisis un nombre entre 1 et 99, ou 0 pour ne mettre aucune limite.',
+                    action: 'Saisissez un nombre entre 1 et 99, ou 0 pour ne mettre aucune limite.',
                 });
             }
 

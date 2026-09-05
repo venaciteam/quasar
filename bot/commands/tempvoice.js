@@ -56,7 +56,7 @@ module.exports = {
             if (existing && existing.channel_id !== channel.id) {
                 const existingChannel = interaction.guild.channels.cache.get(existing.channel_id);
                 return interaction.reply({
-                    content: `❌ Il y a déjà un trigger dans cette catégorie : <#${existing.channel_id}>${existingChannel ? '' : ' (supprimé)'}. Retire-le d'abord avec \`/tempvoice remove\`.`,
+                    content: `❌ Il y a déjà un trigger dans cette catégorie : <#${existing.channel_id}>${existingChannel ? '' : ' (supprimé)'}. Retirez-le d'abord avec \`/tempvoice remove\`.`,
                     ephemeral: true
                 });
             }
@@ -86,7 +86,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce salon n\'est pas un salon d\'accueil',
                     cause: 'Ce salon vocal ne déclenche pas la création de salons temporaires.',
-                    action: 'Consulte les salons d\'accueil configurés avec `/tempvoice list`.',
+                    action: 'Consultez les salons d\'accueil configurés avec `/tempvoice list`.',
                 });
             }
 
@@ -105,7 +105,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Aucun salon d\'accueil configuré',
                     cause: 'Les salons vocaux temporaires ne sont pas encore activés sur ce serveur.',
-                    action: 'Configure un salon d\'accueil avec `/tempvoice setup`.',
+                    action: 'Configurez un salon d\'accueil avec `/tempvoice setup`.',
                 });
             }
             return interaction.reply({ embeds: [
@@ -123,7 +123,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Aucun salon d\'accueil configuré',
                     cause: 'Les salons vocaux temporaires ne sont pas encore activés sur ce serveur.',
-                    action: 'Configure un salon d\'accueil avec `/tempvoice setup`.',
+                    action: 'Configurez un salon d\'accueil avec `/tempvoice setup`.',
                 });
             }
             return interaction.reply({ embeds: [
@@ -139,7 +139,7 @@ module.exports = {
             const triggers = db.prepare('SELECT * FROM tempvoice_triggers WHERE guild_id = ?').all(guildId);
 
             if (triggers.length === 0) {
-                return interaction.reply({ content: '🎧 Aucun trigger configuré. Utilise `/tempvoice setup` pour commencer.', ephemeral: true });
+                return interaction.reply({ content: '🎧 Aucun trigger configuré. Utilisez `/tempvoice setup` pour commencer.', ephemeral: true });
             }
 
             const activeCount = db.prepare('SELECT COUNT(*) as count FROM tempvoice_active WHERE guild_id = ?').get(guildId).count;

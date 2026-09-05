@@ -202,7 +202,7 @@ function readCmdAccess() {
 
     const access_role_id = document.getElementById('cmd-access-role').value;
     if (!access_role_id) {
-        showToast('❌ Sélectionne le rôle autorisé.', 'error');
+        showToast('❌ Sélectionnez le rôle autorisé.', 'error');
         return null;
     }
     return { access_mode, access_role_id };
@@ -226,7 +226,7 @@ async function createCmd() {
         if (!body.response) return showToast('❌ Le texte de réponse est requis.', 'error');
     } else {
         body.embed_name = document.getElementById('cmd-embed-select').value;
-        if (!body.embed_name) return showToast('❌ Sélectionne un embed.', 'error');
+        if (!body.embed_name) return showToast('❌ Sélectionnez un embed.', 'error');
     }
 
     const access = readCmdAccess();
@@ -259,7 +259,7 @@ function editCmd(name, response, embedName, accessMode, accessRoleId) {
     // pour qu'on ne croie pas être en train de créer une seconde commande.
     document.getElementById('cmd-name').value = name;
     document.getElementById('cmd-form-title').textContent = `✏️ Modifier /${name}`;
-    setCmdNameHint(`Modifie ce champ pour renommer la commande. /${name} sera retirée du serveur Discord et remplacée par le nouveau nom.`);
+    setCmdNameHint(`Modifiez ce champ pour renommer la commande. /${name} sera retirée du serveur Discord et remplacée par le nouveau nom.`);
     setCmdNameError('');
 
     // Préremplir le contrôle d'accès avec la configuration réelle de la commande.
@@ -302,7 +302,7 @@ function editCmd(name, response, embedName, accessMode, accessRoleId) {
             if (!body.response) return showToast('❌ Le texte de réponse est requis.', 'error');
         } else {
             body.embed_name = document.getElementById('cmd-embed-select').value;
-            if (!body.embed_name) return showToast('❌ Sélectionne un embed.', 'error');
+            if (!body.embed_name) return showToast('❌ Sélectionnez un embed.', 'error');
         }
 
         const access = readCmdAccess();

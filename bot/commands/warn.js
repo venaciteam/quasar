@@ -22,15 +22,15 @@ module.exports = {
             return userError(interaction, {
                 title: 'Membre introuvable',
                 cause: 'Cette personne n\'est plus sur le serveur, ou son compte n\'existe plus.',
-                action: 'Vérifie qu\'elle est toujours membre. Pour sanctionner quelqu\'un qui est parti, utilise `/ban` avec son identifiant.',
+                action: 'Vérifiez qu\'elle est toujours membre. Pour sanctionner quelqu\'un qui est parti, utilisez `/ban` avec son identifiant.',
             });
         }
 
         if (target.id === interaction.user.id) {
             return userError(interaction, {
-                title: 'Tu ne peux pas t\'avertir toi-même',
+                title: 'Vous ne pouvez pas vous avertir vous-même',
                 cause: 'Un modérateur ne peut pas s\'appliquer une sanction à lui-même.',
-                action: 'Choisis un autre membre.',
+                action: 'Choisissez un autre membre.',
             });
         }
 

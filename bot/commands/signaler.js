@@ -41,7 +41,7 @@ module.exports = {
                     new TextInputBuilder()
                         .setCustomId('description')
                         .setLabel('Que s\'est-il passé ?')
-                        .setPlaceholder('Décris le problème et ce que tu faisais au moment où il est arrivé.')
+                        .setPlaceholder('Décrivez le problème et ce que vous faisiez au moment où il est arrivé.')
                         .setStyle(TextInputStyle.Paragraph)
                         .setMaxLength(1500)
                         .setRequired(true)
@@ -50,7 +50,7 @@ module.exports = {
                     new TextInputBuilder()
                         .setCustomId('contact')
                         .setLabel('Te recontacter (facultatif)')
-                        .setPlaceholder('Pseudo Discord, e-mail… laisse vide si tu préfères.')
+                        .setPlaceholder('Pseudo Discord, e-mail… laissez vide si vous préférez.')
                         .setStyle(TextInputStyle.Short)
                         .setMaxLength(200)
                         .setRequired(false)
@@ -87,7 +87,7 @@ module.exports = {
                         name: `2. ${operator ? operator : 'La personne ou l\'organisation qui héberge cette instance'}`,
                         value: contact
                             ? contact
-                            : 'Si le problème vient de l\'équipe du serveur elle-même, adresse-toi à ' +
+                            : 'Si le problème vient de l\'équipe du serveur elle-même, adressez-vous à ' +
                               'qui héberge ce bot. Aucun contact n\'a été renseigné sur cette instance.',
                     },
                     {
@@ -119,7 +119,7 @@ module.exports = {
                 new TextInputBuilder()
                     .setCustomId('contact')
                     .setLabel('Te recontacter (facultatif)')
-                    .setPlaceholder('Pseudo Discord, e-mail… laisse vide si tu préfères.')
+                    .setPlaceholder('Pseudo Discord, e-mail… laissez vide si vous préférez.')
                     .setStyle(TextInputStyle.Short)
                     .setMaxLength(200)
                     .setRequired(false)
@@ -175,7 +175,7 @@ async function handleReportModal(interaction) {
             embeds: [buildErrorEmbed({
                 title: 'Signalement non transmis',
                 cause: 'Le service qui reçoit les signalements n\'a pas répondu. Il est peut-être momentanément indisponible.',
-                action: 'Réessaie dans quelques minutes. Si le problème persiste, préviens directement l\'équipe du serveur.',
+                action: 'Réessayez dans quelques minutes. Si le problème persiste, prévenez directement l\'équipe du serveur.',
                 code: incidentCode,
             })],
         });
@@ -188,13 +188,13 @@ async function handleReportModal(interaction) {
                 .setColor(ACCENT_COLOR)
                 .setDescription(
                     isAbuse
-                        ? 'Ton signalement a été transmis à l\'équipe qui héberge cette instance de Quasar. ' +
+                        ? 'Votre signalement a été transmis à l\'équipe qui héberge cette instance de Quasar. ' +
                           'Elle en prendra connaissance et décidera des suites.'
-                        : 'Merci — ton signalement a été transmis à l\'équipe qui développe Quasar.'
+                        : 'Merci — votre signalement a été transmis à l\'équipe qui développe Quasar.'
                 )
                 .setFooter({
                     text: contact
-                        ? 'Le contact que tu as indiqué a été joint au signalement.'
+                        ? 'Le contact que vous avez indiqué a été joint au signalement.'
                         : 'Aucun moyen de te recontacter n\'a été transmis.',
                 })
                 .setTimestamp()

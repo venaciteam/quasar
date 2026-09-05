@@ -115,7 +115,7 @@ function validateCustomCommandRename(db, guildId, currentName, rawNewName) {
     if (!nom) {
         return { error: {
             cause: 'Le nouveau nom de la commande est vide.',
-            action: 'Saisis un nom entre 1 et 32 caractères, en minuscules et sans espace.',
+            action: 'Saisissez un nom entre 1 et 32 caractères, en minuscules et sans espace.',
         } };
     }
 
@@ -131,14 +131,14 @@ function validateCustomCommandRename(db, guildId, currentName, rawNewName) {
         // quelle : on ne la reformule pas, sinon les deux textes divergeraient.
         return { error: {
             cause: `Discord refuse ce nom de commande : ${validation.reason}.`,
-            action: 'Choisis un nom de 1 à 32 caractères, en minuscules, sans espace ni apostrophe (les tirets et underscores sont acceptés).',
+            action: 'Choisissez un nom de 1 à 32 caractères, en minuscules, sans espace ni apostrophe (les tirets et underscores sont acceptés).',
         } };
     }
 
     if (reservedCommandNames().has(nom)) {
         return { error: {
             cause: `/${nom} est déjà une commande de Quasar.`,
-            action: 'Choisis un autre nom : une commande personnalisée portant ce nom ne répondrait jamais, et elle disparaîtrait au prochain redémarrage du bot.',
+            action: 'Choisissez un autre nom : une commande personnalisée portant ce nom ne répondrait jamais, et elle disparaîtrait au prochain redémarrage du bot.',
         } };
     }
 
@@ -146,7 +146,7 @@ function validateCustomCommandRename(db, guildId, currentName, rawNewName) {
     if (collision) {
         return { error: {
             cause: `Une commande personnalisée /${nom} existe déjà sur ce serveur.`,
-            action: 'Choisis un autre nom, ou supprime d\'abord la commande existante.',
+            action: 'Choisissez un autre nom, ou supprimez d\'abord la commande existante.',
         } };
     }
 
@@ -204,7 +204,7 @@ function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = 
             throw erreurMetier(
                 'INTROUVABLE',
                 `Aucune commande personnalisée /${currentName} n'existe sur ce serveur.`,
-                'Vérifie la liste des commandes : elle a peut-être été supprimée ou renommée entre-temps.'
+                'Vérifiez la liste des commandes : elle a peut-être été supprimée ou renommée entre-temps.'
             );
         }
 
@@ -219,7 +219,7 @@ function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = 
                 throw erreurMetier(
                     'COLLISION',
                     `Une commande personnalisée /${newName} existe déjà sur ce serveur.`,
-                    'Choisis un autre nom, ou supprime d\'abord la commande existante.'
+                    'Choisissez un autre nom, ou supprimez d\'abord la commande existante.'
                 );
             }
             db.prepare('UPDATE custom_commands SET name = ? WHERE guild_id = ? AND name = ?')
@@ -289,8 +289,8 @@ module.exports = {
                     title: 'Commande sans contenu',
                     cause: 'Une commande personnalisée doit répondre quelque chose : un texte, ou un embed enregistré.',
                     action: sub === 'edit'
-                        ? 'Renseigne `reponse`, `embed`, ou `nouveau_nom` si tu veux seulement la renommer.'
-                        : 'Renseigne le champ `reponse`, ou indique un embed existant avec `embed`.',
+                        ? 'Renseignez `reponse`, `embed`, ou `nouveau_nom` si vous voulez seulement la renommer.'
+                        : 'Renseignez le champ `reponse`, ou indiquez un embed existant avec `embed`.',
                 });
             }
 
@@ -305,7 +305,7 @@ module.exports = {
                     return userError(interaction, {
                         title: 'Embed introuvable',
                         cause: `Aucun embed enregistré ne s'appelle **${embedNom}** sur ce serveur.`,
-                        action: 'Crée-le d\'abord avec `/embed create`, ou consulte les embeds existants avec `/embed list`.',
+                        action: 'Créez-le d\'abord avec `/embed create`, ou consultez les embeds existants avec `/embed list`.',
                     });
                 }
                 embedId = embedRow.id;
@@ -324,14 +324,14 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Mode d\'accès inconnu',
                     cause: `« ${accesMode} » n'est pas un mode d'accès valide.`,
-                    action: 'Choisis « Tout le monde », « Administrateurs uniquement » ou « Un rôle précis ».',
+                    action: 'Choisissez « Tout le monde », « Administrateurs uniquement » ou « Un rôle précis ».',
                 });
             }
             if (accesMode === 'role' && !roleOpt) {
                 return userError(interaction, {
                     title: 'Rôle manquant',
-                    cause: 'Tu as choisi de réserver la commande à un rôle, mais aucun rôle n\'a été indiqué.',
-                    action: 'Relance la commande en renseignant aussi l\'option `role`.',
+                    cause: 'Vous avez choisi de réserver la commande à un rôle, mais aucun rôle n\'a été indiqué.',
+                    action: 'Relancez la commande en renseignant aussi l\'option `role`.',
                 });
             }
             const accesRoleId = accesMode === 'role' ? roleOpt.id : null;
@@ -349,7 +349,7 @@ module.exports = {
                     return userError(interaction, {
                         title: 'Cette commande existe déjà',
                         cause: `Une commande personnalisée **/${nom}** est déjà enregistrée sur ce serveur.`,
-                        action: 'Modifie-la avec `/cmd edit`, ou choisis un autre nom.',
+                        action: 'Modifiez-la avec `/cmd edit`, ou choisissez un autre nom.',
                     });
                 }
 
@@ -455,7 +455,7 @@ module.exports = {
             if (result.changes === 0) return userError(interaction, {
                     title: 'Commande introuvable',
                     cause: `Aucune commande personnalisée **/${nom}** n'existe sur ce serveur.`,
-                    action: 'Consulte la liste avec `/cmd list`.',
+                    action: 'Consultez la liste avec `/cmd list`.',
                 });
 
             // Retirer la commande slash de la guild

@@ -21,7 +21,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Avertissement introuvable',
                 cause: 'Aucun avertissement ne porte cet identifiant sur ce serveur. Il a peut-être été supprimé, ou l\'identifiant appartient à un autre serveur.',
-                action: 'Retrouve le bon identifiant avec `/warns @membre` — il est affiché à côté de chaque avertissement.',
+                action: 'Retrouvez le bon identifiant avec `/warns @membre` — il est affiché à côté de chaque avertissement.',
             });
         }
 

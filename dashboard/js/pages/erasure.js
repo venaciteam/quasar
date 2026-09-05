@@ -40,7 +40,7 @@ async function loadErasure(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">⚖️ Droits des personnes</h1>
-            <p class="main-subtitle">Demandes de suppression (droit à l'effacement, RGPD art. 17) — tu décides, Venacity exécute.</p>
+            <p class="main-subtitle">Demandes de suppression (droit à l'effacement, RGPD art. 17) — vous décidez, Venacity exécute.</p>
         </div>
 
         <div class="card">
@@ -131,7 +131,7 @@ function renderErasureCard(r) {
         actions = `
             <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
                 <p style="color:var(--text-muted);font-size:.8rem;margin-bottom:.75rem;line-height:1.5">${escapeHtml(ERASURE_CATEGORY_RULES[r.category] || '')}</p>
-                <textarea class="input" id="erasure-motif-${r.id}" rows="2" placeholder="Motif du refus (obligatoire si tu refuses — art. 21)" style="width:100%;resize:vertical;margin-bottom:.75rem"></textarea>
+                <textarea class="input" id="erasure-motif-${r.id}" rows="2" placeholder="Motif du refus (obligatoire si vous refusez — art. 21)" style="width:100%;resize:vertical;margin-bottom:.75rem"></textarea>
                 <div style="display:flex;gap:.5rem;flex-wrap:wrap">
                     <button class="btn btn-danger" onclick="decideErasure(${r.id}, 'erase')">🗑️ Effacer</button>
                     <button class="btn btn-secondary" onclick="decideErasure(${r.id}, 'refuse')">✋ Refuser (motivé)</button>
@@ -177,7 +177,7 @@ async function createErasureRequest() {
     const details = document.getElementById('erasure-details').value.trim();
 
     if (!subjectId) {
-        showToast('Renseigne l\'identifiant Discord de la personne concernée.', 'error');
+        showToast('Renseignez l\'identifiant Discord de la personne concernée.', 'error');
         return;
     }
 
@@ -209,7 +209,7 @@ async function decideErasure(id, decision) {
     if (decision === 'refuse') {
         decisionReason = (document.getElementById(`erasure-motif-${id}`)?.value || '').trim();
         if (!decisionReason) {
-            showToast('Un refus doit être motivé (art. 21). Renseigne le motif.', 'error');
+            showToast('Un refus doit être motivé (art. 21). Renseignez le motif.', 'error');
             return;
         }
     } else if (decision === 'erase') {

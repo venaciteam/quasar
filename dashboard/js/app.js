@@ -131,7 +131,7 @@ async function getInviteUrl() {
 async function openInvite() {
     const url = await getInviteUrl();
     if (!url) {
-        showToast('Lien d\'invitation indisponible. Réessaie dans un instant.', 'error');
+        showToast('Lien d\'invitation indisponible. Réessayez dans un instant.', 'error');
         return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -285,9 +285,9 @@ function showNoGuilds() {
     document.getElementById('content').innerHTML = `
         <div class="onboarding">
             <div class="onboarding-icon">🚀</div>
-            <h1 class="onboarding-title">Ajoute Quasar à un de tes serveurs</h1>
+            <h1 class="onboarding-title">Ajoutez Quasar à un de vos serveurs</h1>
             <p class="onboarding-desc">
-                Quasar n'est encore sur aucun serveur Discord où tu es administrateur. Ajoute-le maintenant pour configurer la modération, les welcome, les tickets et le reste depuis ce dashboard.
+                Quasar n'est encore sur aucun serveur Discord où vous êtes administrateur·ice. Ajoutez-le maintenant pour configurer la modération, les welcome, les tickets et le reste depuis ce dashboard.
             </p>
             <button class="onboarding-cta" id="onboarding-add" type="button">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -319,7 +319,7 @@ function renderServerMenu() {
     if (!list) return;
 
     if (guilds.length === 0) {
-        list.innerHTML = `<div class="server-menu-empty">Quasar n'est sur aucun de tes serveurs admin pour l'instant.</div>`;
+        list.innerHTML = `<div class="server-menu-empty">Quasar n'est sur aucun de vos serveurs admin pour l'instant.</div>`;
         return;
     }
 

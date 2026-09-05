@@ -77,8 +77,8 @@ module.exports = {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
                 return userError(interaction, {
                     title: 'Permission insuffisante',
-                    cause: 'Configurer les tickets demande la permission **Gérer le serveur**, que tu n\'as pas sur ce serveur.',
-                    action: 'Demande à un administrateur de lancer cette commande, ou de t\'accorder cette permission.',
+                    cause: 'Configurer les tickets demande la permission **Gérer le serveur**, que vous n\'avez pas sur ce serveur.',
+                    action: 'Demandez à un administrateur de lancer cette commande, ou de vous accorder cette permission.',
                 });
             }
 
@@ -101,7 +101,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Je ne peux pas écrire dans ce salon',
                     cause: `Il me manque ${missing.length > 1 ? 'ces permissions' : 'cette permission'} sur ${channel} : **${missing.join('**, **')}**.`,
-                    action: `Ouvre les paramètres de ${channel} → Permissions, accorde-les à mon rôle, puis relance la commande. Tu peux aussi choisir un autre salon.`,
+                    action: `Ouvrez les paramètres de ${channel} → Permissions, accordez-les à mon rôle, puis relancez la commande. Vous pouvez aussi choisir un autre salon.`,
                 });
             }
 
@@ -131,7 +131,7 @@ module.exports = {
 
             const setupEmbed = new EmbedBuilder()
                 .setTitle(panelConfig?.panel_title || '🎫 Support — Ouvrir un ticket')
-                .setDescription(panelConfig?.panel_description || 'Clique sur le bouton ci-dessous pour ouvrir un ticket.\nUn membre du staff te répondra dès que possible.')
+                .setDescription(panelConfig?.panel_description || 'Cliquez sur le bouton ci-dessous pour ouvrir un ticket.\nUn membre du staff vous répondra dès que possible.')
                 .setColor(ACCENT_COLOR)
                 .setTimestamp();
 
@@ -176,7 +176,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce salon n\'est pas un ticket',
                     cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
-                    action: 'Va dans le salon du ticket concerné, puis relance la commande.',
+                    action: 'Va dans le salon du ticket concerné, puis relancez la commande.',
                 });
             }
 
@@ -204,7 +204,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce salon n\'est pas un ticket',
                     cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
-                    action: 'Va dans le salon du ticket concerné, puis relance la commande.',
+                    action: 'Va dans le salon du ticket concerné, puis relancez la commande.',
                 });
             }
 
@@ -225,7 +225,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Permission insuffisante',
                     cause: 'Consulter la configuration des tickets demande la permission **Gérer le serveur**.',
-                    action: 'Demande à un administrateur du serveur.',
+                    action: 'Demandez à un administrateur du serveur.',
                 });
             }
 
@@ -235,7 +235,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Les tickets ne sont pas encore configurés',
                     cause: 'Aucun salon d\'ouverture ni rôle staff n\'a été défini sur ce serveur.',
-                    action: 'Lance `/ticket setup` en indiquant le salon où afficher le bouton et le rôle qui gérera les tickets.',
+                    action: 'Lancez `/ticket setup` en indiquant le salon où afficher le bouton et le rôle qui gérera les tickets.',
                 });
             }
 
@@ -275,7 +275,7 @@ async function closeTicket(interaction, reason) {
         return userError(interaction, {
             title: 'Ce salon n\'est pas un ticket ouvert',
             cause: 'Soit ce salon n\'est pas un ticket, soit il a déjà été fermé.',
-            action: 'Utilise cette commande dans le salon d\'un ticket encore ouvert.',
+            action: 'Utilisez cette commande dans le salon d\'un ticket encore ouvert.',
         });
     }
 
@@ -329,7 +329,7 @@ async function closeTicket(interaction, reason) {
                         'remis avant que le salon soit supprimé. Ici, aucune des deux voies n\'a fonctionné.\n\n' +
                         '**Pour débloquer, au choix :**\n' +
                         '• configurer un salon de logs auquel Quasar peut écrire (`/log`) ;\n' +
-                        '• ou ouvrir tes messages privés pour ce serveur, puis relancer la fermeture.\n\n' +
+                        '• ou ouvrir vos messages privés pour ce serveur, puis relancer la fermeture.\n\n' +
                         '_Le ticket reste ouvert, aucun message n\'a été perdu._'
                     )
                     .setColor(0xED4245)

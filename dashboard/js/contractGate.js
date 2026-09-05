@@ -408,12 +408,12 @@
                     acceptBtn.textContent = original;
                     acceptBtn.disabled = false;
                     refuseBtn.disabled = false;
-                    showError('L\'enregistrement a échoué. Réessaie dans un instant.');
+                    showError('L\'enregistrement a échoué. Réessayez dans un instant.');
                 } catch {
                     acceptBtn.textContent = original;
                     acceptBtn.disabled = false;
                     refuseBtn.disabled = false;
-                    showError('Connexion impossible. Vérifie ta connexion et réessaie.');
+                    showError('Connexion impossible. Vérifiez votre connexion et réessayez.');
                 }
             }
 

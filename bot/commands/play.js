@@ -19,7 +19,7 @@ module.exports = {
         if (!await checkMusicChannel(interaction)) return;
 
         if (!voiceChannel) {
-            return interaction.reply({ content: '❌ Tu dois être dans un salon vocal.', ephemeral: true });
+            return interaction.reply({ content: '❌ Vous devez être dans un salon vocal.', ephemeral: true });
         }
 
         await interaction.deferReply();

@@ -94,11 +94,11 @@ async function loadOwner(container) {
     const vigilanceBlock = warn
         ? `<div style="margin-top:1rem;padding:.75rem 1rem;background:var(--bg-card);border:1px solid var(--danger);border-radius:var(--radius-sm);color:var(--text-primary);font-size:.85rem">
                ⚠️ <strong>Seuil de vigilance atteint (${threshold}+).</strong>
-               Au-delà de quelques dizaines de serveurs, réévalue l'échelle du traitement et tes obligations.
+               Au-delà de quelques dizaines de serveurs, réévaluez l'échelle du traitement et vos obligations.
            </div>`
         : `<p style="margin-top:.9rem;color:var(--text-muted);font-size:.82rem">
                Seuil de vigilance : ${threshold} serveurs. Au-delà de quelques dizaines de serveurs,
-               réévalue l'échelle du traitement et tes obligations.
+               réévaluez l'échelle du traitement et vos obligations.
            </p>`;
 
     const counterCard = `
@@ -193,7 +193,7 @@ async function suspendServer(container, guildId, name) {
     const reason = prompt(
         `Suspendre « ${name} » ?\n\n` +
         `Cela coupe Quasar sur CE serveur (réversible, sans perte de données, le bot reste).\n\n` +
-        `Indique le motif de la suspension :`
+        `Indiquez le motif de la suspension :`
     );
     if (reason === null) return;          // Annulé
     if (!reason.trim()) {

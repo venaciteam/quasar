@@ -70,8 +70,8 @@ function checkCustomCommandAccess(interaction, row) {
     if (!interaction.guild || !interaction.member) {
         return {
             title: 'Commande réservée au serveur',
-            cause: 'L\'accès à cette commande dépend de tes rôles ou de tes permissions, et je n\'arrive pas à les consulter ici.',
-            action: 'Relance-la depuis un salon du serveur concerné. Si tu y es déjà, réessaie dans un instant.',
+            cause: 'L\'accès à cette commande dépend de vos rôles ou de vos permissions, et je n\'arrive pas à les consulter ici.',
+            action: 'Relancez-la depuis un salon du serveur concerné. Si vous y êtes déjà, réessayez dans un instant.',
         };
     }
 
@@ -91,7 +91,7 @@ function checkCustomCommandAccess(interaction, row) {
         return {
             title: 'Commande réservée aux administrateurs',
             cause: 'Cette commande personnalisée est configurée pour les membres ayant la permission « Administrateur » sur ce serveur.',
-            action: 'Demande à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
+            action: 'Demandez à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
         };
     }
 
@@ -117,7 +117,7 @@ function checkCustomCommandAccess(interaction, row) {
     return {
         title: 'Commande réservée à un rôle',
         cause: `Cette commande personnalisée est réservée aux membres ayant le rôle <@&${roleId}>, ainsi qu'aux administrateurs du serveur.`,
-        action: 'Si tu penses que ce rôle devrait t\'être attribué, demande-le à un administrateur.',
+        action: 'Si vous pensez que ce rôle devrait vous être attribué, demandez-le à un administrateur.',
     };
 }
 

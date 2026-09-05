@@ -32,7 +32,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Cette personne n\'est pas bannie',
                     cause: 'Aucun bannissement en cours ne correspond à cet identifiant sur ce serveur.',
-                    action: 'Vérifie l\'identifiant dans Paramètres du serveur → Bannissements. Il s\'agit de l\'identifiant Discord, pas du pseudo.',
+                    action: 'Vérifiez l\'identifiant dans Paramètres du serveur → Bannissements. Il s\'agit de l\'identifiant Discord, pas du pseudo.',
                 });
             }
             return reportIncident(interaction, e, { command: '/unban' });

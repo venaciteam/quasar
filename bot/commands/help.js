@@ -14,7 +14,7 @@ const PUBLIC_COMMANDS = [
 ];
 
 const VOICE_COMMANDS = [
-    ['/voice', 'Gérer ton salon vocal temporaire'],
+    ['/voice', 'Gérer votre salon vocal temporaire'],
 ];
 
 const MODERATION_COMMANDS = [
