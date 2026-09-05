@@ -28,33 +28,15 @@ module.exports = {
         if (verdict.removed) return;
 
         const db = getDb();
-        const config = db.prepare('SELECT * FROM welcome_config WHERE guild_id = ?').get(member.guild.id);
 
-        // NOTE — comportement historique conservé tel quel : ce `return` court-
-        // circuite AUSSI le log `member_join` et les autorôles ci-dessous, qui ne
-        // s'appliquent donc que si un message de bienvenue est configuré. C'est
-        // discutable, mais c'est le comportement actuel de Quasar : le corriger
-        // ferait apparaître des autorôles et des logs sur des serveurs qui n'en
-        // ont jamais vu. Ce n'est pas au lot anti-raid de trancher ça.
-        if (!config || !config.welcome_enabled || !config.welcome_channel) return;
-
-        const channel = member.guild.channels.cache.get(config.welcome_channel);
-        if (!channel) return;
-
-        const embed = buildEmbed(config.welcome_embed, member);
-        const content = config.welcome_message ? resolveVariables(config.welcome_message, member) : null;
-
-        try {
-            if (embed) {
-                await channel.send({ content: content || undefined, embeds: [embed] });
-            } else if (content) {
-                await channel.send({ content });
-            }
-        } catch (e) {
-            console.error('[Quasar] Erreur message welcome:', e.message);
-        }
-
-        // Log membre rejoint
+        // ─── Log « membre rejoint » ───
+        //
+        // Inconditionnel, comme le log de départ dans `guildMemberRemove`. Son seul
+        // gardien légitime est la case « 📥 Membre rejoint » du dashboard, que
+        // `sendLog` consulte déjà via `isLogEnabled` — laquelle laisse ce type
+        // désactivé par défaut. Il dépendait auparavant de `welcome_config` : un
+        // serveur qui cochait la case sans configurer de message d'accueil ne
+        // recevait jamais ce log, sans aucun moyen de comprendre pourquoi.
         const logEmbed = new EmbedBuilder()
             .setTitle('📥 Membre rejoint')
             .setColor(0x2ecc71)
@@ -67,7 +49,39 @@ module.exports = {
             .setTimestamp();
         await sendLog(member.guild, 'member_join', logEmbed);
 
-        // Autoroles
+        // ─── Message de bienvenue ───
+        //
+        // Seul comportement réellement piloté par `welcome_config`. Ce bloc `if`
+        // remplace deux `return` qui court-circuitaient aussi le log et les
+        // autorôles ci-dessous — y compris celui sur `!channel`, qui faisait
+        // silencieusement disparaître les autorôles d'un serveur pourtant bien
+        // configuré dès la suppression de son salon d'accueil.
+        const config = db.prepare('SELECT * FROM welcome_config WHERE guild_id = ?').get(member.guild.id);
+        if (config && config.welcome_enabled && config.welcome_channel) {
+            const channel = member.guild.channels.cache.get(config.welcome_channel);
+            if (channel) {
+                const embed = buildEmbed(config.welcome_embed, member);
+                const content = config.welcome_message ? resolveVariables(config.welcome_message, member) : null;
+
+                try {
+                    if (embed) {
+                        await channel.send({ content: content || undefined, embeds: [embed] });
+                    } else if (content) {
+                        await channel.send({ content });
+                    }
+                } catch (e) {
+                    console.error('[Quasar] Erreur message welcome:', e.message);
+                }
+            }
+        }
+
+        // ─── Autoroles ───
+        //
+        // Configurés sur la page « Reaction Roles » du dashboard, qui n'a aucun
+        // lien d'interface avec le message de bienvenue — et `/autorole add`
+        // promet une attribution « à chaque nouveau membre », sans réserve. Les
+        // faire dépendre de `welcome_config` revenait à ignorer un réglage que
+        // l'interface affiche pourtant comme actif.
         const autoroles = db.prepare('SELECT role_id FROM autoroles WHERE guild_id = ?').all(member.guild.id);
         for (const ar of autoroles) {
             try {
