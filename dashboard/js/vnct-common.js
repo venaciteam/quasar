@@ -926,7 +926,27 @@
   };
 
   /* ==========================================================================
-     9. VERSION BADGE
+     9. VERSION BADGE — version courante + mentions de licence AGPL-3.0
+
+     Quasar est sous AGPL-3.0. Son article 13 impose d'offrir de façon VISIBLE
+     le code source correspondant à quiconque utilise le logiciel à distance par
+     un réseau. Sur une instance dont le code a été modifié, ce lien doit mener
+     à la source de CETTE instance, pas au dépôt d'origine : d'où la valeur
+     servie par /api/instance, et jamais une URL écrite en dur.
+
+     Pourquoi ici. Le badge est le seul élément présent sur toutes les pages du
+     dashboard et à tous les formats. La barre latérale ne l'est pas : sous
+     768 px elle est hors écran (translateX(-100%)) et aucun bouton ne l'ouvre.
+
+     Pourquoi sans interaction. Ces mentions vivaient dans un panneau « Késako »
+     ouvert au clic sur un bouton flottant. Le bouton a été retiré, et
+     l'information est devenue injoignable sans que personne ne le voie. Un lien
+     visible en permanence ne peut pas subir ça : rien à déplier ici.
+
+     Les deux fentes sont créées vides et remplies par dashboard/js/instance.js
+     au retour de /api/instance. Restées vides (serveur muet, réseau coupé, JS
+     de l'instance absent), le CSS les masque via `:empty` : le badge garde sa
+     version et n'affiche jamais un lien vide ou mort.
      ========================================================================== */
 
   VNCT.VersionBadge = {
@@ -934,10 +954,31 @@
       // Ne pas recréer si déjà présent
       if (document.querySelector('.vnct-version-badge')) return;
 
-      const badge = document.createElement('span');
+      const badge = document.createElement('div');
       badge.className = 'vnct-version-badge';
-      badge.textContent = `v${VNCT.config.serviceVersion}`;
+
+      badge.appendChild(VNCT.VersionBadge._item(`v${VNCT.config.serviceVersion}`));
+      // Le code source d'abord : c'est lui que l'AGPL exige, l'hébergeur suit.
+      badge.appendChild(VNCT.VersionBadge._slot('data-instance-source'));
+      badge.appendChild(VNCT.VersionBadge._slot('data-instance-operator'));
+
       document.body.appendChild(badge);
+    },
+
+    /** Segment de texte simple du badge. */
+    _item(text) {
+      const el = document.createElement('span');
+      el.className = 'vnct-version-badge__item';
+      el.textContent = text;
+      return el;
+    },
+
+    /** Segment vide, identifié par son attribut, à remplir par instance.js. */
+    _slot(attr) {
+      const el = document.createElement('span');
+      el.className = 'vnct-version-badge__item';
+      el.setAttribute(attr, '');
+      return el;
     },
   };
 

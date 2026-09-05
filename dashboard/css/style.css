@@ -1809,3 +1809,32 @@
 .main {
     padding-bottom: calc(44px + var(--space-6) + var(--space-4) + env(safe-area-inset-bottom));
 }
+
+/* ═══════════════════════════════════════════════════════════════════ */
+/*   BADGE DE VERSION — DÉCALAGE SOUS LE SHELL DU DASHBOARD            */
+/*                                                                     */
+/*   Le badge porte les mentions de licence AGPL (lien vers le code     */
+/*   source de l'instance, hébergeur). Il est fixe en bas à gauche,     */
+/*   en z-index 1 — donc SOUS la barre latérale, qui est fixe, large    */
+/*   de 260px, à gauche, et en z-index 100. Sur app.html en desktop,    */
+/*   il était purement et simplement recouvert : invisible.             */
+/*                                                                     */
+/*   On le décale de la largeur de la barre. `--vnct-badge-left` est lu */
+/*   par vnct-fab-only.css pour `left` ET pour la largeur maximale, qui */
+/*   réserve sa colonne au drapeau de signalement : une seule valeur à  */
+/*   changer si la barre change de largeur.                            */
+/*                                                                     */
+/*   Sélecteur en frère général : le badge est ajouté au <body> par     */
+/*   VNCT.VersionBadge, après .dashboard et après le drapeau. La page   */
+/*   de connexion n'a pas de .dashboard, elle garde le retrait normal.  */
+/* ═══════════════════════════════════════════════════════════════════ */
+.dashboard ~ .vnct-version-badge {
+    --vnct-badge-left: calc(260px + var(--space-3));
+}
+
+@media (max-width: 768px) {
+    /* Barre latérale hors écran (translateX(-100%)) : plus rien à contourner. */
+    .dashboard ~ .vnct-version-badge {
+        --vnct-badge-left: var(--space-3);
+    }
+}

@@ -6,8 +6,16 @@
    partout ailleurs que sur l'instance concernée. On interroge donc le serveur,
    qui répond d'après ses variables d'environnement.
 
-   Le bloc « Késako » vit dans un <template> lu au clic (vnct-common.js).
-   On peut donc le réécrire tranquillement au chargement de la page.
+   Ces deux mentions vivaient dans un panneau « Késako » ouvert au clic. Le
+   bouton qui l'ouvrait a été retiré, et elles sont devenues injoignables — alors
+   que l'AGPL-3.0 (article 13) impose de proposer VISIBLEMENT le code source de
+   la version réellement exécutée. Elles sont donc désormais écrites dans le
+   badge de version (VNCT.VersionBadge, js/vnct-common.js), le seul élément
+   présent sur toutes les pages du dashboard et à tous les formats, sans aucune
+   interaction pour les lire.
+
+   Chaque fente laissée vide est masquée par le CSS (`:empty`) : une réponse
+   incomplète de /api/instance ne produit jamais un lien vide ni un badge cassé.
    ========================================================================== */
 
 (function () {
@@ -16,71 +24,57 @@
     var OPERATOR_SLOT = '[data-instance-operator]';
     var SOURCE_SLOT = '[data-instance-source]';
 
-    function eachTemplateRoot(callback) {
-        // Le contenu vit dans un <template> : on passe par .content, sinon les
-        // nœuds ne sont pas accessibles. Fallback sur l'élément lui-même au cas où
-        // le bloc serait un jour sorti du template.
-        var tpl = document.querySelector('[data-kesako-content]');
-        if (!tpl) return;
-        callback(tpl.content || tpl);
+    // Pas de couleur en ligne ici : la classe porte le style, et le lien est
+    // souligné — il ne se distingue donc pas du texte par la seule couleur.
+    function makeLink(url, label) {
+        var a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.className = 'vnct-version-badge__link';
+        a.textContent = label;
+        return a;
     }
 
-    function renderOperator(root, data) {
-        var slot = root.querySelector(OPERATOR_SLOT);
+    function renderSource(data) {
+        var slot = document.querySelector(SOURCE_SLOT);
+        if (!slot) return;
+
+        slot.textContent = '';
+        // Sans URL de source, on n'écrit rien plutôt qu'un lien mort. Le serveur
+        // en fournit toujours une (le dépôt d'origine à défaut de mieux) : une
+        // fente vide signale donc une API muette, pas une instance sans source.
+        if (!data.sourceUrl) return;
+
+        slot.appendChild(makeLink(data.sourceUrl, 'Code source de cette instance'));
+        slot.appendChild(document.createTextNode(' (AGPL-3.0)'));
+    }
+
+    function renderOperator(data) {
+        var slot = document.querySelector(OPERATOR_SLOT);
         if (!slot) return;
 
         slot.textContent = '';
 
-        if (!data.operatorName) {
-            // Défaut : on ne nomme personne, mais on dit clairement que l'hébergeur
-            // est celui qui a installé le service — pas l'auteur du logiciel.
-            slot.appendChild(document.createTextNode(
-                'Cette instance est hébergée par la personne ou l\'organisation qui l\'a installée.'
-            ));
+        if (data.operatorName) {
+            slot.appendChild(document.createTextNode('Hébergée par ' + data.operatorName));
+            if (data.legalUrl) {
+                slot.appendChild(document.createTextNode(' — '));
+                slot.appendChild(makeLink(data.legalUrl, 'mentions légales'));
+            }
             return;
         }
 
-        slot.appendChild(document.createTextNode(
-            'Cette instance de Quasar est hébergée par ' + data.operatorName
-        ));
-
+        // Pas de nom d'hébergeur déclaré, mais des mentions légales publiées :
+        // le lien seul vaut mieux que rien, il mène à l'identité recherchée.
         if (data.legalUrl) {
-            slot.appendChild(document.createTextNode(' — '));
-            var link = document.createElement('a');
-            link.href = data.legalUrl;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.style.color = 'var(--accent)';
-            link.textContent = 'mentions légales';
-            slot.appendChild(link);
-            slot.appendChild(document.createTextNode('.'));
-        } else {
-            slot.appendChild(document.createTextNode('.'));
+            slot.appendChild(makeLink(data.legalUrl, 'Mentions légales'));
         }
     }
 
-    function renderSource(root, data) {
-        var slot = root.querySelector(SOURCE_SLOT);
-        if (!slot || !data.sourceUrl) return;
-
-        slot.textContent = '';
-        slot.appendChild(document.createTextNode('Quasar est un logiciel libre sous licence AGPL-3.0 — '));
-
-        var link = document.createElement('a');
-        link.href = data.sourceUrl;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.style.color = 'var(--accent)';
-        link.textContent = 'code source de cette instance';
-        slot.appendChild(link);
-        slot.appendChild(document.createTextNode('.'));
-    }
-
     function apply(data) {
-        eachTemplateRoot(function (root) {
-            renderOperator(root, data);
-            renderSource(root, data);
-        });
+        renderSource(data);
+        renderOperator(data);
     }
 
     function init() {
@@ -88,8 +82,8 @@
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (data) { if (data) apply(data); })
             .catch(function () {
-                // Serveur injoignable : le texte par défaut du HTML reste affiché,
-                // il est déjà correct (il ne nomme personne).
+                // Serveur injoignable : les fentes restent vides et masquées,
+                // le badge continue d'afficher la version. Rien de cassé.
             });
     }
 

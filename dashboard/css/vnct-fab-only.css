@@ -73,11 +73,12 @@
 [data-theme="light"] .modal .btn-primary {
   background: hsl(185, 80%, 45%); border-color: hsl(185, 80%, 45%); color: #fff;
 }
-[data-theme="light"] .vnct-version-badge { color: #9090a5; }
-
 /* Quasar utilise ses propres variables de couleur */
 .vnct-modal-overlay { --bg-secondary: #12121a; --border-default: rgba(255, 255, 255, 0.08); --text-primary: #f0f0f5; --text-secondary: #a0a0b5; --text-muted: #606075; --bg-tertiary: #1a1a28; --surface-hover: rgba(255, 255, 255, 0.05); }
-.vnct-version-badge { --text-muted: #606075; }
+/* Le badge de version figeait ici ses couleurs en dur (--text-muted: #606075 en
+   sombre, color: #9090a5 en clair), ce qui doublait les tokens du design system
+   déjà chargé sur les deux pages. Retiré : il suit maintenant --text-secondary
+   et --text-muted, qui se déclinent seuls en sombre et en clair. */
 
 /* Modal */
 .vnct-modal-overlay {
@@ -227,12 +228,79 @@
   .vnct-feedback-choice { transition: none; }
 }
 
-/* Version badge */
+/* ============================================================================
+   Badge de version — et porteur des mentions de licence AGPL-3.0
+
+   Le pourquoi du placement est dans VNCT.VersionBadge (js/vnct-common.js). Ici,
+   quatre points de vigilance :
+
+   • CONTRASTE. Le badge était en --text-muted à `opacity: .6`, soit 1,87:1 en
+     sombre et 1,80:1 en clair — illisible, et intenable pour du texte porteur
+     d'un lien. Il passe à --text-secondary sans opacité : 7,70:1 en sombre,
+     7,19:1 en clair.
+
+   • LE LIEN NE SE DISTINGUE PAS PAR LA SEULE COULEUR : il est souligné, et
+     prend la couleur du texte qui l'entoure. --accent est écarté volontairement
+     — en thème clair il vaut hsl(185, 80%, 45%), soit 2,06:1 sur le fond : il
+     aurait recréé exactement le défaut qu'on corrige.
+
+   • IL NE DOIT PAS ATTEINDRE LE DRAPEAU DE SIGNALEMENT, fixe en bas à droite.
+     D'où la largeur maximale, qui lui laisse sa colonne : 44 px de bouton, plus
+     son décalage (--space-6) et une respiration (--space-4).
+
+   • IL RESTE SOUS LES MODALES. z-index 1, contre 900 pour le drapeau, 1000 pour
+     .vnct-modal-overlay et 9500 pour .modal-overlay de style.css.
+
+   `--vnct-badge-left` permet à une page de le décaler sans redéclarer la règle :
+   le shell du dashboard s'en sert pour le sortir de sous sa barre latérale
+   (voir style.css). La largeur maximale s'en déduit toute seule.
+   ============================================================================ */
 .vnct-version-badge {
-  position: fixed; bottom: var(--space-2); left: var(--space-3);
-  font-size: var(--text-xs); color: var(--text-muted);
-  font-family: var(--font-family); z-index: 1; opacity: 0.6;
-  user-select: none;
+  position: fixed;
+  bottom: var(--space-2);
+  left: var(--vnct-badge-left, var(--space-3));
+  max-width: min(46rem, calc(100vw - var(--vnct-badge-left, var(--space-3)) - 44px - var(--space-6) - var(--space-4)));
+  font-family: var(--font-family);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  z-index: 1;
+  opacity: 1;
+  /* Le texte porte une URL qu'on peut vouloir copier : la sélection reste
+     possible, contrairement au badge purement décoratif d'origine. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Fente que /api/instance n'a pas remplie : rien à afficher, et surtout pas un
+   séparateur orphelin. */
+.vnct-version-badge__item:empty { display: none; }
+
+.vnct-version-badge__item + .vnct-version-badge__item::before {
+  content: " · ";
+  color: var(--text-muted);
+}
+
+.vnct-version-badge__link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.vnct-version-badge__link:hover,
+.vnct-version-badge__link:focus-visible {
+  color: var(--text-primary);
+}
+.vnct-version-badge__link:focus-visible {
+  /* currentColor plutôt que --accent : le contour hérite du contraste du texte
+     au lieu de retomber sur les 2,06:1 de l'accent clair. */
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  /* Barre d'accueil iOS. La règle équivalente du design system est écrasée par
+     le `bottom` ci-dessus, chargé après elle : elle doit être reprise ici. */
+  .vnct-version-badge { bottom: calc(var(--space-2) + env(safe-area-inset-bottom)); }
 }
 
 /* Bouton VNCT */
