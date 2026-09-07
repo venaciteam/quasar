@@ -317,9 +317,17 @@
 
             // ── Écran d'acceptation ──────────────────────────────────────────
             function renderAcceptance() {
-                // Le texte publie fait foi : on pointe dessus en priorite. La copie
-                // embarquee sert de repli si aucune URL publique n'est configuree.
-                const localUrl = state.url || state.localUrl || LOCAL_URL_FALLBACK;
+                // La copie embarquée passe en premier, volontairement et à titre
+                // temporaire. En théorie le texte publié fait foi, mais Strata sert
+                // aujourd'hui un soft-404 sur /contrat-quasar : HTTP 200, page « Cette
+                // documentation n'existe pas ou a été retirée ». Un 200 est
+                // indétectable côté navigateur, la personne cliquait donc sur
+                // « Lire le texte intégral » et tombait dans le vide, juste avant
+                // d'accepter un contrat de sous-traitance. Un contrat art. 28 accepté
+                // sans texte accessible est attaquable dans sa formation.
+                // À REMETTRE DANS L'AUTRE SENS dès que les documents sont publiés sur
+                // Strata : c'est le texte public qui doit primer.
+                const fullTextUrl = state.localUrl || state.url || LOCAL_URL_FALLBACK;
                 const summaryItems = state.summary.length
                     ? state.summary.map(p => `<li>${escapeHtml(p)}</li>`).join('')
                     : `<li>Venacity héberge Quasar pour votre compte : en tant qu'administratrice ou administrateur, vous restez responsable de traitement (art. 28 du RGPD). Prenez connaissance du texte intégral via le lien ci-dessous avant d'accepter.</li>`;
@@ -346,7 +354,7 @@
                             </p>
                             ${degradedNotice}
                             <ul class="cgate-summary">${summaryItems}</ul>
-                            <a class="cgate-fulltext" href="${escapeHtml(localUrl)}" target="_blank" rel="noopener noreferrer">
+                            <a class="cgate-fulltext" href="${escapeHtml(fullTextUrl)}" target="_blank" rel="noopener noreferrer">
                                 ${ICON_DOC} Lire le texte intégral du contrat
                             </a>
                             <label class="cgate-consent" for="cgate-consent-check">
