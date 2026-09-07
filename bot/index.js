@@ -373,7 +373,7 @@ function createBot() {
         }
     });
 
-    client.once('ready', async () => {
+    client.once('clientReady', async () => {
         console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
         console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
 
