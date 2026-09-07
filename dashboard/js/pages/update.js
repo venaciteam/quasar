@@ -30,12 +30,12 @@ async function loadUpdate(container) {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.75rem">
                 <div>
                     <div style="color:var(--text-muted);font-size:.75rem;margin-bottom:.25rem">Version actuelle</div>
-                    <div style="font-size:1.1rem;font-weight:600">v${data.local}</div>
+                    <div style="font-size:1.1rem;font-weight:600">v${escapeHtml(data.local)}</div>
                 </div>
                 <div>
                     <div style="color:var(--text-muted);font-size:.75rem;margin-bottom:.25rem">Dernière version</div>
                     <div style="font-size:1.1rem;font-weight:600;color:${hasUpdate ? 'var(--accent)' : 'var(--success)'}">
-                        ${data.remote ? 'v' + data.remote : 'Aucune release'}
+                        ${data.remote ? 'v' + escapeHtml(data.remote) : 'Aucune release'}
                     </div>
                 </div>
                 <div>

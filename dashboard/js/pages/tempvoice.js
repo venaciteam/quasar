@@ -29,7 +29,7 @@ async function loadTempVoice(container, guildId) {
                         <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem">
                             <div style="display:flex;align-items:center;gap:.75rem">
                                 <label class="toggle">
-                                    <input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleTrigger('${guildId}', '${t.channel_id}', this.checked)">
+                                    <input type="checkbox" ${t.enabled ? 'checked' : ''} onchange="toggleTrigger('${escapeHtml(guildId)}', '${escapeHtml(t.channel_id)}', this.checked)">
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <div>
@@ -37,7 +37,7 @@ async function loadTempVoice(container, guildId) {
                                     <span style="color:var(--text-muted);font-size:.8rem;margin-left:.5rem">→ ${escapeHtml(t.category_name)}</span>
                                 </div>
                             </div>
-                            <button class="btn btn-danger btn-sm" onclick="removeTrigger('${guildId}', '${t.channel_id}')">✕</button>
+                            <button class="btn btn-danger btn-sm" onclick="removeTrigger('${escapeHtml(guildId)}', '${escapeHtml(t.channel_id)}')">✕</button>
                         </div>
                     `).join('')}
             </div>
@@ -48,7 +48,7 @@ async function loadTempVoice(container, guildId) {
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Ajouter un trigger</label>
                     <select class="select" id="tv-add-channel">
                         <option value="">— Choisir un salon vocal —</option>
-                        ${voiceChannels.map(c => `<option value="${c.id}">🔊 ${c.name}</option>`).join('')}
+                        ${voiceChannels.map(c => `<option value="${escapeHtml(c.id)}">🔊 ${escapeHtml(c.name)}</option>`).join('')}
                     </select>
                 </div>
                 <button class="btn btn-primary" id="tv-add-btn">+ Ajouter</button>
@@ -86,7 +86,7 @@ async function loadTempVoice(container, guildId) {
                             </div>
                             <div style="display:flex;align-items:center;gap:.75rem">
                                 <span style="font-size:.8rem;color:var(--text-secondary)">👥 ${ch.member_count}</span>
-                                <button class="btn btn-danger btn-sm" onclick="deleteTempVoice('${guildId}', '${ch.channel_id}')">✕</button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteTempVoice('${escapeHtml(guildId)}', '${escapeHtml(ch.channel_id)}')">✕</button>
                             </div>
                         </div>
                     `).join('')}
@@ -154,11 +154,9 @@ async function deleteTempVoice(guildId, channelId) {
     loadPage('tempvoice');
 }
 
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+// `escapeHtml` vient de js/utils.js. La copie locale qui vivait ici échappait
+// par sérialisation `textContent` → `innerHTML` : elle laissait passer `"` et
+// `'`, donc ne protégeait aucun contexte d'attribut. Ne pas la recréer.
 
 window.toggleTrigger = toggleTrigger;
 window.removeTrigger = removeTrigger;

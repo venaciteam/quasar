@@ -119,7 +119,7 @@ function openTimezoneEditor() {
             <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:.5rem">Choisissez dans la liste ou utilisez "Autre" pour une zone IANA personnalisée.</div>
             <div style="display:flex;flex-direction:column;gap:.5rem">
                 <select class="input" id="tz-select" onchange="onTimezoneSelectChange()">
-                    ${TIMEZONES_FR.map(t => `<option value="${t.id}" ${t.id === selectValue ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
+                    ${TIMEZONES_FR.map(t => `<option value="${escapeHtml(t.id)}" ${t.id === selectValue ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
                     <option value="__custom__" ${selectValue === '__custom__' ? 'selected' : ''}>Autre (saisie libre)</option>
                 </select>
                 <input class="input" id="tz-custom" placeholder="ex: Europe/London, Asia/Bangkok..." value="${isKnown ? '' : escapeHtml(currentTz)}" style="${selectValue === '__custom__' ? '' : 'display:none'}">
@@ -190,11 +190,11 @@ function renderScheduledForm(existing = null) {
     };
 
     const channelOptions = _scheduledState.channels
-        .map(c => `<option value="${c.id}" ${c.id === data.channel_id ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
+        .map(c => `<option value="${escapeHtml(c.id)}" ${c.id === data.channel_id ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
         .join('');
 
     const embedOptions = _scheduledState.embeds.length
-        ? _scheduledState.embeds.map(e => `<option value="${e.id}" ${e.id === data.embed_id ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')
+        ? _scheduledState.embeds.map(e => `<option value="${escapeHtml(e.id)}" ${e.id === data.embed_id ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')
         : '<option disabled>Aucun embed sauvegardé</option>';
 
     const rolesHtml = _scheduledState.roles.length
@@ -202,8 +202,8 @@ function renderScheduledForm(existing = null) {
             const checked = (data.mention_roles || []).includes(r.id) ? 'checked' : '';
             const color = r.color && r.color !== '#000000' ? r.color : 'var(--text-secondary)';
             return `<label style="display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .5rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.8rem;cursor:pointer">
-                <input type="checkbox" class="sm-role" value="${r.id}" ${checked}>
-                <span style="color:${color}">@${escapeHtml(r.name)}</span>
+                <input type="checkbox" class="sm-role" value="${escapeHtml(r.id)}" ${checked}>
+                <span style="color:${escapeHtml(color)}">@${escapeHtml(r.name)}</span>
             </label>`;
         }).join('')
         : '<p style="color:var(--text-muted);font-size:.8rem">Aucun rôle disponible</p>';

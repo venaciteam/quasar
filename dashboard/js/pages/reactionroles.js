@@ -39,15 +39,15 @@ async function loadReactionRoles(container, guildId) {
                     const roleColor = role?.color || 'var(--accent)';
                     return `
                     <div style="display:inline-flex;align-items:center;gap:.5rem;padding:.3rem .75rem;background:hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.15);border:1px solid var(--accent);border-radius:20px;font-size:.85rem">
-                        <span style="color:${roleColor};font-weight:500">@${roleName}</span>
-                        <button onclick="removeAutorole('${ar.role_id}')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:1rem;line-height:1">×</button>
+                        <span style="color:${escapeHtml(roleColor)};font-weight:500">@${escapeHtml(roleName)}</span>
+                        <button onclick="removeAutorole('${escapeHtml(ar.role_id)}')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:1rem;line-height:1">×</button>
                     </div>`;
                 }).join('') || '<p style="color:var(--text-muted);font-size:.85rem">Aucun autorole configuré</p>'}
             </div>
             <div style="display:flex;gap:.75rem;flex-wrap:wrap">
                 <select class="select" id="add-autorole-select" style="max-width:220px">
                     <option value="">Choisir un rôle...</option>
-                    ${roles.map(r => `<option value="${r.id}" style="color:${r.color}">${r.name}</option>`).join('')}
+                    ${roles.map(r => `<option value="${escapeHtml(r.id)}" style="color:${escapeHtml(r.color)}">${escapeHtml(r.name)}</option>`).join('')}
                 </select>
                 <button class="btn btn-primary" onclick="addAutorole()">Ajouter</button>
             </div>
@@ -66,19 +66,19 @@ async function loadReactionRoles(container, guildId) {
                     return `
                     <div style="display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;background:hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.1);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:.85rem">
                         <span>🔊</span>
-                        <span style="flex:1"><strong>#${chName}</strong> → <span style="color:${roleColor};font-weight:500">@${roleName}</span></span>
-                        <button onclick="removeVoiceRole('${vr.channel_id}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;line-height:1">×</button>
+                        <span style="flex:1"><strong>#${escapeHtml(chName)}</strong> → <span style="color:${escapeHtml(roleColor)};font-weight:500">@${escapeHtml(roleName)}</span></span>
+                        <button onclick="removeVoiceRole('${escapeHtml(vr.channel_id)}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;line-height:1">×</button>
                     </div>`;
                 }).join('') || '<p style="color:var(--text-muted);font-size:.85rem">Aucun rôle vocal configuré</p>'}
             </div>
             <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
                 <select class="select" id="add-voicerole-channel" style="max-width:200px">
                     <option value="">Salon vocal...</option>
-                    ${voiceChannels.map(c => `<option value="${c.id}">🔊 ${c.name}</option>`).join('')}
+                    ${voiceChannels.map(c => `<option value="${escapeHtml(c.id)}">🔊 ${escapeHtml(c.name)}</option>`).join('')}
                 </select>
                 <select class="select" id="add-voicerole-role" style="max-width:200px">
                     <option value="">Rôle...</option>
-                    ${roles.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                    ${roles.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('')}
                 </select>
                 <button class="btn btn-blue" onclick="addVoiceRole()">Ajouter</button>
             </div>
@@ -111,7 +111,7 @@ async function loadReactionRoles(container, guildId) {
                     <div style="flex:1;min-width:180px">
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Channel</label>
                         <select class="select" id="panel-channel">
-                            ${textChannels.map(c => `<option value="${c.id}">#${c.name}</option>`).join('')}
+                            ${textChannels.map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('')}
                         </select>
                     </div>
                     <div style="flex:1;min-width:180px">
@@ -129,6 +129,16 @@ async function loadReactionRoles(container, guildId) {
             </div>
         </div>
     `;
+
+    // Sélecteur d'emojis : écouteur délégué, posé sur #rr-content qui survit aux
+    // re-rendus de son contenu. Les emojis custom du serveur voyagent désormais
+    // dans des attributs data-*, où ils restent du texte : dans le `onclick` en
+    // ligne d'avant, leur identifiant était concaténé dans du code JavaScript.
+    document.getElementById('rr-content').addEventListener('click', (e) => {
+        const btn = e.target.closest('.emoji-btn');
+        if (!btn) return;
+        selectEmoji(btn.dataset.panel, btn.dataset.identifier, btn.dataset.url);
+    });
 
     // Commandes
     setTimeout(() => {
@@ -164,12 +174,12 @@ function renderPanels(panels, roles, channels, status) {
             </div>` : ''}
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
                 <div>
-                    <strong>#${p.id} — ${p.title}</strong>
-                    <span class="badge ${isMissing ? 'badge-inactive' : 'badge-active'}" style="margin-left:.5rem">${isMissing ? 'Message absent' : `Mode ${p.mode}`}</span>
+                    <strong>#${escapeHtml(p.id)} — ${escapeHtml(p.title)}</strong>
+                    <span class="badge ${isMissing ? 'badge-inactive' : 'badge-active'}" style="margin-left:.5rem">${isMissing ? 'Message absent' : `Mode ${escapeHtml(p.mode)}`}</span>
                 </div>
                 <button class="btn btn-danger" style="font-size:.75rem;padding:.3rem .6rem" onclick="deletePanel(${p.id})">🗑️</button>
             </div>
-            <p style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.5rem">Channel : <strong>#${ch?.name || p.channel_id}</strong> • ${p.entries.length} rôle(s)</p>
+            <p style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.5rem">Channel : <strong>#${escapeHtml(ch?.name || p.channel_id)}</strong> • ${p.entries.length} rôle(s)</p>
             
             <!-- Rôles existants -->
             <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.75rem">
@@ -177,7 +187,7 @@ function renderPanels(panels, roles, channels, status) {
                     const r = (window._rrRoles || roles).find(r => r.id === e.role_id);
                     return `
                     <span style="font-size:.8rem;padding:.2rem .6rem;background:hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.1);border:1px solid var(--accent);border-radius:20px;display:inline-flex;align-items:center;gap:.3rem">
-                        ${renderEmoji(e.emoji)} → <span style="color:${r?.color || 'var(--accent)'};font-weight:500">@${r?.name || e.role_id}</span>
+                        ${renderEmoji(e.emoji)} → <span style="color:${escapeHtml(r?.color || 'var(--accent)')};font-weight:500">@${escapeHtml(r?.name || e.role_id)}</span>
                         <button onclick="removePanelEntry(${p.id}, '${encodeURIComponent(e.emoji)}')" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.9rem;line-height:1;margin-left:.2rem">×</button>
                     </span>`;
                 }).join('') || '<span style="color:var(--text-muted);font-size:.8rem">Aucun rôle</span>'}
@@ -191,8 +201,8 @@ function renderPanels(panels, roles, channels, status) {
                         <input class="input" placeholder="🔍 Rechercher un emoji..." oninput="filterEmojis(${p.id}, this.value)" style="font-size:.8rem;padding:.4rem .6rem;margin-bottom:.5rem">
                         <div id="emoji-grid-${p.id}" style="display:flex;flex-wrap:wrap;gap:.3rem">
                             ${(window._serverEmojis || []).map(e => `
-                                <button class="emoji-btn" data-name="${e.name.toLowerCase()}" onclick="selectEmoji(${p.id}, '${e.identifier}', '${e.url}')" style="background:none;border:1px solid transparent;border-radius:4px;cursor:pointer;padding:.2rem;transition:var(--transition)" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='transparent'">
-                                    <img src="${e.url}" style="width:24px;height:24px" title=":${e.name}:">
+                                <button class="emoji-btn" data-name="${escapeHtml(e.name.toLowerCase())}" data-identifier="${escapeHtml(e.identifier)}" data-url="${escapeHtml(e.url)}" data-panel="${escapeHtml(p.id)}" style="background:none;border:1px solid transparent;border-radius:4px;cursor:pointer;padding:.2rem;transition:var(--transition)" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='transparent'">
+                                    <img src="${escapeHtml(e.url)}" style="width:24px;height:24px" title=":${escapeHtml(e.name)}:">
                                 </button>
                             `).join('')}
                         </div>
@@ -201,7 +211,7 @@ function renderPanels(panels, roles, channels, status) {
                 </div>
                 <select class="select" id="panel-${p.id}-role" style="width:160px;font-size:.85rem">
                     <option value="">Rôle...</option>
-                    ${(window._rrRoles || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                    ${(window._rrRoles || []).map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('')}
                 </select>
                 <button class="btn btn-blue" onclick="addPanelEntry(${p.id})" style="font-size:.8rem;padding:.4rem .8rem">Ajouter</button>
             </div>

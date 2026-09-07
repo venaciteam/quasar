@@ -19,7 +19,7 @@ async function loadModeration(container, guildId) {
             <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap">
                 <select class="select" id="log-channel" style="max-width:280px">
                     <option value="">— Désactivé —</option>
-                    ${channels.map(c => `<option value="${c.id}" ${config.logChannel === c.id ? 'selected' : ''}>#${c.name}</option>`).join('')}
+                    ${channels.map(c => `<option value="${escapeHtml(c.id)}" ${config.logChannel === c.id ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`).join('')}
                 </select>
                 <button class="btn btn-primary" onclick="saveModConfig()">Enregistrer</button>
                 ${config.logChannel ? `<button class="btn btn-danger" onclick="removeLogChannel()">Retirer</button>` : ''}
@@ -53,7 +53,7 @@ async function loadModeration(container, guildId) {
             <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap;max-width:500px">
                 <label style="width:140px;font-size:.9rem">Conserver pendant</label>
                 <input class="input" type="number" id="sanction-retention" min="0" max="120"
-                    value="${config.sanctionRetentionMonths ?? 12}" style="width:80px">
+                    value="${escapeHtml(config.sanctionRetentionMonths ?? 12)}" style="width:80px">
                 <span style="color:var(--text-secondary);font-size:.85rem">mois</span>
                 <button class="btn btn-primary" onclick="saveModConfig()">Enregistrer</button>
             </div>
@@ -188,14 +188,20 @@ async function loadSanctions() {
         return;
     }
 
+    // Tout ce qui vient d'une sanction est échappé, le motif en premier : il est
+    // écrit en texte libre par n'importe quel modérateur (`/warn` n'exige que
+    // ModerateMembers), stocké tel quel, puis relu ICI par une administratrice
+    // dont le jeton de session vit dans localStorage. Un motif porteur de balise
+    // valait la prise de contrôle du serveur — la faille la plus grave du
+    // dashboard, et elle se déclenchait à la simple ouverture de la page.
     const icons = { warn: '⚠️', mute: '🔇', kick: '🔴', ban: '🔨', automod: '🤖' };
     list.innerHTML = `<div style="display:flex;flex-direction:column;gap:.5rem">
         ${sanctions.map(s => `
             <div style="display:flex;gap:1rem;align-items:center;padding:.75rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.85rem">
                 <span style="font-size:1.1rem">${icons[s.type] || '📋'}</span>
-                <span style="color:var(--text-secondary);">#${s.id}</span>
-                <span style="flex:1"><code style="color:var(--accent)">${s.user_id}</code> — ${s.reason || 'Aucune raison'}</span>
-                ${s.duration ? `<span style="color:var(--text-muted)">${s.duration}</span>` : ''}
+                <span style="color:var(--text-secondary);">#${escapeHtml(s.id)}</span>
+                <span style="flex:1"><code style="color:var(--accent)">${escapeHtml(s.user_id)}</code> — ${escapeHtml(s.reason || 'Aucune raison')}</span>
+                ${s.duration ? `<span style="color:var(--text-muted)">${escapeHtml(s.duration)}</span>` : ''}
                 <span style="color:var(--text-muted)">${new Date(s.created_at + 'Z').toLocaleDateString('fr-FR')}</span>
                 <span class="badge ${s.active ? 'badge-active' : 'badge-inactive'}">${s.active ? 'Actif' : 'Retiré'}</span>
             </div>
@@ -220,14 +226,14 @@ async function loadLogToggles(guildId, config) {
     let html = '';
     for (const [cat, items] of Object.entries(groups)) {
         html += `<div style="margin-bottom:1rem">
-            <div style="font-size:.85rem;font-weight:600;color:var(--text-secondary);margin-bottom:.5rem">${cat}</div>
+            <div style="font-size:.85rem;font-weight:600;color:var(--text-secondary);margin-bottom:.5rem">${escapeHtml(cat)}</div>
             <div style="display:flex;flex-wrap:wrap;gap:.5rem">
                 ${items.map(item => {
                     const isDefault = item.key.startsWith('mod_');
                     const checked = enabledLogs[item.key] !== undefined ? enabledLogs[item.key] : isDefault;
                     return `<label style="display:inline-flex;align-items:center;gap:.4rem;padding:.35rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:20px;font-size:.8rem;cursor:pointer;transition:var(--transition)">
-                        <input type="checkbox" class="log-toggle" data-key="${item.key}" ${checked ? 'checked' : ''} onchange="saveLogToggles()" style="accent-color:var(--accent)">
-                        ${item.label}
+                        <input type="checkbox" class="log-toggle" data-key="${escapeHtml(item.key)}" ${checked ? 'checked' : ''} onchange="saveLogToggles()" style="accent-color:var(--accent)">
+                        ${escapeHtml(item.label)}
                     </label>`;
                 }).join('')}
             </div>

@@ -6,7 +6,11 @@
 // page Rappels : GET /api/guilds/:id/roles).
 let _embedsState = {
     guildId: null,
-    roles: []
+    roles: [],
+    // Embeds tels que renvoyés par l'API, gardés ici pour que « Éditer » les
+    // retrouve par identifiant. Ils ne transitent plus par le DOM : sérialisés
+    // dans un `onclick`, ils y étaient re-parsés comme du JavaScript.
+    embeds: []
 };
 
 async function loadEmbeds(container, guildId) {
@@ -148,8 +152,8 @@ function renderEmbedRoles(selectedIds = []) {
         const checked = selectedIds.includes(r.id) ? 'checked' : '';
         const color = r.color && r.color !== '#000000' ? r.color : 'var(--text-secondary)';
         return `<label style="display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .5rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.8rem;cursor:pointer">
-            <input type="checkbox" class="embed-role" value="${r.id}" ${checked} onchange="updatePreview()">
-            <span style="color:${color}">@${escapeHtml(r.name)}</span>
+            <input type="checkbox" class="embed-role" value="${escapeHtml(r.id)}" ${checked} onchange="updatePreview()">
+            <span style="color:${escapeHtml(color)}">@${escapeHtml(r.name)}</span>
         </label>`;
     }).join('');
 }
@@ -193,9 +197,13 @@ function renderMentionsPreview(mentions) {
 
 // ─── Aperçu ───────────────────────────────────────────────────
 
+// Rendu markdown de l'aperçu. Le texte vient du formulaire, mais aussi de la
+// base dès qu'on clique « Éditer » : il est ÉCHAPPÉ D'ABORD, enrichi ensuite,
+// sinon l'aperçu exécute le HTML qu'un embed enregistré contient. L'ordre
+// compte — échapper après aurait neutralisé les balises que l'on vient de poser.
 function parseDiscordMd(text) {
     if (!text) return text;
-    return text
+    return escapeHtml(text)
         .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
@@ -203,7 +211,12 @@ function parseDiscordMd(text) {
         .replace(/~~(.+?)~~/g, '<s>$1</s>')
         .replace(/`(.+?)`/g, '<code style="background:rgba(255,255,255,.1);padding:.1rem .3rem;border-radius:3px;font-size:.85em">$1</code>')
         .replace(/^> (.+)$/gm, '<div style="border-left:3px solid rgba(255,255,255,.2);padding-left:.6rem;color:var(--text-muted, #b9bbbe)">$1</div>')
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:#00b0f4;text-decoration:none">$1</a>')
+        // Un échappement HTML ne suffit pas dans un `href` : `javascript:alert(1)`
+        // y survit intact. Seuls http(s) donnent un lien, le reste reste du texte.
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (tout, libelle, url) =>
+            /^https?:\/\//i.test(url)
+                ? `<a href="${url}" style="color:#00b0f4;text-decoration:none">${libelle}</a>`
+                : tout)
         .replace(/\n/g, '<br>');
 }
 
@@ -219,12 +232,12 @@ function updatePreview() {
     const preview = document.getElementById('embed-preview');
     preview.innerHTML = `
         ${mentionsHtml ? `<div style="color:#dbdee1;font-size:.875rem;margin-bottom:.5rem">${mentionsHtml}</div>` : ''}
-        <div style="border-left:4px solid ${color};padding-left:12px">
-            ${thumbnail && /^https?:\/\//i.test(thumbnail) ? `<img src="${thumbnail}" style="float:right;max-width:80px;max-height:80px;border-radius:4px;margin-left:12px" onerror="this.style.display='none'">` : ''}
+        <div style="border-left:4px solid ${escapeHtml(color)};padding-left:12px">
+            ${thumbnail && /^https?:\/\//i.test(thumbnail) ? `<img src="${escapeHtml(thumbnail)}" style="float:right;max-width:80px;max-height:80px;border-radius:4px;margin-left:12px" onerror="this.style.display='none'">` : ''}
             ${title ? `<div style="font-weight:700;color:#fff;margin-bottom:.4rem;font-size:.95rem">${parseDiscordMd(title)}</div>` : ''}
             ${desc ? `<div style="color:#dbdee1;font-size:.875rem">${parseDiscordMd(desc)}</div>` : ''}
-            ${image && /^https?:\/\//i.test(image) ? `<img src="${image}" style="max-width:100%;border-radius:4px;margin-top:.75rem;display:block" onerror="this.style.display='none'">` : ''}
-            ${footer ? `<div style="color:#87898c;font-size:.75rem;margin-top:.75rem;border-top:1px solid rgba(255,255,255,.1);padding-top:.5rem">${footer}</div>` : ''}
+            ${image && /^https?:\/\//i.test(image) ? `<img src="${escapeHtml(image)}" style="max-width:100%;border-radius:4px;margin-top:.75rem;display:block" onerror="this.style.display='none'">` : ''}
+            ${footer ? `<div style="color:#87898c;font-size:.75rem;margin-top:.75rem;border-top:1px solid rgba(255,255,255,.1);padding-top:.5rem">${escapeHtml(footer)}</div>` : ''}
         </div>
     `;
 }
@@ -270,19 +283,38 @@ async function refreshEmbedsList() {
         return;
     }
 
+    _embedsState.embeds = embeds;
+
+    // Attributs data-* + écouteur délégué, comme la page Instance (js/pages/owner.js).
+    // L'embed entier était auparavant sérialisé en JSON dans le `onclick` avec
+    // les seuls guillemets remplacés par `&quot;` : `&` n'étant pas échappé, un
+    // embed contenant littéralement `&quot;` voyait le parseur HTML le décoder
+    // en guillemet, qui refermait la chaîne — et la suite était exécutée comme
+    // du JavaScript au premier clic sur « Éditer ». Un attribut data-* ne peut,
+    // lui, que rester du texte.
     list.innerHTML = embeds.map(e => {
         const mentions = formatEmbedMentions(e);
         return `
         <div style="padding:.6rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem">
             <div style="display:flex;align-items:center;gap:.75rem">
                 <span style="flex:1;font-size:.9rem;font-weight:500">📝 ${escapeHtml(e.name)}</span>
-                <button class="btn" style="font-size:.75rem;padding:.3rem .6rem" onclick="loadEmbed(${JSON.stringify(e).replace(/"/g, '&quot;')})">Éditer</button>
-                <button class="btn btn-danger" style="font-size:.75rem;padding:.3rem .6rem" onclick="deleteEmbed(${e.id}, ${JSON.stringify(e.name).replace(/"/g, '&quot;')})">🗑️</button>
+                <button class="btn" style="font-size:.75rem;padding:.3rem .6rem" data-embed-action="edit" data-embed-id="${escapeHtml(e.id)}">Éditer</button>
+                <button class="btn btn-danger" style="font-size:.75rem;padding:.3rem .6rem" data-embed-action="delete" data-embed-id="${escapeHtml(e.id)}">🗑️</button>
             </div>
             ${mentions ? `<div style="font-size:.75rem;color:var(--text-muted);margin-top:.35rem">👥 Mentions : ${escapeHtml(mentions)}</div>` : ''}
         </div>
         `;
     }).join('');
+
+    list.querySelectorAll('[data-embed-action]').forEach(btn => {
+        // `data-embed-id` revient en texte : la comparaison est faite en texte.
+        const embed = _embedsState.embeds.find(e => String(e.id) === btn.dataset.embedId);
+        if (!embed) return;
+        btn.addEventListener('click', () => {
+            if (btn.dataset.embedAction === 'edit') loadEmbed(embed);
+            else deleteEmbed(embed.id, embed.name);
+        });
+    });
 }
 
 function loadEmbed(embed) {

@@ -15,7 +15,7 @@ async function loadWelcome(container, guildId) {
     window._guildId = guildId;
     window._welcomeConfig = config;
 
-    const channelOptions = `<option value="">— Désactivé —</option>${channels.map(c => `<option value="${c.id}">#${c.name}</option>`).join('')}`;
+    const channelOptions = `<option value="">— Désactivé —</option>${channels.map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('')}`;
 
     document.getElementById('welcome-content').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
@@ -34,7 +34,7 @@ async function loadWelcome(container, guildId) {
                     </div>
                     <div>
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Message texte</label>
-                        <textarea class="input" id="welcome-message" rows="3" placeholder="Bienvenue {user} sur {server} ! Membre numéro {membercount}." style="resize:vertical">${config.welcome_message || ''}</textarea>
+                        <textarea class="input" id="welcome-message" rows="3" placeholder="Bienvenue {user} sur {server} ! Membre numéro {membercount}." style="resize:vertical">${escapeHtml(config.welcome_message || '')}</textarea>
                         <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">{user} · {username} · {server} · {membercount}</p>
                     </div>
 
@@ -43,16 +43,16 @@ async function loadWelcome(container, guildId) {
                         <div style="display:flex;flex-direction:column;gap:.75rem;padding:.75rem;background:rgba(255,255,255,.02);border-radius:var(--radius-sm);border:1px solid var(--border)">
                             <div>
                                 <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Titre embed</label>
-                                <input class="input" id="welcome-embed-title" placeholder="Bienvenue sur {server} !" value="${config.welcome_embed?.title || ''}">
+                                <input class="input" id="welcome-embed-title" placeholder="Bienvenue sur {server} !" value="${escapeHtml(config.welcome_embed?.title || '')}">
                             </div>
                             <div>
                                 <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Description embed</label>
-                                <textarea class="input" id="welcome-embed-desc" rows="2" style="resize:vertical">${config.welcome_embed?.description || ''}</textarea>
+                                <textarea class="input" id="welcome-embed-desc" rows="2" style="resize:vertical">${escapeHtml(config.welcome_embed?.description || '')}</textarea>
                             </div>
                             <div style="display:flex;gap:.75rem;align-items:center">
                                 <div style="flex:1">
                                     <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Couleur</label>
-                                    <input class="input" id="welcome-embed-color" type="color" value="${config.welcome_embed?.color || '#c86e8e'}" style="height:38px;padding:.2rem">
+                                    <input class="input" id="welcome-embed-color" type="color" value="${escapeHtml(config.welcome_embed?.color || '#c86e8e')}" style="height:38px;padding:.2rem">
                                 </div>
                                 <div style="flex:1">
                                     <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Avatar en thumbnail</label>
@@ -80,7 +80,7 @@ async function loadWelcome(container, guildId) {
                     </div>
                     <div>
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Message texte</label>
-                        <textarea class="input" id="leave-message" rows="3" placeholder="{username} nous a quitté... Il reste {membercount} membres." style="resize:vertical">${config.leave_message || ''}</textarea>
+                        <textarea class="input" id="leave-message" rows="3" placeholder="{username} nous a quitté... Il reste {membercount} membres." style="resize:vertical">${escapeHtml(config.leave_message || '')}</textarea>
                         <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">{username} · {server} · {membercount}</p>
                     </div>
 
@@ -89,16 +89,16 @@ async function loadWelcome(container, guildId) {
                         <div style="display:flex;flex-direction:column;gap:.75rem;padding:.75rem;background:rgba(255,255,255,.02);border-radius:var(--radius-sm);border:1px solid var(--border)">
                             <div>
                                 <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Titre embed</label>
-                                <input class="input" id="leave-embed-title" placeholder="{username} nous a quitté..." value="${config.leave_embed?.title || ''}">
+                                <input class="input" id="leave-embed-title" placeholder="{username} nous a quitté..." value="${escapeHtml(config.leave_embed?.title || '')}">
                             </div>
                             <div>
                                 <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Description embed</label>
-                                <textarea class="input" id="leave-embed-desc" rows="2" style="resize:vertical">${config.leave_embed?.description || ''}</textarea>
+                                <textarea class="input" id="leave-embed-desc" rows="2" style="resize:vertical">${escapeHtml(config.leave_embed?.description || '')}</textarea>
                             </div>
                             <div style="display:flex;gap:.75rem;align-items:center">
                                 <div style="flex:1">
                                     <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Couleur</label>
-                                    <input class="input" id="leave-embed-color" type="color" value="${config.leave_embed?.color || '#6e8ec8'}" style="height:38px;padding:.2rem">
+                                    <input class="input" id="leave-embed-color" type="color" value="${escapeHtml(config.leave_embed?.color || '#6e8ec8')}" style="height:38px;padding:.2rem">
                                 </div>
                                 <div style="flex:1">
                                     <label style="font-size:.75rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Avatar en thumbnail</label>
@@ -162,7 +162,11 @@ async function saveWelcomeConfig() {
         } : null
     };
 
-    await API.put(`/api/guilds/${window._guildId}/welcome/config`, data);
+    // L'API valide désormais ces champs (types, longueurs, schéma de l'embed) :
+    // sans ce test, un refus 400 s'affichait comme un succès et la personne
+    // croyait sa configuration enregistrée.
+    const res = await API.put(`/api/guilds/${window._guildId}/welcome/config`, data);
+    if (res?.error) return showToast(`❌ ${res.error}`, 'error');
     showToast('✅ Welcome/Leave sauvegardé !');
 }
 
