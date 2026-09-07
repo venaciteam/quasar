@@ -51,6 +51,13 @@ self.addEventListener('fetch', (event) => {
   // Never cache API or auth responses
   if (request.url.includes('/api/') || request.url.includes('/auth/')) return;
 
+  // Ni aucune URL porteuse du jeton de session. Le callback OAuth redirige vers
+  // /dashboard/app.html?token=<jwt> : mise en cache, cette URL conserve un
+  // jeton de session en clair dans le Cache Storage, lisible par n'importe quel
+  // script de la page et pour bien plus longtemps que son passage dans la barre
+  // d'adresse (app.js l'en retire aussitôt par history.replaceState).
+  if (request.url.includes('token=')) return;
+
   if (IMMUTABLE_EXT.test(request.url)) {
     event.respondWith(
       caches.match(request).then((cached) =>

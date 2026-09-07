@@ -94,6 +94,41 @@ function mountFeedbackRelay(app) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  Réponses authentifiées : jamais de cache
+//
+//  `/auth/me` et les routes d'API renvoient un contenu qui dépend du PORTEUR
+//  du jeton, pas de l'URL. Sans directive explicite, un cache intermédiaire —
+//  navigateur, proxy, CDN — est libre d'appliquer son heuristique et de
+//  resservir la réponse d'une requête antérieure sur la même URL.
+//
+//  Ce n'est pas théorique : en production, le réglage de zone Cloudflare
+//  « Browser Cache TTL » posait `max-age=14400` sur `/auth/me`, faute de
+//  `Cache-Control` d'origine. Le navigateur qui avait visité la vitrine AVANT
+//  de se connecter gardait le `{"authenticated":false}` obtenu à ce moment-là,
+//  et le resservait à l'appel authentifié qui suit le retour d'OAuth — le
+//  dashboard se croyait déconnecté juste après un login réussi, sans la
+//  moindre trace côté serveur. Quatre heures durant, par navigateur.
+//
+//  `Vary` complète la directive : il déclare les en-têtes qui changent la
+//  réponse. Sans lui, une requête porteuse d'un `Authorization` partage la
+//  même entrée de cache qu'une requête anonyme.
+//
+//  Monté AVANT toutes les routes d'API et d'authentification, et non sur
+//  chacune : une route ajoutée plus tard est couverte sans y penser. Même
+//  raisonnement que pour le gestionnaire d'erreurs et les parseurs de corps.
+// ═══════════════════════════════════════════════════════════════
+
+function mountNoStore(app) {
+    app.use(['/auth', '/api', '/callback'], (req, res, next) => {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        // res.vary() ajoute sans écraser : un Vary déjà posé en amont survit.
+        res.vary('Authorization');
+        res.vary('Cookie');
+        next();
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  Ouverture de l'instance publique — volontairement DÉCOUPLÉE du mode
 //
 //  PUBLIC_INSTANCE_OPEN ne décide QUE d'une chose : proposer ou non, aux
@@ -316,6 +351,7 @@ function createApi(discordClient, mode = 'bot') {
     // Rendre le client Discord accessible aux routes
     app.set('discordClient', discordClient);
 
+    mountNoStore(app);
     mountFeedbackRelay(app);
 
     // API routes
@@ -408,6 +444,7 @@ function createSiteApi(mode) {
     const app = express();
 
     mountBodyParsers(app);
+    mountNoStore(app);
 
     // Seule route d'API conservée : le relais de signalement, dont le FAB de la
     // vitrine se sert en repli quand Sema est injoignable. Il ne dépend ni du
