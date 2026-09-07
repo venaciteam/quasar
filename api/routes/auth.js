@@ -36,6 +36,13 @@ router.get('/callback', async (req, res) => {
         const tokenData = await tokenRes.json();
 
         if (!tokenData.access_token) {
+            // Tracé, et pas seulement redirigé : sans cette ligne, l'échec de
+            // l'échange était totalement muet côté serveur — l'utilisatrice
+            // atterrissait sur la page d'accueil et les logs ne montraient rien.
+            // `tokenData.error` porte la raison de Discord (invalid_grant,
+            // invalid_client…) et ne contient aucun secret.
+            console.error('[Quasar] Échange du code OAuth2 refusé par Discord :',
+                tokenData.error || 'réponse sans access_token', tokenData.error_description || '');
             return res.redirect('/?error=token_failed');
         }
 
@@ -50,6 +57,17 @@ router.get('/callback', async (req, res) => {
             headers: { Authorization: `Bearer ${tokenData.access_token}` }
         });
         const guilds = await guildsRes.json();
+
+        // Discord ne répond pas toujours un tableau : une limite de débit (429)
+        // ou un jeton révoqué entre-temps donne un objet d'erreur. Sans cette
+        // garde, le `.map()` ci-dessous lève, et l'utilisatrice se retrouve sur
+        // `/?error=auth_failed` — un message qui désigne l'authentification
+        // alors que celle-ci a parfaitement réussi.
+        if (!Array.isArray(guilds)) {
+            console.error('[Quasar] Réponse inattendue de /users/@me/guilds :',
+                guilds && guilds.message ? guilds.message : 'format non reconnu');
+            return res.redirect('/?error=guilds_failed');
+        }
 
         // Générer JWT
         const jwt = generateToken({
@@ -84,11 +102,19 @@ router.get('/me', (req, res) => {
     const token = req.cookies?.token
         || req.headers.authorization?.replace('Bearer ', '')
         || req.query.token;
-    if (!token) return res.json({ authenticated: false });
+
+    // 401 et non 200 sur un échec. Deux raisons : un 401 n'est jamais mis en
+    // cache par défaut, là où un 200 l'est dès qu'un intermédiaire applique son
+    // heuristique ; et un échec d'authentification devient visible dans l'onglet
+    // réseau au lieu de se confondre avec une réponse normale. Le corps
+    // `{ authenticated: false }` est conservé : les appelants qui le lisent
+    // (dashboard/index.html) continuent de fonctionner à l'identique, et
+    // `app.js` intercepte déjà les 401.
+    if (!token) return res.status(401).json({ authenticated: false });
 
     const { verifyToken } = require('../middleware/auth');
     const user = verifyToken(token);
-    if (!user) return res.json({ authenticated: false });
+    if (!user) return res.status(401).json({ authenticated: false });
 
     res.json({ authenticated: true, user });
 });
