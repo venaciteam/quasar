@@ -1,0 +1,21 @@
+# Suite de tests sur chaque poussée et chaque PR. Sans elle, la seule
+# vérification d'un changement est de lancer le bot et de cliquer partout.
+name: Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # npm ci et non install : le lockfile fait foi (better-sqlite3 compile
+      # en natif, la version doit être exactement celle testée).
+      - run: npm ci
+      - run: npm test

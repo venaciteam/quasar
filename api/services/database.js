@@ -1,7 +1,9 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'data', 'quasar.db');
+// Chemin surchargeable par l'environnement : les tests pointent une base jetable
+// (':memory:' ou fichier temporaire) sans jamais toucher data/quasar.db.
+const DB_PATH = process.env.QUASAR_DB_PATH || path.join(__dirname, '..', '..', 'data', 'quasar.db');
 
 // --- Intervalle de checkpoint WAL (5 minutes) ---
 const CHECKPOINT_INTERVAL = 5 * 60 * 1000;
