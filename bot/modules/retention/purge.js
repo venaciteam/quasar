@@ -57,6 +57,11 @@ const PURGE_STEPS = [
     { table: 'defer_config',    sql: 'DELETE FROM defer_config WHERE guild_id = ?' },
     { table: 'defer_cases',     sql: 'DELETE FROM defer_cases WHERE guild_id = ?' },
     { table: 'temp_bans',       sql: 'DELETE FROM temp_bans WHERE guild_id = ?' },
+    // Demandes d'effacement (art. 17) : leur FK vers guilds — sans ON DELETE
+    // CASCADE et avec foreign_keys = ON — bloquerait le DELETE final de guilds,
+    // et donc TOUTE la transaction de purge, indéfiniment. Au départ du serveur,
+    // la purge intégrale prime (art. 5.1.e) : la trace de la demande part aussi.
+    { table: 'erasure_requests', sql: 'DELETE FROM erasure_requests WHERE guild_id = ?' },
     { table: 'modules', sql: 'DELETE FROM modules WHERE guild_id = ?' },
     { table: 'guilds', sql: 'DELETE FROM guilds WHERE guild_id = ?' },
 ];
