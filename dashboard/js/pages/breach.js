@@ -157,7 +157,7 @@ function renderBreachDetail() {
             <div class="card">
                 <div class="card-title">Notification de violation de données</div>
                 <p style="color:var(--text-secondary);font-size:.9rem;line-height:1.6">
-                    Sélectionne un incident à gauche, ou crées-en un nouveau, pour rédiger une notification.
+                    Sélectionnez un incident à gauche, ou créez-en un nouveau, pour rédiger une notification.
                     Chaque incident regroupe une notification initiale (phase 1) et ses éventuels compléments
                     (phases suivantes), conformément à la notification progressive de l'art. 33.4.
                 </p>

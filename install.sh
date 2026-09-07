@@ -46,7 +46,7 @@ if [ -d "$DIR" ]; then
     echo -e "${GREEN}✅ Dossier ${DIR} existant — mise à jour...${NC}"
     cd "$DIR" && git pull
 else
-    echo -e "${CYAN}📦 Téléchargement d'Quasar...${NC}"
+    echo -e "${CYAN}📦 Téléchargement de Quasar...${NC}"
     git clone "$REPO" "$DIR"
     cd "$DIR"
 fi

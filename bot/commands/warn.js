@@ -38,7 +38,7 @@ module.exports = {
             return userError(interaction, {
                 title: 'Les bots ne peuvent pas être avertis',
                 cause: 'Un avertissement s\'adresse à une personne : il n\'a aucun effet sur un bot.',
-                action: 'Si un bot pose problème, retire-le du serveur ou contacte la personne qui l\'a ajouté.',
+                action: 'Si un bot pose problème, retirez-le du serveur ou contactez la personne qui l\'a ajouté.',
             });
         }
 

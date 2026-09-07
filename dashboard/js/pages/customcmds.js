@@ -43,7 +43,7 @@ async function loadCustomCmds(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">⚡ Commandes Custom</h1>
-            <p class="main-subtitle">Crée et gère des commandes personnalisées</p>
+            <p class="main-subtitle">Créez et gérez des commandes personnalisées</p>
         </div>
         <div id="cmds-content"><p style="color:var(--text-secondary)">Chargement...</p></div>
     `;
@@ -101,7 +101,7 @@ async function loadCustomCmds(container, guildId) {
                         <option value="">Choisir un embed...</option>
                         ${(embeds || []).map(e => `<option value="${e.name}">📝 ${e.name}</option>`).join('')}
                     </select>
-                    ${embeds?.length === 0 ? '<p style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">Aucun embed — crée-en un dans la section Embeds d\'abord.</p>' : ''}
+                    ${embeds?.length === 0 ? '<p style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">Aucun embed — créez-en un dans la section Embeds d\'abord.</p>' : ''}
                 </div>
                 <div>
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Qui peut utiliser la commande</label>

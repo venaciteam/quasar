@@ -91,7 +91,7 @@ echo -e "${CYAN}🔨 Build de l'image Docker...${NC}"
 docker compose build
 
 echo ""
-echo -e "${CYAN}🚀 Lancement d'Quasar...${NC}"
+echo -e "${CYAN}🚀 Lancement de Quasar...${NC}"
 docker compose up -d
 
 echo ""

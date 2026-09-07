@@ -196,7 +196,7 @@ function renderPanels(panels, roles, channels, status) {
                                 </button>
                             `).join('')}
                         </div>
-                        <div style="font-size:.7rem;color:var(--text-muted);margin-top:.4rem;padding-top:.3rem;border-top:1px solid var(--border)">Ou tape un emoji Unicode dans le champ</div>
+                        <div style="font-size:.7rem;color:var(--text-muted);margin-top:.4rem;padding-top:.3rem;border-top:1px solid var(--border)">Ou tapez un emoji Unicode dans le champ</div>
                     </div>
                 </div>
                 <select class="select" id="panel-${p.id}-role" style="width:160px;font-size:.85rem">

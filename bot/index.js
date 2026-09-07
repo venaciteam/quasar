@@ -108,7 +108,7 @@ function checkCustomCommandAccess(interaction, row) {
         return {
             title: 'Commande momentanément indisponible',
             cause: 'Cette commande est réservée à un rôle qui n\'existe plus sur le serveur : en dehors des administrateurs, personne ne peut donc l\'utiliser pour l\'instant.',
-            action: 'Signale-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
+            action: 'Signalez-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
         };
     }
 

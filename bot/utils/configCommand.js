@@ -98,7 +98,7 @@ function createConfigCommand(opts) {
                     return userError(interaction, {
                         title: 'Aucun salon configuré',
                         cause: `Le module **${name}** n'a pas encore de salon de destination.`,
-                        action: `Définis-le avec \`/${name} channel #salon\`.`,
+                        action: `Définissez-le avec \`/${name} channel #salon\`.`,
                     });
                 }
 

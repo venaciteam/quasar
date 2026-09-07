@@ -101,7 +101,7 @@ module.exports = {
 
             const preview = buildDiscordEmbed(data);
             await interaction.reply({
-                content: `✅ Embed **${nom}** ${existing ? 'mis à jour' : 'créé'} ! Aperçu :\n> 💡 **Astuce image** : pour utiliser une image sans hébergement externe, poste-la dans n'importe quel channel Discord, fais clic droit → "Copier le lien de l'image", et colle cette URL dans \`image:\` ou \`thumbnail:\`.`,
+                content: `✅ Embed **${nom}** ${existing ? 'mis à jour' : 'créé'} ! Aperçu :\n> 💡 **Astuce image** : pour utiliser une image sans hébergement externe, postez-la dans n'importe quel channel Discord, faites un clic droit → "Copier le lien de l'image", et collez cette URL dans \`image:\` ou \`thumbnail:\`.`,
                 embeds: [preview],
                 ephemeral: true
             });
