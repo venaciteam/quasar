@@ -12,14 +12,11 @@ setInterval(() => {
     for (const [key, ts] of tempvoiceCooldowns) {
         if (now - ts > COOLDOWN_MS) tempvoiceCooldowns.delete(key);
     }
-}, 60_000);
+}, 60_000).unref(); // ne doit pas retenir le processus (convention projet : tous les timers de fond sont unref)
 
 // Track TempVoice channel IDs for channelCreate/Delete filtering
 const tempvoiceChannelIds = new Set();
 let tempvoiceCreating = false; // Flag: a TempVoice creation is in progress
-module.exports.tempvoiceChannelIds = tempvoiceChannelIds;
-module.exports.isTempVoiceCreating = () => tempvoiceCreating;
-
 module.exports = {
     name: 'voiceStateUpdate',
     once: false,
@@ -305,7 +302,7 @@ async function createTempVoice(guild, member, triggerChannel, categoryId, db) {
             embeds: [{
                 title: `🎧 C'est votre salon, ${member.displayName} !`,
                 description:
-                    `Personnalise-le avec les boutons ci-dessous ou les commandes \`/voice\`.\n\n` +
+                    `Personnalisez-le avec les boutons ci-dessous ou les commandes \`/voice\`.\n\n` +
                     `Vos préférences (nom, limite) seront **mémorisées** pour cette catégorie. ✨`,
                 color: 0xc86e8e,
                 footer: { text: 'Ce salon sera supprimé quand tout le monde sera parti.' }
@@ -316,3 +313,11 @@ async function createTempVoice(guild, member, triggerChannel, categoryId, db) {
         console.error('[Quasar] Erreur envoi panneau TempVoice:', e.message || e);
     }
 }
+
+// Exports annexes attachés APRÈS l'affectation de module.exports — les poser
+// avant serait les perdre (l'affectation remplace l'objet entier). C'est le
+// bug qui a silencieusement vidé ces exports jusqu'à la v4.7.0 : bot/index.js
+// les lisait `undefined` et le rechargement des salons TempVoice au boot
+// échouait à chaque démarrage. Même motif que messageCreate.js.
+module.exports.tempvoiceChannelIds = tempvoiceChannelIds;
+module.exports.isTempVoiceCreating = () => tempvoiceCreating;
