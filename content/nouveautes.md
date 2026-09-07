@@ -23,6 +23,55 @@
   « ## » est ignoré.
 -->
 
+## 🌌 Quasar — v4.7.1
+### Se connecter au dashboard fonctionne de nouveau
+> *7 septembre 2026*
+
+**🔧 Améliorations**
+- Votre jeton de session ne reste plus dans le cache de votre navigateur après la connexion. Par précaution, toutes les sessions ouvertes ont été fermées : une reconnexion est nécessaire.
+- Si vous hébergez Quasar vous-même : les réponses d'authentification interdisent désormais explicitement toute mise en cache, y compris par un service placé devant le bot. La panne décrite ci-dessous pouvait donc vous toucher aussi.
+
+**🐛 Corrections**
+- Se connecter au dashboard était impossible depuis un navigateur ayant consulté le site peu avant : l'autorisation Discord aboutissait, puis le dashboard renvoyait aussitôt vers l'accueil, sans un mot d'explication. Corrigé.
+- Quand Discord limite temporairement le nombre de requêtes, l'échec était présenté comme un problème d'authentification alors que la connexion avait réussi. Le cas est maintenant reconnu et signalé pour ce qu'il est.
+
+## 🌌 Quasar — v4.7.0
+### Le bot ne s'arrête plus sur une erreur du dashboard
+> *5 septembre 2026*
+
+**✨ Nouveautés**
+- Si vous hébergez Quasar vous-même : votre instance peut désormais vous prévenir sur Discord quand une erreur technique survient, avec le détail de ce qui a échoué et son code d'incident. L'option est facultative et se règle avec la variable `INCIDENT_WEBHOOK_URL`, documentée dans le fichier d'exemple de configuration.
+
+**🔧 Améliorations**
+- Les messages d'erreur portent maintenant un code court, du type `QSR-7F3A`. En le transmettant à l'équipe du serveur ou à la personne qui héberge l'instance, elle retrouve directement ce qui s'est passé, sans avoir à vous faire raconter la scène.
+- Les messages de bienvenue et de départ proposés par défaut ont été réécrits. Si vous avez personnalisé les vôtres, rien ne change pour vous.
+
+**🐛 Corrections**
+- Une erreur inattendue dans le dashboard n'arrête plus le bot. Jusqu'ici, une seule anomalie sur une page de configuration pouvait le déconnecter de tous les serveurs à la fois, sans prévenir. Elle reste désormais contenue à la page concernée, qui affiche un message d'erreur, pendant que le bot continue de tourner.
+- Le passage au vouvoiement annoncé dans la version précédente avait laissé de côté une trentaine de formulations dans les messages du bot, dont certaines mélangeaient les deux registres dans une même phrase. Elles sont corrigées.
+
+## 🌌 Quasar — v4.6.2
+### Un rôle impossible à attribuer vous le dit tout de suite
+> *5 septembre 2026*
+
+**🔧 Améliorations**
+- Quasar vous vouvoie désormais partout : réponses du bot, messages d'erreur, descriptions des commandes et dashboard.
+
+**🐛 Corrections**
+- Certains rôles ne peuvent pas être attribués par un bot : ceux gérés par une intégration (abonnement Twitch, boost du serveur, autre bot), et ceux placés au-dessus de Quasar dans la liste des rôles du serveur. Ils s'enregistraient sans rien signaler, puis n'étaient jamais attribués. Ils sont maintenant refusés au moment où vous les configurez, avec l'explication et la marche à suivre.
+- Cette vérification couvre les rôles automatiques, les rôles vocaux et les panneaux de rôles par réaction, aussi bien depuis les commandes que depuis le dashboard.
+- Le dashboard annonçait « Autorole ajouté » même lorsque l'ajout venait d'être refusé.
+- Le salon associé à un rôle vocal est vérifié : un salon supprimé, ou un salon qui n'est pas vocal, n'est plus accepté.
+
+## 🌌 Quasar — v4.6.1
+### Les rôles automatiques s'appliquent enfin partout
+> *5 septembre 2026*
+
+**🐛 Corrections**
+- Les rôles attribués automatiquement à l'arrivée d'un nouveau membre ne fonctionnaient que sur les serveurs ayant configuré un message de bienvenue. Ils s'appliquent désormais sur tous les serveurs. **Si vous aviez configuré des rôles automatiques sans message de bienvenue, ils étaient inactifs et deviennent effectifs : vérifiez leur liste dans la page « Reaction Roles » du dashboard avant de recevoir un nouveau membre.**
+- Le journal « Membre rejoint » restait muet dans les mêmes conditions, même lorsque la case était cochée. Il s'envoie maintenant dès que vous l'activez.
+- Supprimer le salon d'accueil d'un serveur faisait disparaître ses rôles automatiques au passage. Les deux réglages sont désormais indépendants.
+
 ## 🌌 Quasar — v4.6.0
 
 ### La modération automatique, en quatre protections
