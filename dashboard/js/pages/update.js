@@ -22,7 +22,7 @@ async function loadUpdate(container) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">Mise à jour</h1>
-            <p class="main-subtitle">Gestion des versions d'Quasar</p>
+            <p class="main-subtitle">Gestion des versions de Quasar</p>
         </div>
 
         <div class="card">

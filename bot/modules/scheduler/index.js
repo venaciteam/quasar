@@ -211,14 +211,14 @@ async function runDueMessages() {
             WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ?
         `).all(nowSec);
     } catch (e) {
-        console.error('[Scheduler] Erreur lecture rappels dus:', e.message);
+        console.error('[Quasar Planificateur] Erreur lecture rappels dus:', e.message);
         return;
     }
 
     for (const row of due) {
         try {
             await sendScheduledMessage(row);
-            console.log(`[Scheduler] Rappel envoyé id=${row.id} guild=${row.guild_id} channel=${row.channel_id}`);
+            console.log(`[Quasar Planificateur] Rappel envoyé id=${row.id} guild=${row.guild_id} channel=${row.channel_id}`);
             const next = computeNextRun(row, now);
             if (row.schedule_type === 'once' || next === null) {
                 db.prepare(`
@@ -234,7 +234,7 @@ async function runDueMessages() {
                 `).run(nowSec, Math.floor(next / 1000), nowSec, row.id);
             }
         } catch (err) {
-            console.error(`[Scheduler] Erreur envoi rappel ${row.id}:`, err.message);
+            console.error(`[Quasar Planificateur] Erreur envoi rappel ${row.id}:`, err.message);
             // On avance next_run pour ne pas retomber dessus en boucle
             const next = computeNextRun(row, now);
             try {
@@ -266,22 +266,22 @@ function start(client) {
             }
         }
         if (rows.length > 0) {
-            console.log(`[Scheduler] Recalcul next_run pour ${rows.length} rappel(s) au boot`);
+            console.log(`[Quasar Planificateur] Recalcul next_run pour ${rows.length} rappel(s) au boot`);
         }
     } catch (e) {
-        console.error('[Scheduler] Erreur recalcul boot:', e.message);
+        console.error('[Quasar Planificateur] Erreur recalcul boot:', e.message);
     }
 
     if (tickHandle) clearInterval(tickHandle);
     tickHandle = setInterval(() => {
-        runDueMessages().catch(e => console.error('[Scheduler] Erreur tick:', e));
+        runDueMessages().catch(e => console.error('[Quasar Planificateur] Erreur tick:', e));
     }, TICK_MS);
     if (tickHandle.unref) tickHandle.unref();
 
     // Tick initial 5s après le boot pour rattraper rapidement les retards
     setTimeout(() => runDueMessages().catch(() => {}), 5000);
 
-    console.log(`[Scheduler] Démarré (tick chaque ${TICK_MS / 1000}s, timezone par défaut ${DEFAULT_TIMEZONE})`);
+    console.log(`[Quasar Planificateur] Démarré (tick chaque ${TICK_MS / 1000}s, timezone par défaut ${DEFAULT_TIMEZONE})`);
 }
 
 function stop() {

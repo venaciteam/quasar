@@ -728,7 +728,7 @@ async function loadOverview(container) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">Vue d'ensemble ✨</h1>
-            <p class="main-subtitle">Gère les modules d'Quasar sur ${currentGuild.name}</p>
+            <p class="main-subtitle">Gérez les modules de Quasar sur ${currentGuild.name}</p>
         </div>
         ${presenceHtml}
         <div class="modules-grid">

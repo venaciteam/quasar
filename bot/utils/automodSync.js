@@ -119,7 +119,7 @@ const TRIGGERS = Object.freeze({
         eventType: AutoModerationRuleEventType.MessageSend,
         maxPerGuild: 1,
         label: 'Listes de mots de Discord',
-        summary: 'Utilise les listes tenues par Discord : grossièretés, contenu sexuel, insultes discriminatoires.',
+        summary: 'S\'appuie sur les listes tenues par Discord : grossièretés, contenu sexuel, insultes discriminatoires.',
         fields: ['presets', 'allow_list'],
         allowListMax: 1000,
         allowedActions: ['BLOCK_MESSAGE', 'SEND_ALERT_MESSAGE'],

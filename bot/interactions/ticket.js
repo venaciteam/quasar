@@ -34,7 +34,7 @@ async function handleTicketInteraction(interaction) {
                 return userError(interaction, {
                     title: 'Vous avez déjà un ticket ouvert',
                     cause: `Votre ticket en cours est <#${existing.channel_id}>. Un seul ticket à la fois est autorisé, pour éviter les doublons côté staff.`,
-                    action: 'Poursuis la discussion dans ce salon. S\'il est résolu, ferme-le avec `/ticket close` avant d\'en ouvrir un nouveau.',
+                    action: 'Poursuivez la discussion dans ce salon. S\'il est résolu, fermez-le avec `/ticket close` avant d\'en ouvrir un nouveau.',
                 });
             }
             // Channel supprimé mais ticket pas fermé — nettoyer

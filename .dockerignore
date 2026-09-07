@@ -11,3 +11,8 @@ data
 # /nouveautes démarre vide sur un volume neuf — silencieusement, puisque le seed
 # absent est traité comme un historique vide (cf. api/services/nouveautes.js).
 !content/*.md
+# Hors de l'image : outillage de dev et artefacts locaux.
+test
+.github
+.claude
+.DS_Store

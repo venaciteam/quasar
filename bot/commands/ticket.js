@@ -111,7 +111,7 @@ module.exports = {
                     return userError(interaction, {
                         title: 'Je ne peux pas créer de tickets dans cette catégorie',
                         cause: `Il me manque la permission **Gérer les salons** sur la catégorie **${category.name}**, nécessaire pour y créer les salons de ticket.`,
-                        action: 'Accorde-moi cette permission sur la catégorie, ou laisse le champ vide pour créer les tickets à la racine du serveur.',
+                        action: 'Accordez-moi cette permission sur la catégorie, ou laissez le champ vide pour créer les tickets à la racine du serveur.',
                     });
                 }
             }
@@ -176,7 +176,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce salon n\'est pas un ticket',
                     cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
-                    action: 'Va dans le salon du ticket concerné, puis relancez la commande.',
+                    action: 'Allez dans le salon du ticket concerné, puis relancez la commande.',
                 });
             }
 
@@ -204,7 +204,7 @@ module.exports = {
                 return userError(interaction, {
                     title: 'Ce salon n\'est pas un ticket',
                     cause: 'Cette commande ne fonctionne qu\'à l\'intérieur d\'un salon de ticket encore ouvert.',
-                    action: 'Va dans le salon du ticket concerné, puis relancez la commande.',
+                    action: 'Allez dans le salon du ticket concerné, puis relancez la commande.',
                 });
             }
 

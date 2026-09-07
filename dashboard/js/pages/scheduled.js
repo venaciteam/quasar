@@ -116,7 +116,7 @@ function openTimezoneEditor() {
     editor.hidden = false;
     editor.innerHTML = `
         <div class="card" style="padding:1rem">
-            <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:.5rem">Choisissez dans la liste ou utilise "Autre" pour une zone IANA personnalisée.</div>
+            <div style="font-size:.85rem;color:var(--text-secondary);margin-bottom:.5rem">Choisissez dans la liste ou utilisez "Autre" pour une zone IANA personnalisée.</div>
             <div style="display:flex;flex-direction:column;gap:.5rem">
                 <select class="input" id="tz-select" onchange="onTimezoneSelectChange()">
                     ${TIMEZONES_FR.map(t => `<option value="${t.id}" ${t.id === selectValue ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
@@ -252,7 +252,7 @@ function renderScheduledForm(existing = null) {
             <div>
                 <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Mentions — Utilisateurs (IDs Discord séparés par virgules)</label>
                 <input class="input" id="sm-users" placeholder="123456789012345678, 987654321098765432" value="${escapeHtml(usersText)}">
-                <p style="font-size:.7rem;color:var(--text-muted);margin-top:.2rem">Active le mode développeur dans Discord → clic droit sur un user → Copier l'ID.</p>
+                <p style="font-size:.7rem;color:var(--text-muted);margin-top:.2rem">Activez le mode développeur dans Discord → clic droit sur un user → Copier l'ID.</p>
             </div>
 
             <div style="display:flex;gap:1rem;flex-wrap:wrap">
