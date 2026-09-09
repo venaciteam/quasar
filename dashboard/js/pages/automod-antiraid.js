@@ -280,7 +280,7 @@ function arLiftPanic(btn) {
 
 function arChannelOptions(selected) {
     return _arState.channels
-        .map(c => `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
+        .map(c => `<option value="${escapeHtml(c.id)}" ${c.id === selected ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
         .join('');
 }
 

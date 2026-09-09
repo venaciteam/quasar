@@ -147,8 +147,8 @@ async function loadOwner(container) {
             }
 
             const actionBtn = g.suspended
-                ? `<button class="btn btn-primary btn-sm" data-action="unsuspend" data-id="${g.id}">Réactiver</button>`
-                : `<button class="btn btn-danger btn-sm" data-action="suspend" data-id="${g.id}">Suspendre</button>`;
+                ? `<button class="btn btn-primary btn-sm" data-action="unsuspend" data-id="${escapeHtml(g.id)}">Réactiver</button>`
+                : `<button class="btn btn-danger btn-sm" data-action="suspend" data-id="${escapeHtml(g.id)}">Suspendre</button>`;
 
             return `
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding:.7rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem">

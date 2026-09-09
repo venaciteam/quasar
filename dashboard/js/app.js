@@ -109,11 +109,11 @@ async function init() {
 }
 
 // ═══ Helpers ═══
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-    }[c]));
-}
+// `escapeHtml` vient de js/utils.js, chargé avant ce fichier. Il en existait ici
+// une seconde définition : app.js étant le DERNIER script de app.html, c'est
+// elle qui écrasait toutes les autres à l'exécution, et donc l'ordre des balises
+// <script> qui décidait si le dashboard échappait correctement les guillemets.
+// Ne pas en réintroduire une : une seule implémentation, dans utils.js.
 
 async function getInviteUrl() {
     if (inviteUrlCache) return inviteUrlCache;
@@ -166,7 +166,7 @@ async function checkForUpdate() {
         const sidebarBtn = document.getElementById('sidebar-update');
         if (sidebarBtn) {
             const badge = data.updateAvailable ? `<span class="update-dot"></span>` : '';
-            sidebarBtn.innerHTML = `<span class="sidebar-link-icon">⬆</span> Mise à jour ${badge}<span style="margin-left:auto;font-size:.7rem;opacity:.5">v${data.local}</span>`;
+            sidebarBtn.innerHTML = `<span class="sidebar-link-icon">⬆</span> Mise à jour ${badge}<span style="margin-left:auto;font-size:.7rem;opacity:.5">v${escapeHtml(data.local)}</span>`;
         }
         if (data?.updateAvailable) showUpdateBanner(data.local, data.remote);
     } catch {}
@@ -181,7 +181,7 @@ function showUpdateBanner(local, remote) {
         <span class="update-banner-icon">⬆</span>
         <div style="flex:1">
             <strong>Mise à jour disponible</strong>
-            <p>v${local} → v${remote}</p>
+            <p>v${escapeHtml(local)} → v${escapeHtml(remote)}</p>
         </div>
         <button class="btn btn-primary" onclick="loadPage('update')" style="flex-shrink:0;font-size:.8rem;padding:.4rem .8rem">Mettre à jour</button>
     `;
@@ -266,7 +266,7 @@ function selectGuild(guild) {
     const guildIcon = guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=48` : null;
     const guildEl = document.getElementById('guild-info');
     if (guildIcon) {
-        guildEl.innerHTML = `<img src="${guildIcon}" alt="">`;
+        guildEl.innerHTML = `<img src="${escapeHtml(guildIcon)}" alt="">`;
         guildEl.appendChild(document.createTextNode(` ${guild.name}`));
     } else {
         guildEl.textContent = `🔹 ${guild.name}`;
@@ -326,13 +326,13 @@ function renderServerMenu() {
     list.innerHTML = guilds.map(g => {
         const isCurrent = currentGuild && g.id === currentGuild.id;
         const iconHtml = g.icon
-            ? `<img src="https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png?size=32" alt="">`
+            ? `<img src="https://cdn.discordapp.com/icons/${escapeHtml(g.id)}/${escapeHtml(g.icon)}.png?size=32" alt="">`
             : `<span>${escapeHtml((g.name[0] || '?').toUpperCase())}</span>`;
         const checkSvg = isCurrent
             ? '<svg class="server-menu-item-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
             : '';
         return `
-            <button class="server-menu-item ${isCurrent ? 'is-current' : ''}" data-guild-id="${g.id}" type="button" role="option" aria-selected="${isCurrent ? 'true' : 'false'}">
+            <button class="server-menu-item ${isCurrent ? 'is-current' : ''}" data-guild-id="${escapeHtml(g.id)}" type="button" role="option" aria-selected="${isCurrent ? 'true' : 'false'}">
                 <span class="server-menu-item-icon">${iconHtml}</span>
                 <span class="server-menu-item-name">${escapeHtml(g.name)}</span>
                 ${checkSvg}
@@ -538,7 +538,7 @@ async function getPresenceHtml() {
                     <div class="presence-field">
                         <label class="presence-label">Statut</label>
                         <div class="custom-select" id="cs-presence-status">
-                            <input type="hidden" id="presence-status" value="${data.status}">
+                            <input type="hidden" id="presence-status" value="${escapeHtml(data.status)}">
                             <div class="custom-select-trigger" tabindex="0">
                                 <span class="custom-select-value">${selectedStatus.label}</span>
                                 <svg class="custom-select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -551,7 +551,7 @@ async function getPresenceHtml() {
                     <div class="presence-field">
                         <label class="presence-label">Activité</label>
                         <div class="custom-select" id="cs-presence-activity-type">
-                            <input type="hidden" id="presence-activity-type" value="${data.activity_type}">
+                            <input type="hidden" id="presence-activity-type" value="${escapeHtml(data.activity_type)}">
                             <div class="custom-select-trigger" tabindex="0">
                                 <span class="custom-select-value">${selectedActivity.label}</span>
                                 <svg class="custom-select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -563,7 +563,7 @@ async function getPresenceHtml() {
                     </div>
                     <div class="presence-field presence-field-text">
                         <label class="presence-label">Texte</label>
-                        <input type="text" class="input" id="presence-activity-text" maxlength="128" placeholder="atlas.vena.city" value="${data.activity_text.replace(/"/g, '&quot;')}" ${noActivity ? 'disabled style="opacity:.4"' : ''}>
+                        <input type="text" class="input" id="presence-activity-text" maxlength="128" placeholder="atlas.vena.city" value="${escapeHtml(data.activity_text)}" ${noActivity ? 'disabled style="opacity:.4"' : ''}>
                     </div>
                     <div class="presence-field presence-field-btn">
                         <button class="btn btn-primary" id="presence-save">Appliquer</button>
@@ -728,7 +728,7 @@ async function loadOverview(container) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">Vue d'ensemble ✨</h1>
-            <p class="main-subtitle">Gérez les modules de Quasar sur ${currentGuild.name}</p>
+            <p class="main-subtitle">Gérez les modules de Quasar sur ${escapeHtml(currentGuild.name)}</p>
         </div>
         ${presenceHtml}
         <div class="modules-grid">

@@ -90,7 +90,7 @@ function hpNotices(hostId, notices) {
 
 function hpChannelOptions(selected) {
     return _hpState.channels
-        .map(c => `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
+        .map(c => `<option value="${escapeHtml(c.id)}" ${c.id === selected ? 'selected' : ''}>#${escapeHtml(c.name)}</option>`)
         .join('');
 }
 
@@ -98,7 +98,7 @@ function hpCheckboxList(items, { name, selected, empty }) {
     if (!items.length) return `<p style="color:var(--text-muted);font-size:.8rem;margin:0">${escapeHtml(empty)}</p>`;
     return items.map(item => `
         <label style="display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .5rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:.8rem;cursor:pointer">
-            <input type="checkbox" class="${name}" value="${item.id}" ${selected.includes(item.id) ? 'checked' : ''} style="accent-color:var(--accent)">
+            <input type="checkbox" class="${name}" value="${escapeHtml(item.id)}" ${selected.includes(item.id) ? 'checked' : ''} style="accent-color:var(--accent)">
             <span>${escapeHtml(item.label)}</span>
         </label>
     `).join('');

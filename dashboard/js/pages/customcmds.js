@@ -18,7 +18,7 @@ function renderRoleOptions(selectedId) {
     const roles = window._availableRoles || [];
     if (roles.length === 0) return '<option value="">Aucun rôle disponible</option>';
     return roles.map(r =>
-        `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>@${escapeHtml(r.name)}</option>`
+        `<option value="${escapeHtml(r.id)}" ${r.id === selectedId ? 'selected' : ''}>@${escapeHtml(r.name)}</option>`
     ).join('');
 }
 
@@ -99,7 +99,7 @@ async function loadCustomCmds(container, guildId) {
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Embed à utiliser</label>
                     <select class="select" id="cmd-embed-select" style="max-width:300px">
                         <option value="">Choisir un embed...</option>
-                        ${(embeds || []).map(e => `<option value="${e.name}">📝 ${e.name}</option>`).join('')}
+                        ${(embeds || []).map(e => `<option value="${escapeHtml(e.name)}">📝 ${escapeHtml(e.name)}</option>`).join('')}
                     </select>
                     ${embeds?.length === 0 ? '<p style="font-size:.8rem;color:var(--text-muted);margin-top:.3rem">Aucun embed — créez-en un dans la section Embeds d\'abord.</p>' : ''}
                 </div>
@@ -108,7 +108,7 @@ async function loadCustomCmds(container, guildId) {
                     <select class="select" id="cmd-access" onchange="toggleCmdAccess()" style="max-width:300px">
                         ${ACCESS_MODES.map(m => `<option value="${m.value}">${m.icon} ${m.label}</option>`).join('')}
                     </select>
-                    <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Les mentions configurées sur l'embed lié sont envoyées à chaque utilisation : restreins l'accès si l'embed ping @everyone.</p>
+                    <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Les mentions configurées sur l'embed lié sont envoyées à chaque utilisation : restreignez l'accès si l'embed ping @everyone.</p>
                 </div>
                 <div id="cmd-access-role-field" style="display:none">
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Rôle autorisé</label>
@@ -148,16 +148,20 @@ function renderCmds(cmds) {
         return '<p style="color:var(--text-muted);font-size:.85rem">Aucune commande custom.</p>';
     }
 
+    // Le contenu d'une commande voyage dans des attributs data-*, relus par
+    // handleCmdAction. Échappement complet et non un simple remplacement des
+    // guillemets : sans échapper l'esperluette, une réponse contenant
+    // littéralement « &quot; » ressortait du DOM avec un vrai guillemet.
     return `<div style="display:flex;flex-direction:column;gap:.5rem" id="cmds-list-inner" onclick="handleCmdAction(event)">
         ${cmds.map(c => `
             <div style="display:flex;align-items:center;flex-wrap:wrap;gap:.75rem;padding:.75rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm)">
-                <code style="color:var(--accent);font-size:.9rem;min-width:100px">/${c.name}</code>
+                <code style="color:var(--accent);font-size:.9rem;min-width:100px">/${escapeHtml(c.name)}</code>
                 <span style="flex:1;color:var(--text-secondary);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                    ${c.embed_id ? `📝 Embed : <strong>${c.embed_name || 'lié'}</strong>` : (c.response?.substring(0, 80) + (c.response?.length > 80 ? '…' : '') || '*vide*')}
+                    ${c.embed_id ? `📝 Embed : <strong>${escapeHtml(c.embed_name || 'lié')}</strong>` : escapeHtml(c.response?.substring(0, 80) + (c.response?.length > 80 ? '…' : '') || '*vide*')}
                 </span>
                 ${renderAccessBadge(c)}
-                <button class="btn" style="font-size:.75rem;padding:.3rem .6rem" data-action="edit" data-name="${c.name}" data-response="${(c.response || '').replace(/"/g, '&quot;')}" data-embed="${c.embed_name || ''}" data-access="${c.access_mode || 'everyone'}" data-access-role="${c.access_role_id || ''}">✏️</button>
-                <button class="btn btn-danger" style="font-size:.75rem;padding:.3rem .6rem" data-action="delete" data-name="${c.name}">🗑️</button>
+                <button class="btn" style="font-size:.75rem;padding:.3rem .6rem" data-action="edit" data-name="${escapeHtml(c.name)}" data-response="${escapeHtml(c.response || '')}" data-embed="${escapeHtml(c.embed_name || '')}" data-access="${escapeHtml(c.access_mode || 'everyone')}" data-access-role="${escapeHtml(c.access_role_id || '')}">✏️</button>
+                <button class="btn btn-danger" style="font-size:.75rem;padding:.3rem .6rem" data-action="delete" data-name="${escapeHtml(c.name)}">🗑️</button>
             </div>
         `).join('')}
     </div>`;

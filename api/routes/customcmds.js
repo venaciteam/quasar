@@ -6,12 +6,15 @@ const { SNOWFLAKE } = require('../services/mentions');
 // synchronisation Discord. Le dashboard et la commande du bot doivent se
 // comporter à l'identique — une seule implémentation, pas deux copies.
 const {
+    normalizeCustomCommandName,
+    reservedCommandNames,
     validateCustomCommandRename,
     updateCustomCommand,
     deployCustomCommand,
     removeCustomCommand,
     syncCustomCommandRename,
 } = require('../../bot/commands/customcmd');
+const { validateChatInputName } = require('../../bot/utils/slashCommandSpec');
 const router = express.Router({ mergeParams: true });
 
 // Un corps de requête peut contenir n'importe quoi, y compris un objet dont la
@@ -54,6 +57,54 @@ function parseAccess(body = {}, fallback = CUSTOM_CMD_ACCESS_DEFAULT, fallbackRo
     return { mode, roleId };
 }
 
+// Validation d'un nom de commande À LA CRÉATION.
+//
+// La création ne faisait qu'un `toLowerCase()` et un remplacement des espaces,
+// là où le renommage passait par la règle de nommage de Discord et la liste des
+// noms réservés. L'asymétrie coûtait cher : un nom porteur de balises était
+// accepté, stocké, puis rendu dans le dashboard — et Discord refusant le lot
+// entier de commandes quand une seule entrée est invalide, ce nom pouvait aussi
+// priver le serveur de TOUTES ses commandes au redéploiement.
+//
+// Mêmes contrôles et mêmes formulations que `validateCustomCommandRename` : les
+// deux surfaces doivent refuser exactement les mêmes noms.
+function validateNewCommandName(db, guildId, rawName) {
+    const nom = normalizeCustomCommandName(asText(rawName));
+
+    if (!nom) {
+        return { error: {
+            cause: 'Le nom de la commande est vide.',
+            action: 'Saisissez un nom entre 1 et 32 caractères, en minuscules et sans espace.',
+        } };
+    }
+
+    const validation = validateChatInputName(nom);
+    if (!validation.valid) {
+        // Motif rédigé dans slashCommandSpec pour être affiché tel quel.
+        return { error: {
+            cause: `Discord refuse ce nom de commande : ${validation.reason}.`,
+            action: 'Choisissez un nom de 1 à 32 caractères, en minuscules, sans espace ni apostrophe (les tirets et underscores sont acceptés).',
+        } };
+    }
+
+    if (reservedCommandNames().has(nom)) {
+        return { error: {
+            cause: `/${nom} est déjà une commande de Quasar.`,
+            action: 'Choisissez un autre nom : une commande personnalisée portant ce nom ne répondrait jamais, et elle disparaîtrait au prochain redémarrage du bot.',
+        } };
+    }
+
+    const collision = db.prepare('SELECT name FROM custom_commands WHERE guild_id = ? AND name = ?').get(guildId, nom);
+    if (collision) {
+        return { error: {
+            cause: `Une commande personnalisée /${nom} existe déjà sur ce serveur.`,
+            action: 'Choisissez un autre nom, ou supprimez d\'abord la commande existante.',
+        } };
+    }
+
+    return { name: nom };
+}
+
 router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
     const db = getDb();
     const cmds = db.prepare('SELECT * FROM custom_commands WHERE guild_id = ?').all(req.params.guildId);
@@ -76,14 +127,13 @@ router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
 // Créer une commande custom
 router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
-    const { name, response, embed_name } = req.body;
-    const cmdName = name?.trim().toLowerCase().replace(/\s+/g, '-');
+    const { response, embed_name } = req.body;
 
-    if (!cmdName) return res.status(400).json({ error: 'Nom requis' });
+    const verdict = validateNewCommandName(db, req.params.guildId, req.body.name);
+    if (verdict.error) return res.status(400).json({ error: `${verdict.error.cause} ${verdict.error.action}` });
+    const cmdName = verdict.name;
+
     if (!response && !embed_name) return res.status(400).json({ error: 'Réponse ou embed requis' });
-
-    const existing = db.prepare('SELECT name FROM custom_commands WHERE guild_id = ? AND name = ?').get(req.params.guildId, cmdName);
-    if (existing) return res.status(400).json({ error: `La commande /${cmdName} existe déjà` });
 
     let embed_id = null;
     if (embed_name) {
@@ -190,3 +240,6 @@ router.delete('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
 });
 
 module.exports = router;
+// Exposée à côté du routeur (même procédé que api/routes/erasure.js) : la
+// validation des noms se teste directement, sans session ni serveur HTTP.
+module.exports.validateNewCommandName = validateNewCommandName;

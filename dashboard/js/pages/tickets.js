@@ -30,14 +30,14 @@ async function loadTickets(container, guildId) {
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Salon d'ouverture <span style="color:var(--accent)">*</span></label>
                         <select class="select" id="setup-channel">
                             <option value="">— Choisir un salon —</option>
-                            ${textChannels.map(c => `<option value="${c.id}"># ${c.name}</option>`).join('')}
+                            ${textChannels.map(c => `<option value="${escapeHtml(c.id)}"># ${escapeHtml(c.name)}</option>`).join('')}
                         </select>
                     </div>
                     <div>
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Rôle staff <span style="color:var(--accent)">*</span></label>
                         <select class="select" id="setup-staff-role">
                             <option value="">— Choisir un rôle —</option>
-                            ${roles.filter(r => r.name !== '@everyone').map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                            ${roles.filter(r => r.name !== '@everyone').map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('')}
                         </select>
                     </div>
                 </div>
@@ -46,7 +46,7 @@ async function loadTickets(container, guildId) {
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Catégorie des tickets</label>
                     <select class="select" id="setup-category">
                         <option value="">— Aucune (racine du serveur) —</option>
-                        ${categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                        ${categories.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('')}
                     </select>
                 </div>
 
@@ -142,14 +142,14 @@ async function loadTickets(container, guildId) {
                 <div>
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Rôle staff</label>
                     <select class="select" id="tickets-staff-role">
-                        ${roles.filter(r => r.name !== '@everyone').map(r => `<option value="${r.id}" ${r.id === config.staff_role_id ? 'selected' : ''}>${r.name}</option>`).join('')}
+                        ${roles.filter(r => r.name !== '@everyone').map(r => `<option value="${escapeHtml(r.id)}" ${r.id === config.staff_role_id ? 'selected' : ''}>${escapeHtml(r.name)}</option>`).join('')}
                     </select>
                 </div>
                 <div>
                     <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Catégorie des tickets</label>
                     <select class="select" id="tickets-category">
                         <option value="">— Aucune (racine du serveur) —</option>
-                        ${categories.map(c => `<option value="${c.id}" ${c.id === config.category_id ? 'selected' : ''}>${c.name}</option>`).join('')}
+                        ${categories.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === config.category_id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
                     </select>
                 </div>
             </div>
@@ -159,11 +159,11 @@ async function loadTickets(container, guildId) {
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
                     <div>
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Titre</label>
-                        <input class="input" id="tickets-panel-title" type="text" placeholder="🎫 Support — Ouvrir un ticket" value="${_escapeHtml(config.panel_title || '')}" style="width:100%">
+                        <input class="input" id="tickets-panel-title" type="text" placeholder="🎫 Support — Ouvrir un ticket" value="${escapeHtml(config.panel_title || '')}" style="width:100%">
                     </div>
                     <div style="grid-column:1/-1">
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.4rem;display:block">Description</label>
-                        <textarea class="input" id="tickets-panel-desc" rows="2" placeholder="Cliquez sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff vous répondra dès que possible." style="width:100%;resize:vertical">${_escapeHtml(config.panel_description || '')}</textarea>
+                        <textarea class="input" id="tickets-panel-desc" rows="2" placeholder="Cliquez sur le bouton ci-dessous pour ouvrir un ticket.&#10;Un membre du staff vous répondra dès que possible." style="width:100%;resize:vertical">${escapeHtml(config.panel_description || '')}</textarea>
                     </div>
                 </div>
                 <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem">Laissez vide pour le message par défaut. Les changements s'appliquent au prochain renvoi du panel.</p>
@@ -172,14 +172,14 @@ async function loadTickets(container, guildId) {
             <div style="margin-top:1rem">
                 <div style="font-size:.9rem;font-weight:600;color:var(--text-primary);margin-bottom:.75rem">👋 Message d'accueil (dans le ticket)</div>
                 <textarea class="input" id="tickets-welcome" rows="3" placeholder="Décrivez votre problème, un membre du staff vous répondra bientôt !"
-                    style="width:100%;resize:vertical">${_escapeHtml(config.welcome_message || '')}</textarea>
+                    style="width:100%;resize:vertical">${escapeHtml(config.welcome_message || '')}</textarea>
             </div>
 
             <div style="margin-top:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
                 <div style="display:flex;gap:.75rem;flex-wrap:wrap">
                     <button class="btn btn-sm" id="tickets-resend-btn" title="Renvoyer le message avec le bouton 🎫 dans un salon">📨 Renvoyer le message</button>
                     <select class="select" id="tickets-resend-channel" style="max-width:200px;font-size:.8rem">
-                        ${textChannels.map(c => `<option value="${c.id}" ${c.id === config.channel_id ? 'selected' : ''}># ${c.name}</option>`).join('')}
+                        ${textChannels.map(c => `<option value="${escapeHtml(c.id)}" ${c.id === config.channel_id ? 'selected' : ''}># ${escapeHtml(c.name)}</option>`).join('')}
                     </select>
                 </div>
                 <button class="btn btn-primary" id="tickets-save-btn">💾 Sauvegarder</button>
@@ -211,8 +211,8 @@ async function loadTickets(container, guildId) {
                     : openTickets.map(t => `
                         <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem">
                             <div>
-                                <span style="color:var(--accent);font-weight:600">#${t.id}</span>
-                                <span style="color:var(--text-primary);font-weight:500;margin-left:.5rem">${_escapeHtml(t.user_name)}</span>
+                                <span style="color:var(--accent);font-weight:600">#${escapeHtml(t.id)}</span>
+                                <span style="color:var(--text-primary);font-weight:500;margin-left:.5rem">${escapeHtml(t.user_name)}</span>
                                 <span style="color:var(--text-muted);font-size:.8rem;margin-left:.5rem">${_formatDate(t.opened_at)}</span>
                             </div>
                             <span style="padding:2px 8px;background:var(--accent);color:#000;border-radius:20px;font-size:.75rem;font-weight:600">Ouvert</span>
@@ -230,10 +230,10 @@ async function loadTickets(container, guildId) {
                     : closedTickets.map(t => `
                         <div style="display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:.5rem">
                             <div style="flex:1;min-width:0">
-                                <span style="color:var(--text-muted);font-weight:600">#${t.id}</span>
-                                <span style="color:var(--text-primary);font-weight:500;margin-left:.5rem">${_escapeHtml(t.user_name)}</span>
+                                <span style="color:var(--text-muted);font-weight:600">#${escapeHtml(t.id)}</span>
+                                <span style="color:var(--text-primary);font-weight:500;margin-left:.5rem">${escapeHtml(t.user_name)}</span>
                                 <span style="color:var(--text-muted);font-size:.8rem;margin-left:.5rem">fermé ${_formatDate(t.closed_at)}</span>
-                                ${t.close_reason ? `<span style="color:var(--text-secondary);font-size:.8rem;margin-left:.5rem">— ${_escapeHtml(t.close_reason)}</span>` : ''}
+                                ${t.close_reason ? `<span style="color:var(--text-secondary);font-size:.8rem;margin-left:.5rem">— ${escapeHtml(t.close_reason)}</span>` : ''}
                             </div>
                         </div>
                     `).join('')}
@@ -320,11 +320,9 @@ function _formatDate(dateStr) {
     return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function _escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+// `escapeHtml` vient de js/utils.js. La copie locale (`_escapeHtml`) échappait
+// par sérialisation `textContent` → `innerHTML`, un procédé qui ne touche ni
+// `"` ni `'` : le titre du panel, rendu dans `value="…"`, sortait de son
+// attribut. Ne pas la recréer.
 
 window.loadTickets = loadTickets;

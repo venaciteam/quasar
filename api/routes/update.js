@@ -1,5 +1,5 @@
 const express = require('express');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, allowTokenInQuery } = require('../middleware/auth');
 const { checkVersion, runUpdate, isUpdating, getEnvironment } = require('../services/updater');
 
 const router = express.Router();
@@ -16,7 +16,9 @@ router.get('/version', requireAuth, async (req, res) => {
 });
 
 // ═══ GET /api/update — SSE stream ═══
-router.get('/update', requireAuth, (req, res) => {
+// Seule route du projet à tolérer le jeton dans la chaîne de requête : le front
+// consomme ce flux avec `EventSource`, qui ne sait pas poser d'en-tête.
+router.get('/update', allowTokenInQuery, requireAuth, (req, res) => {
     if (isUpdating()) {
         return res.status(409).json({ error: 'Une mise à jour est déjà en cours' });
     }

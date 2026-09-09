@@ -28,20 +28,281 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 //  pas le lire, et serait perdu.
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+//  Identification du client derrière les relais
+//
+//  Le limiteur de débit du relais de signalement ne vaut que par la clé qu'il
+//  compte. Se tromper de clé ne le rend pas inefficace : il devient un
+//  INTERRUPTEUR GLOBAL, qu'un seul flood referme sur toutes les visiteuses et
+//  tous les visiteurs à la fois. Pire que pas de limiteur du tout.
+//
+//  Le nombre de relais devant Quasar dépend de l'installation, donc aucune
+//  valeur codée en dur n'est juste :
+//   - auto-hébergement direct (docker-compose officiel, port publié) : aucun
+//     relais, `req.ip` est déjà la bonne adresse ;
+//   - un reverse proxy local (Nginx, Caddy) : un saut ;
+//   - l'instance Venacity : DEUX sauts, Cloudflare PUIS coolify-proxy (Traefik).
+//     Avec `trust proxy` à 1, Express retire un seul maillon et rend l'adresse
+//     de bordure Cloudflare — identique pour la Terre entière.
+//
+//  D'où TRUST_PROXY, à régler par la personne qui exploite l'instance. Défaut
+//  fermé : `false`, l'hypothèse « aucun relais », cohérente avec le reste du
+//  projet (DASHBOARD_HOST en loopback, refus sans BOT_OWNER_ID, etc.). Un
+//  défaut ouvert laisserait n'importe qui forger son propre X-Forwarded-For.
+// ═══════════════════════════════════════════════════════════════
+
+function resoudreTrustProxy() {
+    const brut = (process.env.TRUST_PROXY || '').trim();
+    if (!brut) return false;
+    if (brut === 'true') return true;
+    if (brut === 'false') return false;
+    const n = Number(brut);
+    if (Number.isInteger(n) && n >= 0) return n;
+    // Ni un nombre de sauts, ni un booléen : liste d'adresses ou de CIDR, que
+    // proxy-addr sait consommer telle quelle.
+    return brut;
+}
+
+let trustProxyAvertissementEmis = false;
+
+/**
+ * Pose le réglage sur l'application et avertit une seule fois si l'exploitante
+ * ou l'exploitant ne l'a pas déclaré. L'avertissement compte : sans TRUST_PROXY,
+ * rien ne casse visiblement — le limiteur compte simplement tout le monde
+ * ensemble, et on ne s'en aperçoit que le jour où il refuse les signalements de
+ * tout le monde. Un défaut silencieux mérite une ligne au démarrage.
+ */
+function appliquerTrustProxy(app) {
+    const valeur = resoudreTrustProxy();
+    app.set('trust proxy', valeur);
+
+    if (valeur === false && !trustProxyAvertissementEmis) {
+        trustProxyAvertissementEmis = true;
+        console.warn('[Quasar] TRUST_PROXY non défini : Quasar suppose qu\'aucun relais n\'est devant lui.');
+        console.warn('[Quasar] Derrière un reverse proxy ou Cloudflare, réglez-le (nombre de relais) : sans quoi le limiteur de débit du relais de signalement compte toutes les requêtes sous une seule adresse.');
+    }
+}
+
+/**
+ * Clé de comptage du limiteur de débit.
+ *
+ * `CF-Connecting-IP` porte l'adresse réelle du client et Cloudflare la réécrit
+ * systématiquement, y compris quand le client en fournit une. Elle traverse
+ * donc les deux sauts sans être écrasée, là où X-Forwarded-For est réécrit par
+ * Traefik. Mais elle n'est digne de confiance QUE si un relais de confiance est
+ * effectivement devant : sans relais déclaré, n'importe qui l'inventerait pour
+ * repartir de zéro à chaque requête. D'où la condition sur TRUST_PROXY.
+ */
+function cleClient(req) {
+    if (resoudreTrustProxy() !== false) {
+        const cf = req.headers['cf-connecting-ip'];
+        if (typeof cf === 'string' && cf.trim()) return cf.trim();
+    }
+    return req.ip || req.socket?.remoteAddress || 'inconnue';
+}
+
 function mountFeedbackRelay(app) {
     // Le domaine dev.vena.city utilisé jusqu'ici n'a jamais existé : tous les
     // signalements partaient dans le vide. Le backend réel est Sema.
     const SEMA_URL = process.env.REPORT_RELAY_URL || 'https://sema.vena.city';
     const WEBHOOK_URL = process.env.FEEDBACK_WEBHOOK_URL;
 
+    // ─── Plafond du corps de requête ────────────────────────────────────────
+    //
+    // express.json() ne borne QUE l'application/json (100 ko par défaut). Tout
+    // multipart/form-data lui échappe et atterrit dans relayRaw(), qui empilait
+    // les chunks sans aucune limite : un seul POST de 2 Go suffisait à tuer le
+    // processus par OOM. Or l'API et le bot Discord partagent ce processus — le
+    // bot tombait donc avec elle, sur tous les serveurs à la fois. La route est
+    // publique et non authentifiée dans les trois modes : ce plafond est le
+    // seul rempart.
+    //
+    // 10 Mo : la limite de pièce jointe d'un webhook Discord sans abonnement.
+    // Au-delà, Discord refuserait de toute façon le message.
+    const MAX_BODY_BYTES = 10 * 1024 * 1024;
+
+    // Le DS joint jusqu'à 10 captures ; cinq suffisent à décrire un bug et
+    // bornent le travail du parseur autant que le poids du message.
+    const MAX_FILES = 5;
+    const MAX_FILE_BYTES = 8 * 1024 * 1024;
+    // Borne dure sur le nombre de parties multipart : sans elle, un corps de
+    // 10 Mo découpé en dizaines de milliers de parties minuscules ferait du
+    // parseur une cible de déni de service à lui tout seul.
+    const MAX_PARTS = 32;
+
+    // ─── Limiteur de débit par IP ───────────────────────────────────────────
+    //
+    // Le relais publie dans un salon Discord sans authentification : sans
+    // limite, une boucle curl y déverse ce qu'elle veut aussi vite que le
+    // réseau le permet. Cinq signalements par tranche de dix minutes laissent
+    // largement de quoi décrire un bug puis se corriger, et rendent le flood
+    // inintéressant.
+    //
+    // En mémoire et sans dépendance : le compteur n'a pas besoin de survivre à
+    // un redémarrage (qui remet aussi l'attaque à zéro), et Quasar tourne en un
+    // seul processus.
+    const RATE_WINDOW_MS = 10 * 60 * 1000;
+    const RATE_MAX_HITS = 5;
+    // Borne dure sur la table, même motif que DEDUPE_MAX_ENTRIES dans
+    // services/incidents.js : une clé par IP vue, ça se remplit tout seul sous
+    // une attaque distribuée. Sans plafond, le code qui protège le processus
+    // devient lui-même la fuite mémoire qui le tue.
+    const RATE_MAX_CLIENTS = 1000;
+
+    /** @type {Map<string, { count: number, start: number }>} */
+    const hits = new Map();
+
+    function purgeHits(now) {
+        if (hits.size <= RATE_MAX_CLIENTS) return;
+        for (const [ip, entry] of hits) {
+            if (now - entry.start >= RATE_WINDOW_MS) hits.delete(ip);
+        }
+        // Si rien n'a expiré (afflux d'IP distinctes), on évince les plus
+        // anciennes entrées vues. Un compteur perdu vaut mieux qu'une table qui
+        // grossit sans fin ; et une attaque assez distribuée pour en arriver là
+        // échappait déjà à un limiteur par IP.
+        for (const ip of hits.keys()) {
+            if (hits.size <= RATE_MAX_CLIENTS) break;
+            hits.delete(ip);
+        }
+    }
+
+    /**
+     * Fenêtre fixe : simple à lire, et le pire cas (deux fenêtres consécutives
+     * consommées à cheval) reste borné au double du quota.
+     * @returns {boolean} true si la requête doit être refusée.
+     */
+    function rateLimited(ip, now = Date.now()) {
+        const entry = hits.get(ip);
+        if (!entry || now - entry.start >= RATE_WINDOW_MS) {
+            hits.set(ip, { count: 1, start: now });
+            purgeHits(now);
+            return false;
+        }
+        entry.count += 1;
+        return entry.count > RATE_MAX_HITS;
+    }
+
+    // ─── Fabrication du message Discord ─────────────────────────────────────
+    //
+    // Rien de ce qui arrive de l'extérieur n'est recopié tel quel vers le
+    // webhook : l'objet envoyé est reconstruit ici, champ par champ, à partir
+    // d'une liste blanche. C'est la leçon de la faille corrigée : relayer le
+    // corps brut revenait à donner à n'importe qui le droit d'écrire ce qu'il
+    // voulait dans le salon Discord de Venacity, mentions comprises.
+
+    // Limites de l'API Discord. On tronque au lieu de refuser : une description
+    // trop longue reste un signalement légitime, et Discord rejetterait le
+    // message entier pour un caractère de trop.
+    const MAX_TITLE = 256;
+    const MAX_DESCRIPTION = 4096;
+    const MAX_FIELD_NAME = 256;
+    const MAX_FIELD_VALUE = 1024;
+    const MAX_FOOTER = 2048;
+    const MAX_FIELDS = 25;
+
+    function clamp(text, max) {
+        const value = String(text ?? '');
+        return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+    }
+
+    function isPlainObject(value) {
+        return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    /**
+     * Reconstruit un embed sûr à partir de celui reçu. Toute clé absente de la
+     * liste blanche est ABANDONNÉE — notamment `url` (un titre cliquable est un
+     * vecteur d'hameçonnage) et `image` (une URL arbitraire ferait du salon un
+     * afficheur d'images distantes, et du serveur leur client HTTP).
+     * @returns {object|null} null si la forme reçue n'est pas exploitable.
+     */
+    function sanitizeEmbed(raw) {
+        if (!isPlainObject(raw)) return null;
+        const embed = {};
+
+        if (raw.title !== undefined) {
+            if (typeof raw.title !== 'string') return null;
+            embed.title = clamp(raw.title, MAX_TITLE);
+        }
+        if (raw.description !== undefined) {
+            if (typeof raw.description !== 'string') return null;
+            embed.description = clamp(raw.description, MAX_DESCRIPTION);
+        }
+        if (raw.color !== undefined) {
+            if (!Number.isInteger(raw.color) || raw.color < 0 || raw.color > 0xFFFFFF) return null;
+            embed.color = raw.color;
+        }
+        if (raw.timestamp !== undefined) {
+            // Renormalisé plutôt que recopié : la chaîne repartira vers Discord.
+            if (typeof raw.timestamp !== 'string' || Number.isNaN(Date.parse(raw.timestamp))) return null;
+            embed.timestamp = new Date(raw.timestamp).toISOString();
+        }
+        if (raw.footer !== undefined) {
+            if (!isPlainObject(raw.footer) || typeof raw.footer.text !== 'string') return null;
+            embed.footer = { text: clamp(raw.footer.text, MAX_FOOTER) };
+        }
+        if (raw.fields !== undefined) {
+            if (!Array.isArray(raw.fields)) return null;
+            const fields = [];
+            for (const field of raw.fields.slice(0, MAX_FIELDS)) {
+                if (!isPlainObject(field)) return null;
+                if (typeof field.name !== 'string' || typeof field.value !== 'string') return null;
+                // Discord refuse un champ vide : on écarte plutôt que de casser
+                // l'envoi complet pour un champ optionnel resté vide côté client.
+                if (!field.name.trim() || !field.value.trim()) continue;
+                fields.push({
+                    name: clamp(field.name, MAX_FIELD_NAME),
+                    value: clamp(field.value, MAX_FIELD_VALUE),
+                    inline: field.inline === true,
+                });
+            }
+            embed.fields = fields;
+        }
+
+        // Un embed sans la moindre substance ne dit rien à personne : c'est le
+        // signe d'un corps mal formé, pas d'un signalement.
+        const empty = !embed.title && !embed.description && !(embed.fields || []).length;
+        return empty ? null : embed;
+    }
+
+    /**
+     * Enveloppe Discord acceptée en entrée : `{ embeds: [...] }`, et RIEN
+     * d'autre. Le refus des clés inconnues est volontairement dur : `content`,
+     * `username`, `avatar_url`, `allowed_mentions`, `components`, `poll`,
+     * `thread_name` sont exactement ce qui permettait de faire sonner @everyone
+     * et d'usurper l'identité du webhook. Les tolérer « au cas où » reviendrait
+     * à rouvrir la faille au premier champ ajouté par Discord.
+     * @returns {object|null} l'embed reconstruit, ou null.
+     */
+    function sanitizeIncomingPayload(raw) {
+        if (!isPlainObject(raw)) return null;
+        for (const key of Object.keys(raw)) {
+            if (key !== 'embeds') return null;
+        }
+        if (!Array.isArray(raw.embeds) || raw.embeds.length === 0) return null;
+        // Un seul embed part, comme avant : le DS n'en produit jamais deux.
+        return sanitizeEmbed(raw.embeds[0]);
+    }
+
+    /**
+     * Corps final envoyé au webhook. allowed_mentions vide sur TOUS les envois,
+     * sans exception : c'est ce qui neutralise un « @everyone » écrit dans un
+     * texte. Posé ici, à l'unique endroit qui fabrique un corps Discord, pour
+     * qu'un chemin ajouté plus tard ne puisse pas l'oublier.
+     */
+    function discordBody(embed) {
+        return { embeds: [embed], allowed_mentions: { parse: [] } };
+    }
+
     // Contrat Discord en JSON. Le corps a déjà été consommé par express.json()
     // en amont : on repart de req.body, pas des chunks bruts.
     function relayToWebhook(req, res) {
         if (!WEBHOOK_URL) return res.status(503).json({ error: 'Feedback non configuré' });
-        const { embeds } = req.body || {};
-        if (!embeds || !Array.isArray(embeds)) return res.status(400).json({ error: 'Format invalide' });
+        const embed = sanitizeIncomingPayload(req.body);
+        if (!embed) return res.status(400).json({ error: 'Format invalide' });
         return forwardToWebhook(res, { 'Content-Type': 'application/json' },
-            JSON.stringify({ embeds: embeds.slice(0, 1) }));
+            JSON.stringify(discordBody(embed)));
     }
 
     function forwardToWebhook(res, headers, body) {
@@ -53,21 +314,144 @@ function mountFeedbackRelay(app) {
             .catch(() => res.status(500).json({ error: 'Envoi échoué' }));
     }
 
+    // ─── Lecture du multipart ───────────────────────────────────────────────
+    //
+    // Découpage minimal, sans dépendance : le corps est déjà en mémoire et
+    // borné par MAX_BODY_BYTES, les sous-tableaux ne recopient rien. Il ne sert
+    // QUE pour le chemin Discord, où il faut reconstruire le message. Le chemin
+    // Sema, lui, continue de forwarder les octets d'origine tels quels : Sema
+    // valide de son côté, et le moindre écart de parsing y casserait un contrat
+    // qui tourne en production.
+    const HEAD_SEP = Buffer.from('\r\n\r\n');
+
+    function partHeaders(head) {
+        const disposition = /content-disposition:[^\r\n]*/i.exec(head)?.[0] || '';
+        return {
+            name: /\bname="([^"]*)"/i.exec(disposition)?.[1],
+            filename: /\bfilename="([^"]*)"/i.exec(disposition)?.[1],
+            type: /content-type:\s*([^\r\n;]+)/i.exec(head)?.[1]?.trim().toLowerCase(),
+        };
+    }
+
+    /** @returns {Array<{name?: string, filename?: string, type?: string, data: Buffer}>|null} */
+    function parseMultipart(body, contentType) {
+        const match = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType || '');
+        if (!match) return null;
+        const marker = Buffer.from(`--${match[1] || match[2]}`);
+
+        const parts = [];
+        let cursor = body.indexOf(marker);
+        if (cursor === -1) return null;
+        cursor += marker.length;
+
+        while (parts.length <= MAX_PARTS) {
+            // Épilogue : le délimiteur de fin est suivi de deux tirets.
+            if (body[cursor] === 0x2D && body[cursor + 1] === 0x2D) return parts;
+            const headEnd = body.indexOf(HEAD_SEP, cursor);
+            if (headEnd === -1) return null;
+            const next = body.indexOf(marker, headEnd + HEAD_SEP.length);
+            // Le CRLF qui précède le délimiteur lui appartient, pas à la valeur.
+            if (next === -1 || next - 2 < headEnd + HEAD_SEP.length) return null;
+            parts.push({
+                ...partHeaders(body.subarray(cursor, headEnd).toString('utf8')),
+                data: body.subarray(headEnd + HEAD_SEP.length, next - 2),
+            });
+            cursor = next + marker.length;
+        }
+        return null;
+    }
+
+    /**
+     * Repli Discord AVEC captures. Le payload_json de l'appelant n'est jamais
+     * relayé : il est parsé, passé au même filtre que le chemin JSON, et un
+     * nouveau corps est fabriqué ici. Les fichiers sont renommés côté serveur
+     * (screenshot-N.png, champs fileN) — c'est déjà la convention du DS, et ça
+     * supprime au passage toute injection par le nom de fichier.
+     */
+    function relayMultipartToWebhook(res, body, contentType) {
+        const parts = parseMultipart(body, contentType);
+        if (!parts) return res.status(400).json({ error: 'Format invalide' });
+
+        const payloadPart = parts.find(p => p.name === 'payload_json' && p.filename === undefined);
+        if (!payloadPart) return res.status(400).json({ error: 'Format invalide' });
+
+        let parsed;
+        try {
+            parsed = JSON.parse(payloadPart.data.toString('utf8'));
+        } catch {
+            return res.status(400).json({ error: 'Format invalide' });
+        }
+        const embed = sanitizeIncomingPayload(parsed);
+        if (!embed) return res.status(400).json({ error: 'Format invalide' });
+
+        // Captures seules : ce relais ne sert qu'à ça, et un webhook Discord qui
+        // accepterait n'importe quel type de fichier depuis l'extérieur devient
+        // un hébergeur gratuit pour n'importe quoi.
+        const files = parts
+            .filter(p => p.filename !== undefined && (p.type || '').startsWith('image/'))
+            .filter(p => p.data.length > 0 && p.data.length <= MAX_FILE_BYTES)
+            .slice(0, MAX_FILES);
+
+        // La grande image de l'embed n'est rétablie que si la pièce jointe
+        // correspondante a réellement survécu au filtrage : une référence
+        // attachment:// sans fichier casse l'affichage côté Discord.
+        if (files.length > 0) embed.image = { url: 'attachment://screenshot-0.png' };
+
+        // payload_json en première partie, les fichiers ensuite : c'est l'ordre
+        // des exemples de l'API Discord, autant ne pas s'en écarter.
+        const form = new FormData();
+        form.append('payload_json', JSON.stringify(discordBody(embed)));
+        files.forEach((file, i) => {
+            form.append(`file${i + 1}`, new Blob([file.data], { type: file.type }), `screenshot-${i}.png`);
+        });
+
+        // Pas d'en-tête Content-Type : c'est fetch qui pose celui du FormData,
+        // avec SA boundary. En forcer une ici produirait un corps illisible.
+        return forwardToWebhook(res, undefined, form);
+    }
+
     // Contrat Sema en multipart. Pas besoin de parser le body côté Quasar :
     // on bufferise les chunks bruts et on les forwarde avec le Content-Type
     // d'origine (la boundary du multipart en fait partie).
     function relayRaw(req, res) {
         const chunks = [];
-        req.on('data', chunk => chunks.push(chunk));
+        let received = 0;
+        // Une seule réponse par requête : après le 413, le flux continue
+        // d'arriver et `end` finirait par tirer une seconde fois.
+        let refused = false;
+
+        req.on('data', chunk => {
+            if (refused) return;
+            received += chunk.length;
+            if (received > MAX_BODY_BYTES) {
+                refused = true;
+                chunks.length = 0;
+                res.status(413).json({
+                    error: 'Le signalement dépasse 10 Mo. Merci de joindre des captures plus légères.',
+                });
+                // La suite du flux est lue puis JETÉE, jamais accumulée : c'est
+                // ce qui ferme l'OOM. On ne détruit PAS la socket pour autant —
+                // un RST effacerait la réponse encore en vol côté client, qui ne
+                // verrait qu'une connexion tombée au lieu du 413 que le
+                // formulaire du DS affiche. Le reste de l'envoi coûte de la
+                // bande passante, plus une once de mémoire, et le
+                // `requestTimeout` de Node (5 min) borne le cas du flux lent.
+                return;
+            }
+            chunks.push(chunk);
+        });
+
         req.on('end', async () => {
+            if (refused) return;
             const body = Buffer.concat(chunks);
             const contentType = req.headers['content-type'];
 
             // Repli Discord avec captures : multipart, mais contrat Discord.
             // Le champ payload_json est ajouté en premier par le DS, il tient
             // donc dans les premiers octets — inutile de scanner tout le corps.
-            if (WEBHOOK_URL && body.subarray(0, 1024).includes('name="payload_json"')) {
-                return forwardToWebhook(res, { 'Content-Type': contentType }, body);
+            if (body.subarray(0, 1024).includes('name="payload_json"')) {
+                if (!WEBHOOK_URL) return res.status(503).json({ error: 'Feedback non configuré' });
+                return relayMultipartToWebhook(res, body, contentType);
             }
 
             try {
@@ -83,10 +467,21 @@ function mountFeedbackRelay(app) {
                 return res.status(502).json({ error: 'Impossible de contacter Sema' });
             }
         });
-        req.on('error', () => res.status(500).json({ error: 'Erreur de lecture' }));
+
+        req.on('error', () => {
+            // Le destroy() du 413 provoque lui-même un `error` : ne pas répondre
+            // deux fois.
+            if (refused || res.headersSent) return;
+            res.status(500).json({ error: 'Erreur de lecture' });
+        });
     }
 
     app.post(['/api/feedback', '/api/feedback/vnct'], (req, res) => {
+        if (rateLimited(cleClient(req))) {
+            return res.status(429).json({
+                error: 'Trop de signalements envoyés depuis cette adresse. Merci de réessayer dans quelques minutes.',
+            });
+        }
         const contentType = req.headers['content-type'] || '';
         if (contentType.includes('application/json')) return relayToWebhook(req, res);
         return relayRaw(req, res);
@@ -344,6 +739,8 @@ function createApi(discordClient, mode = 'bot') {
 
     const app = express();
 
+    appliquerTrustProxy(app);
+
     // Middleware
     mountBodyParsers(app);
     app.use(cookieParser());
@@ -443,6 +840,8 @@ function createApi(discordClient, mode = 'bot') {
 function createSiteApi(mode) {
     const app = express();
 
+    appliquerTrustProxy(app);
+
     mountBodyParsers(app);
     mountNoStore(app);
 
@@ -470,4 +869,4 @@ function createSiteApi(mode) {
     return app;
 }
 
-module.exports = { createApi, createSiteApi };
+module.exports = { resoudreTrustProxy, cleClient, createApi, createSiteApi };

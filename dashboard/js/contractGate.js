@@ -317,9 +317,10 @@
 
             // ── Écran d'acceptation ──────────────────────────────────────────
             function renderAcceptance() {
-                // Le texte publie fait foi : on pointe dessus en priorite. La copie
-                // embarquee sert de repli si aucune URL publique n'est configuree.
-                const localUrl = state.url || state.localUrl || LOCAL_URL_FALLBACK;
+                // Le texte publié fait foi : on pointe dessus en priorité. La copie
+                // embarquée sert de repli si aucune URL publique n'est configurée,
+                // ce qui est le cas courant chez une personne qui auto-héberge.
+                const fullTextUrl = state.url || state.localUrl || LOCAL_URL_FALLBACK;
                 const summaryItems = state.summary.length
                     ? state.summary.map(p => `<li>${escapeHtml(p)}</li>`).join('')
                     : `<li>Venacity héberge Quasar pour votre compte : en tant qu'administratrice ou administrateur, vous restez responsable de traitement (art. 28 du RGPD). Prenez connaissance du texte intégral via le lien ci-dessous avant d'accepter.</li>`;
@@ -346,7 +347,7 @@
                             </p>
                             ${degradedNotice}
                             <ul class="cgate-summary">${summaryItems}</ul>
-                            <a class="cgate-fulltext" href="${escapeHtml(localUrl)}" target="_blank" rel="noopener noreferrer">
+                            <a class="cgate-fulltext" href="${escapeHtml(fullTextUrl)}" target="_blank" rel="noopener noreferrer">
                                 ${ICON_DOC} Lire le texte intégral du contrat
                             </a>
                             <label class="cgate-consent" for="cgate-consent-check">

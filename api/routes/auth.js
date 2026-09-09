@@ -100,8 +100,7 @@ router.get('/logout', (req, res) => {
 // Info utilisateur connecté
 router.get('/me', (req, res) => {
     const token = req.cookies?.token
-        || req.headers.authorization?.replace('Bearer ', '')
-        || req.query.token;
+        || req.headers.authorization?.replace('Bearer ', '');
 
     // 401 et non 200 sur un échec. Deux raisons : un 401 n'est jamais mis en
     // cache par défaut, là où un 200 l'est dès qu'un intermédiaire applique son

@@ -23,6 +23,22 @@
   « ## » est ignoré.
 -->
 
+## 🌌 Quasar — v4.8.0
+### Le dashboard et le formulaire de signalement sont durcis
+> *7 septembre 2026*
+
+**🔧 Améliorations**
+- Le formulaire de signalement est désormais limité en débit, et le message publié dans Discord est reconstruit par Quasar champ par champ. Ce qui part de la page ne décide plus seul de ce qui s'affiche dans le salon, mentions comprises.
+- Les réglages de bienvenue et de départ, ainsi que la création d'une commande personnalisée, sont vérifiés au moment de l'enregistrement. Une valeur refusée vous est signalée tout de suite, avec la raison, au lieu d'échouer plus tard sans explication.
+- Le lien « Lire le texte intégral » du contrat de sous-traitance ouvre la copie embarquée dans Quasar, à jour, plutôt qu'une page publique qui n'est pas encore en ligne.
+- Si vous hébergez Quasar vous-même : une nouvelle variable `TRUST_PROXY` indique combien de relais sont placés devant votre instance. Sans elle, la limitation de débit du formulaire de signalement compte toutes les visites sous une seule adresse. Elle est documentée dans le fichier d'exemple de configuration, et Quasar vous le rappelle au démarrage si elle manque.
+
+**🐛 Corrections**
+- Les textes venus de Discord — motif d'une sanction, nom d'un rôle ou d'un salon, emoji d'un panneau de rôles, nom d'un embed — sont désormais échappés partout dans le dashboard. Certains pouvaient jusqu'ici exécuter du code dans le navigateur des personnes qui administrent le serveur.
+- Un envoi volumineux vers le formulaire de signalement ne peut plus faire tomber le bot.
+- Une requête mal formée n'est plus présentée comme une panne de Quasar et ne déclenche plus d'alerte technique pour rien.
+- Le jeton de session n'est plus accepté dans l'adresse d'une page : un lien porteur d'une session ne peut plus être fabriqué.
+
 ## 🌌 Quasar — v4.7.1
 ### Se connecter au dashboard fonctionne de nouveau
 > *7 septembre 2026*
