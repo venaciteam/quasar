@@ -216,25 +216,74 @@ async function deployCommands(client) {
     // Chaque guild a son propre corps : les commandes personnalisées sont
     // propres à un guild_id, il n'y a pas de lot commun à partager.
     for (const guild of client.guilds.cache.values()) {
-        const customRows = customParGuild.get(guild.id) || [];
-        const { body, rejets } = buildGuildCommands(fileCommands, customRows);
-
-        journaliserRejets(rejets, guild.name);
-
-        try {
-            await rest.put(
-                Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guild.id),
-                { body }
-            );
-            const nbCustom = body.length - fileCommands.length;
-            console.log(`[Quasar] Commandes déployées sur ${guild.name} : ${fileCommands.length} de Quasar + ${nbCustom} personnalisée(s)${rejets.length ? `, ${rejets.length} écartée(s)` : ''}`);
-        } catch (error) {
-            // Échec isolé : les autres serveurs doivent quand même être servis.
-            console.error(`[Quasar] Erreur déploiement des commandes sur ${guild.name}:`, error);
-        }
+        await deployToGuild(rest, guild, fileCommands, customParGuild.get(guild.id) || []);
     }
 
     console.log('[Quasar] Commandes slash déployées ✓');
 }
 
-module.exports = { deployCommands };
+/**
+ * Pousse le lot d'un seul serveur. Extrait de la boucle ci-dessus pour être
+ * partagé avec `deployCommandsForGuild`, sans dupliquer la construction du corps
+ * ni la journalisation des rejets : deux copies finiraient par diverger, et un
+ * serveur rejoint en cours de route n'aurait pas exactement le même lot que les
+ * autres.
+ * @returns {Promise<boolean>} true si le lot est passé.
+ */
+async function deployToGuild(rest, guild, fileCommands, customRows) {
+    const { body, rejets } = buildGuildCommands(fileCommands, customRows);
+    journaliserRejets(rejets, guild.name);
+
+    try {
+        await rest.put(
+            Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guild.id),
+            { body }
+        );
+        const nbCustom = body.length - fileCommands.length;
+        console.log(`[Quasar] Commandes déployées sur ${guild.name} : ${fileCommands.length} de Quasar + ${nbCustom} personnalisée(s)${rejets.length ? `, ${rejets.length} écartée(s)` : ''}`);
+        return true;
+    } catch (error) {
+        // Échec isolé : les autres serveurs doivent quand même être servis.
+        console.error(`[Quasar] Erreur déploiement des commandes sur ${guild.name}:`, error);
+        return false;
+    }
+}
+
+/**
+ * Déploie les commandes sur UN serveur, au moment où le bot y est invité.
+ *
+ * `deployCommands` n'avait qu'un seul appelant dans tout le projet : le handler
+ * de démarrage, qui itère sur `client.guilds.cache`. Or la procédure
+ * d'installation documentée démarre le bot AVANT l'invitation. À ce moment-là le
+ * cache est vide, rien n'est déployé, et la personne invite le bot, le voit en
+ * ligne, ouvre le dashboard qui fonctionne… mais AUCUNE commande n'existe sur
+ * son serveur. Le symptôme est indiscernable d'un problème d'intents ou de
+ * permissions, et le remède (redémarrer le conteneur) n'est documenté nulle
+ * part. C'est le premier mur d'une nouvelle installation.
+ *
+ * On ne rappelle surtout pas `deployCommands` ici : elle repousserait le lot sur
+ * TOUS les serveurs à chaque arrivée, ce qui consommerait le quota Discord de
+ * l'instance entière pour un seul nouveau venu.
+ *
+ * @returns {Promise<boolean>} true si le lot est passé.
+ */
+async function deployCommandsForGuild(guild) {
+    let fileCommands;
+    try {
+        fileCommands = loadFileCommands();
+    } catch (error) {
+        console.error('[Quasar] Erreur chargement des commandes de fichiers:', error);
+        return false;
+    }
+
+    // Un serveur qui vient d'être rejoint n'a par définition aucune commande
+    // personnalisée, mais la lecture reste faite : le bot peut avoir été retiré
+    // puis réinvité avant la fin du délai de grâce, auquel cas sa configuration
+    // a été conservée et ses commandes doivent revenir avec lui.
+    const customRows = loadCustomCommandsByGuild().get(guild.id) || [];
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+    return deployToGuild(rest, guild, fileCommands, customRows);
+}
+
+module.exports = { deployCommands, deployCommandsForGuild };

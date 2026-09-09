@@ -1,6 +1,20 @@
 services:
   quasar:
-    build: .
+    build:
+      context: .
+      args:
+        # Le socket Docker de l'hôte est monté plus bas, pour que la mise à jour
+        # lancée depuis le dashboard puisse reconstruire l'image. Encore faut-il
+        # que le processus node ait le droit de lire ce socket : il lui faut le
+        # GID du groupe qui le possède, et ce GID change d'une machine à l'autre
+        # (990, 998, 999…). Le Dockerfile portait 972 en dur et personne ne le
+        # lui passait jamais : la valeur était donc toujours fausse, et le
+        # bouton « Mettre à jour » échouait en « permission denied » au milieu
+        # du flux, après que la personne a cliqué.
+        # setup.sh détecte le GID et l'écrit dans .env, que compose relit ici —
+        # y compris lors de la reconstruction déclenchée depuis le dashboard,
+        # qui n'exporte aucune variable (api/services/updater.js).
+        DOCKER_GID: ${DOCKER_GID:-972}
     container_name: quasar
     restart: unless-stopped
     # Quasar draine à l'arrêt : serveur HTTP, puis boucles des modules, puis
