@@ -38,7 +38,7 @@
 curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash
 ```
 
-Ou manuellement :
+Ou en clonant vous-même :
 
 ```bash
 git clone https://github.com/venaciteam/quasar.git
@@ -46,7 +46,31 @@ cd quasar
 ./setup.sh
 ```
 
-Le script te guide : il demande tes identifiants Discord, crée le `.env`, le volume Docker, build et lance le bot. C'est tout.
+Le script vous guide de bout en bout : il contrôle les prérequis, vous demande vos identifiants Discord en expliquant où les trouver, **vérifie votre jeton auprès de Discord avant de construire quoi que ce soit** (inutile d'attendre plusieurs minutes de compilation pour découvrir une faute de frappe), écrit le `.env`, détecte le groupe Docker de votre machine, vous donne le lien d'invitation du bot, démarre, puis contrôle que le dashboard répond et que le bot est bien connecté.
+
+Il installe la **dernière version publiée**, pas l'état courant du dépôt : deux personnes qui installent le même jour obtiennent le même code.
+
+<details>
+<summary>Options du script</summary>
+
+| Option | Effet |
+|---|---|
+| `--dev` | Installer l'état courant de la branche `main` au lieu de la dernière version publiée |
+| `-y`, `--non-interactive` | Ne rien demander : toute la configuration vient de l'environnement |
+| `--reconfigure` | Régénérer le `.env` d'une installation existante (l'ancien est sauvegardé à côté) |
+| `--help` | La liste complète des variables lues dans l'environnement |
+
+Installation sans aucune question, pour un déploiement automatisé :
+
+```bash
+DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… ./setup.sh --non-interactive
+```
+
+Toute variable déjà présente dans votre environnement n'est pas redemandée.
+
+</details>
+
+> **Vous installez à distance, en SSH ?** Le dashboard n'écoute que sur la machine qui l'héberge : ouvrir `http://localhost:3000` depuis votre ordinateur ne donnerait rien. Le script détecte ce cas, vous l'explique, et vous propose d'ouvrir l'accès au réseau local. Il ne le fait jamais sans votre accord, et affiche à la fin l'adresse réellement joignable.
 
 ### Installation manuelle
 
@@ -150,21 +174,40 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 Sur le Developer Portal → **OAuth2 → URL Generator** :
 - Scopes : `bot` + `applications.commands`
 - Permissions : `Administrator`
-- Copie l'URL et ouvre-la pour inviter le bot sur ton serveur
+- Copiez l'URL et ouvrez-la pour inviter le bot sur votre serveur
 
-Le dashboard génère aussi cette URL pour toi, une fois le bot lancé.
+Vous n'avez normalement pas à faire ça vous-même : **le script d'installation compose et affiche ce lien**, au bon moment, juste avant de démarrer le bot. Le dashboard le génère également.
 
-> Pourquoi Administrator : ça évite de revenir ajuster les permissions à chaque module activé. Si tu préfères le principe du moindre privilège, voici le minimum, et à quoi sert chaque permission :
+> **Invitez le bot AVANT de démarrer, ou après — mais sachez pourquoi.** Les commandes slash sont déployées serveur par serveur. Elles arrivent désormais dès que le bot rejoint un serveur, donc l'ordre n'a plus d'importance. Ce n'était pas le cas avant la v4.10.0 : un bot lancé avant d'être invité restait sans aucune commande jusqu'au redémarrage suivant, ce qui ressemblait à s'y méprendre à un problème d'intents.
+
+> **Pourquoi Administrator** : ça évite de revenir ajuster les permissions à chaque module activé. Si vous préférez le principe du moindre privilège, la liste complète est ci-dessous — avec un lien d'invitation tout prêt.
+>
+> **Le socle, sans lequel le bot ne peut rien faire du tout :**
+>
+> - **Voir les salons** et **Envoyer des messages** — sans elles, aucun message de bienvenue, aucun panneau de tickets, aucune réponse ;
+> - **Intégrer des liens** — la quasi-totalité des réponses de Quasar sont des embeds ; sans cette permission elles n'apparaissent pas ;
+> - **Joindre des fichiers** — le transcript d'un ticket est remis en pièce jointe à la fermeture. Sans elle, Quasar **refuse de fermer le ticket** plutôt que de perdre la conversation ;
+> - **Lire l'historique des messages** — nécessaire à `/clear` et à la constitution des transcripts ;
+> - **Ajouter des réactions** — le bot pose lui-même les réactions des panneaux de rôles.
+>
+> **Les permissions par module :**
 >
 > - **Gérer les salons** — tickets et salons vocaux temporaires ;
+> - **Déplacer des membres** — TempVoice déplace la personne dans le salon qu'il vient de créer pour elle. Sans cette permission, le salon est créé et elle reste dans le salon d'accueil, sans explication ;
 > - **Gérer les rôles** — autoroles, reaction roles, rôles vocaux ;
 > - **Gérer les messages** — `/clear` ;
 > - **Expulser des membres** — `/kick` et les expulsions automatiques ;
 > - **Bannir des membres** — `/ban`, mais aussi vérifier quels bannissements sont encore en vigueur avant de purger d'anciennes sanctions, et lever un bannissement temporaire à son échéance ;
 > - **Modérer les membres** — toutes les exclusions temporaires : `/mute`, l'escalade par avertissements, l'anti-raid, et celles posées par une règle AutoMod ;
-> - **Gérer le serveur** — tout ce qui touche à l'AutoMod de Discord, **y compris la simple lecture de tes règles**, et la mise en pause des invitations du mode panique anti-raid.
+> - **Gérer le serveur** — tout ce qui touche à l'AutoMod de Discord, **y compris la simple lecture de vos règles**, et la mise en pause des invitations du mode panique anti-raid.
 >
-> Les deux dernières sont les plus faciles à oublier, et ce sont celles qui rendent la modération automatique inopérante. Sans **Gérer le serveur**, l'onglet AutoMod du dashboard refuse d'afficher quoi que ce soit — il te dit au moins laquelle activer —, et le mode panique de l'anti-raid échoue sans rien dire ailleurs que dans les logs du bot. Sans **Modérer les membres**, aucune exclusion temporaire n'est possible : ni `/mute`, ni un palier d'escalade, ni une règle AutoMod qui exclut.
+> **Lien d'invitation avec exactement ces permissions**, en remplaçant l'identifiant par le vôtre :
+>
+> ```
+> https://discord.com/api/oauth2/authorize?client_id=VOTRE_CLIENT_ID&permissions=1099796966518&scope=bot%20applications.commands
+> ```
+>
+> Les deux dernières de la liste par module sont les plus faciles à oublier, et ce sont celles qui rendent la modération automatique inopérante. Sans **Gérer le serveur**, l'onglet AutoMod du dashboard refuse d'afficher quoi que ce soit — il vous dit au moins laquelle activer —, et le mode panique de l'anti-raid échoue sans rien dire ailleurs que dans les journaux du bot. Sans **Modérer les membres**, aucune exclusion temporaire n'est possible : ni `/mute`, ni un palier d'escalade, ni une règle AutoMod qui exclut.
 
 ---
 
@@ -177,6 +220,11 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 ```
 
 > **Note :** Le build initial peut prendre quelques minutes sur Pi (compilation du module natif `better-sqlite3`).
+
+Deux choses valent d'être sues avant de se lancer sur un Pi :
+
+- **Vous installez presque toujours en SSH.** Le dashboard écoute par défaut sur la seule machine qui l'héberge, donc `http://localhost:3000` depuis votre ordinateur ne donnera rien. Le script détecte la session distante et vous propose d'ouvrir l'accès au réseau local ; si vous refusez, il vous affiche la commande de tunnel `ssh -L` à utiliser.
+- **Le jeton est vérifié avant la compilation.** Sur un Pi, construire l'image prend plusieurs minutes : découvrir une faute de frappe dans le jeton à la fin de ce délai était particulièrement décourageant. Le script interroge Discord d'abord et vous confirme le nom du bot.
 
 ---
 
@@ -292,15 +340,26 @@ Avant, il fallait tenir 24 références à la main à chaque release. Un oubli n
 
 ## ⬆ Mise à jour
 
-Quasar vérifie automatiquement les nouvelles versions sur GitHub. Quand une mise à jour est disponible, un bandeau apparaît dans le dashboard. Clique sur "Mettre à jour" pour lancer le processus avec un terminal temps réel. En cas d'échec, un rollback automatique restaure la version précédente.
+Quasar vérifie automatiquement les nouvelles versions sur GitHub. Quand une mise à jour est disponible, un bandeau apparaît dans le dashboard. Cliquez sur « Mettre à jour » pour lancer le processus, avec un terminal en temps réel. En cas d'échec, un rollback automatique restaure la version précédente.
 
 Le système supporte les deux modes de déploiement :
 - **Docker** : git pull + rebuild image + restart container
 - **Natif** : git pull + npm ci + restart process
 
+> [!WARNING]
+> **Ce que la mise à jour en un clic vous coûte, et comment y renoncer**
+>
+> Pour se reconstruire elle-même, l'instance Docker monte deux choses que le `docker-compose.yml` fourni déclare : le **socket Docker de l'hôte** (`/var/run/docker.sock`) et le **code source en écriture** (`.:/host-app`).
+>
+> Il faut le dire franchement : l'accès en écriture au socket Docker équivaut à un accès root sur la machine hôte. Ce n'est pas un défaut, c'est le prix de la fonctionnalité — mais c'est un prix qui doit être choisi, pas subi. Concrètement, toute exécution de code à l'intérieur du conteneur devient une compromission de l'hôte, et le montage du code en écriture permet de modifier les sources qui seront reconstruites à la mise à jour suivante.
+>
+> **Vous n'en avez pas besoin** si vous mettez Quasar à jour à la main (`git pull` puis `docker compose up -d --build`), ce qui est parfaitement raisonnable. Dans ce cas, retirez les deux volumes de votre `docker-compose.yml` : l'updater détecte l'absence et répond proprement que la configuration est incomplète, sans rien casser d'autre. Le bouton reste affiché, il refuse simplement de s'exécuter.
+>
+> Pour information, l'instance publique de Venacity tourne **sans** ces montages.
+
 > **Arrêt propre** — Sur `SIGTERM` (redéploiement Docker, `docker compose down`, systemd) comme sur `SIGINT` (Ctrl+C), Quasar draine dans l'ordre : serveur HTTP, boucles des modules, client Discord, puis base de données, avec un délai maximum de 15 secondes au-delà duquel il sort quand même. C'est ce qui évite qu'un redéploiement coupe une notification de violation de données entre l'envoi du message privé et son marquage en base — la personne concernée la recevrait alors une seconde fois. La mise à jour native emprunte ce même chemin, et suppose donc un superviseur qui relance le processus (`restart: always` en Docker, ou systemd).
 
-> **Instances installées avant le renommage du dépôt** — le dépôt s'appelait `venaciteam/quasar-discord`. GitHub redirige les opérations `git` et les liens vers le nouveau nom : les instances existantes continuent de se mettre à jour sans rien faire. Pour aligner ton clone malgré tout : `git remote set-url origin https://github.com/venaciteam/quasar.git`.
+> **Instances installées avant le renommage du dépôt** — le dépôt s'appelait `venaciteam/quasar-discord`. GitHub redirige les opérations `git` et les liens vers le nouveau nom : les instances existantes continuent de se mettre à jour sans rien faire. Pour aligner votre clone malgré tout : `git remote set-url origin https://github.com/venaciteam/quasar.git`.
 
 ---
 

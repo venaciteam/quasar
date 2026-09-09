@@ -19,3 +19,14 @@ jobs:
       # en natif, la version doit être exactement celle testée).
       - run: npm ci
       - run: npm test
+
+  # L'installateur est du shell, que `npm test` exécute mais ne relit pas.
+  # shellcheck attrape la classe d'erreurs qui l'a cassé par le passé : une
+  # expansion non protégée, un code de retour ignoré, un `read` dont l'échec
+  # passe inaperçu. Il est préinstallé sur les runners Ubuntu.
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck --severity=warning install.sh setup.sh
