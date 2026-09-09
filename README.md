@@ -74,7 +74,7 @@ cp .env.example .env
 | `DISCORD_CLIENT_ID` | Client ID (onglet OAuth2) |
 | `DISCORD_CLIENT_SECRET` | Client Secret (onglet OAuth2) |
 | `CALLBACK_URL` | URL de callback OAuth2 — `http://localhost:3000/callback` par défaut. Si tu ouvres le dashboard au réseau, mets l'IP du serveur (ex: `http://192.168.1.100:3000/callback`) |
-| `JWT_SECRET` | Chaîne aléatoire pour signer les JWT (génère avec `openssl rand -hex 32`) |
+| `JWT_SECRET` | Clé de signature des sessions du dashboard. **Vide dans `.env.example`**, à générer avec `openssl rand -hex 32` — Quasar refuse de démarrer tant qu'elle est absente, laissée sur une valeur d'exemple ou plus courte que 32 caractères |
 | `PORT` | Port du dashboard (défaut: `3000`) |
 | `BIND_ADDRESS` | **Exposition du dashboard en Docker** — `127.0.0.1` (défaut) = accessible seulement depuis la machine hôte, `0.0.0.0` = ouvert au réseau |
 | `DASHBOARD_HOST` | Équivalent hors Docker (lancement direct par `node index.js`). Ne pas y toucher en conteneur : le Dockerfile le force à `0.0.0.0` |
@@ -91,6 +91,10 @@ cp .env.example .env
 | `QUASAR_ADMIN_API_KEY` | Clé d'administration du journal des nouveautés (`/api/admin/nouveautes`). **Vide par défaut** : sans elle, ces routes répondent 503 et rien ne peut être publié |
 | `STRIPE_LINK_ONCE_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_CUSTOM` | Liens de paiement ponctuels de la page `/soutenir`. Chacun est optionnel : un lien absent masque son bouton |
 | `STRIPE_LINK_MONTHLY_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_10` | Idem pour les soutiens mensuels. Si **aucun** lien n'est défini, `/soutenir` bascule d'elle-même en mode « bientôt » |
+
+> **Quasar contrôle sa configuration au démarrage** — Les cinq variables ci-dessus (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `CALLBACK_URL`, `JWT_SECRET`) sont vérifiées avant toute connexion à Discord : présence, valeur d'exemple laissée en place, et longueur minimale pour le secret de signature. Toutes celles qui manquent sont annoncées **d'un seul coup**, avec ce que chacune rend possible — une seule relance suffit à corriger le fichier `.env`. En `QUASAR_MODE=site` (vitrine seule), aucune n'est exigée : ce mode ne démarre ni bot, ni API métier, ni base.
+>
+> Le refus de démarrer est délibéré. Sans `JWT_SECRET`, les sessions du dashboard étaient signées avec une valeur écrite dans ce dépôt public, et n'importe qui pouvait forger un jeton d'administration.
 
 > **🔒 Le dashboard est fermé par défaut** — Il n'écoute que sur la machine qui l'héberge. C'est volontaire : le dashboard donne accès à toute la configuration du bot et aux données de tes serveurs (sanctions, tickets, configs). Tant que tu n'y touches pas, personne d'autre sur ton réseau ne peut l'atteindre.
 >
@@ -293,6 +297,8 @@ Quasar vérifie automatiquement les nouvelles versions sur GitHub. Quand une mis
 Le système supporte les deux modes de déploiement :
 - **Docker** : git pull + rebuild image + restart container
 - **Natif** : git pull + npm ci + restart process
+
+> **Arrêt propre** — Sur `SIGTERM` (redéploiement Docker, `docker compose down`, systemd) comme sur `SIGINT` (Ctrl+C), Quasar draine dans l'ordre : serveur HTTP, boucles des modules, client Discord, puis base de données, avec un délai maximum de 15 secondes au-delà duquel il sort quand même. C'est ce qui évite qu'un redéploiement coupe une notification de violation de données entre l'envoi du message privé et son marquage en base — la personne concernée la recevrait alors une seconde fois. La mise à jour native emprunte ce même chemin, et suppose donc un superviseur qui relance le processus (`restart: always` en Docker, ou systemd).
 
 > **Instances installées avant le renommage du dépôt** — le dépôt s'appelait `venaciteam/quasar-discord`. GitHub redirige les opérations `git` et les liens vers le nouveau nom : les instances existantes continuent de se mettre à jour sans rien faire. Pour aligner ton clone malgré tout : `git remote set-url origin https://github.com/venaciteam/quasar.git`.
 

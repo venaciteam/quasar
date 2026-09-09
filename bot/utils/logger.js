@@ -40,7 +40,19 @@ function getLogConfig(guildId) {
     const mod = db.prepare('SELECT config FROM modules WHERE guild_id = ? AND module_name = ?')
         .get(guildId, 'moderation');
     if (!mod) return {};
-    return JSON.parse(mod.config || '{}');
+    try {
+        return JSON.parse(mod.config || '{}');
+    } catch (err) {
+        // Une seule ligne `modules.config` corrompue faisait lever cette
+        // fonction, donc `sendLog`, donc `guildMemberAdd` — AVANT le message de
+        // bienvenue et AVANT les autorôles. L'équipe du serveur constatait « les
+        // autorôles ne marchent plus », sans aucun lien visible avec la cause.
+        // Une configuration de journalisation illisible ne doit priver que de la
+        // journalisation : on repart sur une configuration vide, et on le dit
+        // une fois dans les journaux du serveur.
+        console.error(`[Quasar] Configuration de journalisation illisible pour le serveur ${guildId} : ${err.message}. Journalisation désactivée pour ce serveur jusqu'à correction.`);
+        return {};
+    }
 }
 
 function isLogEnabled(guildId, logType) {

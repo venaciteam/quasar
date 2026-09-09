@@ -185,7 +185,18 @@ async function runNativeUpdate(onLog) {
 
         setTimeout(() => {
             updating = false;
-            process.exit(0);
+            // Signal plutôt que process.exit(0) : c'est index.js qui tient l'ordre
+            // d'arrêt (serveur HTTP, boucles des modules, client Discord, base), et
+            // process.exit ne déclenche NI SIGTERM NI SIGINT — la mise à jour
+            // coupait donc le processus au milieu de ce qui était en vol, sans rien
+            // drainer. S'envoyer le signal fait passer la mise à jour par exactement
+            // le même chemin qu'un redéploiement.
+            //
+            // ⚠️ Ce que ce chemin suppose, et qu'aucun code ne peut garantir : un
+            // superviseur qui relance le processus (docker compose avec
+            // `restart: always`, ou systemd). Sans lui, la mise à jour native ARRÊTE
+            // le bot au lieu de le redémarrer.
+            process.kill(process.pid, 'SIGTERM');
         }, 1500);
 
     } catch (err) {

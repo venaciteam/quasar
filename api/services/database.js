@@ -63,28 +63,50 @@ function getDb() {
         }, CHECKPOINT_INTERVAL);
         if (checkpointTimer.unref) checkpointTimer.unref();
 
-        // --- Graceful shutdown ---
-        const shutdown = (signal) => {
-            console.log(`[Quasar DB] Signal ${signal} reçu, checkpoint final...`);
-            try {
-                if (checkpointTimer) clearInterval(checkpointTimer);
-                if (db && db.open) {
-                    db.pragma('wal_checkpoint(TRUNCATE)');
-                    db.close();
-                    console.log('[Quasar DB] Base fermée proprement.');
-                }
-            } catch (err) {
-                console.error('[Quasar DB] Erreur lors du shutdown :', err.message);
-            }
-            process.exit(0);
-        };
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
-        process.on('SIGINT', () => shutdown('SIGINT'));
+        // La gestion des signaux vivait ICI, et elle a été remontée dans index.js.
+        // Voir fermerBase() plus bas : le pourquoi y est écrit en entier.
 
         console.log('[Quasar DB] Base initialisée :', DB_PATH);
         console.log('[Quasar DB] Checkpoint WAL programmé toutes les', CHECKPOINT_INTERVAL / 1000, 's');
     }
     return db;
+}
+
+/**
+ * Ferme la base : arrêt du checkpoint périodique, checkpoint final, fermeture.
+ *
+ * ⚠️ Ce module n'écoute PLUS SIGTERM ni SIGINT, et ne doit pas recommencer.
+ * Son ancien gestionnaire était le seul du projet et sortait par un
+ * `process.exit(0)` immédiat : il coupait le processus au milieu des `await` en
+ * vol, sans fermer le serveur HTTP, sans déconnecter le client Discord et sans
+ * arrêter les boucles des modules — dont les `stop()` n'étaient donc jamais
+ * appelés. Le prix concret : la notification de violation de données envoie le
+ * message privé PUIS marque la ligne en base ; un signal entre les deux, c'est
+ * à dire n'importe quel redéploiement, laisse la ligne en `pending` et la
+ * personne reçoit une SECONDE notification de violation de ses données. Même
+ * schéma pour un rappel programmé, republié avec son @everyone au redémarrage.
+ *
+ * L'ordre d'arrêt est désormais tenu par index.js, qui ferme la base en
+ * DERNIER : elle est la dernière à écrire, elle doit être la dernière fermée.
+ *
+ * Idempotente, et appelable même si la base n'a jamais été ouverte.
+ * @returns {boolean} true si une base ouverte vient d'être fermée.
+ */
+function fermerBase() {
+    if (checkpointTimer) {
+        clearInterval(checkpointTimer);
+        checkpointTimer = null;
+    }
+    if (!db || !db.open) return false;
+    try {
+        db.pragma('wal_checkpoint(TRUNCATE)');
+        db.close();
+        console.log('[Quasar DB] Base fermée proprement (checkpoint final effectué).');
+        return true;
+    } catch (err) {
+        console.error('[Quasar DB] Erreur à la fermeture de la base :', err.message);
+        return false;
+    }
 }
 
 function initTables() {
@@ -1206,6 +1228,7 @@ function formatMinutes(minutes) {
 
 module.exports = {
     getDb,
+    fermerBase,
     CUSTOM_CMD_ACCESS_MODES,
     CUSTOM_CMD_ACCESS_DEFAULT,
     effectiveAccessMode,
