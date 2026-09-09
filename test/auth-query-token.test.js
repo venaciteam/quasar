@@ -8,11 +8,16 @@
 // fuite : une URL part dans les journaux du proxy et dans l'en-tête `Referer`
 // des ressources tierces chargées par la page, dont le design system distant.
 //
-// L'exception est `/api/update` : le front consomme son flux SSE avec
+// L'exception était `/api/update`, dont le front consommait le flux SSE avec
 // `EventSource`, la seule API du navigateur incapable de poser un en-tête
-// `Authorization`. Elle opte explicitement pour la tolérance via
-// `allowTokenInQuery`, ce qui rend l'exception visible à la lecture de la route
-// au lieu d'être un comportement implicite du middleware d'authentification.
+// `Authorization`. Elle a disparu : la route est passée en POST — un GET
+// permettait de déclencher une mise à jour par simple préchargement de lien — et
+// le front lit désormais le flux avec fetch + ReadableStream, en-tête compris.
+// PLUS AUCUNE route ne lit le jeton dans l'URL, et le balayage ci-dessous le
+// vérifie sur l'ensemble d'`api/`. `allowTokenInQuery` subsiste dans
+// `middleware/auth.js` sans plus aucun appelant : le test tolère sa présence
+// (sa suppression relève d'un autre fichier), mais interdit qu'une route s'en
+// serve à nouveau.
 //
 // QUASAR_DB_PATH et JWT_SECRET doivent être posés AVANT les require.
 process.env.QUASAR_DB_PATH = ':memory:';
@@ -62,7 +67,13 @@ test('le meme jeton valide passe en chaine de requete est refuse', async () => {
     assert.equal(res.status, 401);
 });
 
-test('allowTokenInQuery promeut le jeton de la requete en en-tete', () => {
+// Les deux tests unitaires suivants décrivent `allowTokenInQuery`, qui n'a plus
+// aucun appelant. Ils se désactivent d'eux-mêmes le jour où la fonction sera
+// retirée de middleware/auth.js : le garde-fou qui compte, c'est le balayage du
+// code plus bas, pas la survie d'une fonction morte.
+const middlewareEncorePresent = typeof allowTokenInQuery === 'function';
+
+test('allowTokenInQuery promeut le jeton de la requete en en-tete', { skip: !middlewareEncorePresent }, () => {
     const req = { query: { token: 'abc' }, headers: {} };
     let suivant = false;
     allowTokenInQuery(req, {}, () => { suivant = true; });
@@ -70,19 +81,20 @@ test('allowTokenInQuery promeut le jeton de la requete en en-tete', () => {
     assert.equal(suivant, true);
 });
 
-test('allowTokenInQuery n ecrase jamais un en-tete Authorization existant', () => {
+test('allowTokenInQuery n ecrase jamais un en-tete Authorization existant', { skip: !middlewareEncorePresent }, () => {
     const req = { query: { token: 'usurpe' }, headers: { authorization: 'Bearer legitime' } };
     allowTokenInQuery(req, {}, () => {});
     assert.equal(req.headers.authorization, 'Bearer legitime');
 });
 
-test('aucune autre route de l API ne lit le jeton dans la chaine de requete', () => {
+test('aucune route de l API ne lit le jeton dans la chaine de requete', () => {
     // Balayage du code source : `req.query.token` ne doit subsister que dans la
-    // definition de `allowTokenInQuery`. Toute reapparition ailleurs rouvre la
-    // fabrication d URL porteuses de session, sans qu aucun test fonctionnel ne
-    // le voie passer.
+    // definition de `allowTokenInQuery`, qui n a plus aucun appelant. Toute
+    // reapparition ailleurs rouvre la fabrication d URL porteuses de session, sans
+    // qu aucun test fonctionnel ne le voie passer.
     const racine = path.join(__dirname, '..', 'api');
     const trouvailles = [];
+    const utilisateurs = [];
 
     (function parcourir(dossier) {
         for (const entree of fs.readdirSync(dossier, { withFileTypes: true })) {
@@ -91,9 +103,12 @@ test('aucune autre route de l API ne lit le jeton dans la chaine de requete', ()
             if (!entree.name.endsWith('.js')) continue;
             const source = fs.readFileSync(chemin, 'utf8');
             source.split('\n').forEach((ligne, i) => {
-                if (/req\.query\.token/.test(ligne)) {
-                    trouvailles.push(`${path.relative(racine, chemin)}:${i + 1}`);
-                }
+                const repere = `${path.relative(racine, chemin)}:${i + 1}`;
+                if (/req\.query\.token/.test(ligne)) trouvailles.push(repere);
+                // Une route qui se remettrait a importer ou poser
+                // `allowTokenInQuery` reviendrait au meme resultat sans jamais
+                // ecrire `req.query.token` elle-meme.
+                if (/allowTokenInQuery/.test(ligne)) utilisateurs.push(repere);
             });
         }
     })(racine);
@@ -103,5 +118,12 @@ test('aucune autre route de l API ne lit le jeton dans la chaine de requete', ()
     const horsMiddleware = trouvailles.filter(t => !t.startsWith('middleware/auth.js:'));
     assert.deepEqual(horsMiddleware, [],
         `req.query.token attendu uniquement dans allowTokenInQuery, trouve aussi : ${horsMiddleware.join(', ')}`);
-    assert.ok(trouvailles.length > 0, 'allowTokenInQuery doit toujours lire req.query.token');
+
+    // On ne verifie plus qu une occurrence SUBSISTE : la derniere route qui optait
+    // pour la tolerance (`GET /api/update`) est passee en POST, donc
+    // `allowTokenInQuery` est desormais du code mort dont la suppression est
+    // souhaitable. L exigence qui reste est l inverse : plus personne ne s en sert.
+    const horsDefinition = utilisateurs.filter(t => !t.startsWith('middleware/auth.js:'));
+    assert.deepEqual(horsDefinition, [],
+        `allowTokenInQuery ne doit plus etre utilise par aucune route, trouve : ${horsDefinition.join(', ')}`);
 });

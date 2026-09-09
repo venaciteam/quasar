@@ -56,6 +56,19 @@ const SWEEP_BOOT_DELAY_MS = 10_000;
 let sweepHandle = null;
 let sweepBootHandle = null;
 
+// Verrou de ré-entrance du balayage. Le tick est de 15 s et une levée fait des
+// appels réseau : sur plusieurs serveurs échus en même temps, un tour peut
+// déborder sur le suivant, qui relirait alors les MÊMES lignes (elles ne sont
+// supprimées qu'une fois la levée faite) et posterait un second message
+// « Mode panique levé » dans le salon de logs. Modèle : bot/modules/breach/index.js.
+let sweeping = false;
+
+// Verrou par serveur. Le balayage n'est pas le seul chemin vers liftPanic : une
+// levée manuelle (commande, dashboard) peut tomber exactement pendant celle du
+// balayage, et le verrou de boucle ne la verrait pas passer. Deux levées
+// simultanées sur un même serveur = deux messages de levée.
+const lifting = new Set();
+
 // ─── Persistance ────────────────────────────────────────────────────────────
 
 /** Ligne de mode panique d'un serveur, ou null. Ne lève jamais. */
@@ -234,39 +247,64 @@ async function enterPanic(guild, { durationSeconds, reason, triggeredBy = 'detec
 async function liftPanic(guild, { row = null, liftedBy = null, logChannelId = null } = {}) {
     if (!guild) return { ok: false, error: 'Serveur indisponible.' };
 
-    const state = row || getPanicRow(guild.id);
-    if (!state) return { ok: false, skipped: 'not_active' };
-
-    // Les invitations étaient déjà en pause avant mon intervention : je retire
-    // mon échéance, pas la décision de quelqu'un d'autre.
-    if (state.previous_invites_disabled) {
-        forgetPanicRow(guild.id);
-        await sendPanicLog(guild, { entering: false, method: state.method, liftedBy, restoredNothing: true, logChannelId });
-        return { ok: true };
-    }
-
+    // Verrou de ré-entrance, à la maille du serveur : c'est là qu'un doublon se
+    // verrait (deux messages de levée pour une seule levée).
+    if (lifting.has(guild.id)) return { ok: false, skipped: 'in_progress' };
+    lifting.add(guild.id);
     try {
-        if (state.method === METHOD_INVITES_DISABLED) {
-            await guild.disableInvites(false);
-        } else {
-            await guild.setIncidentActions({ invitesDisabledUntil: null });
-        }
-    } catch (err) {
-        // Le repli n'a pas d'échéance côté Discord : tant qu'il n'est pas levé,
-        // le serveur reste fermé. On garde la ligne et on retentera — c'est la
-        // même règle que la levée des bannissements temporaires.
-        if (state.method === METHOD_INVITES_DISABLED) {
-            console.error('[Quasar Anti-raid] Levée du mode panique en échec, nouvelle tentative au prochain passage :', err?.message);
-            return { ok: false, retry: true, error: err?.message || 'Erreur inconnue.' };
-        }
-        // Méthode native : l'échéance est tenue par Discord, le serveur est déjà
-        // rouvert ou le sera à la seconde près. Insister n'apporterait rien.
-        console.error('[Quasar Anti-raid] Retrait de l\'action d\'incident en échec (sans conséquence, Discord tient l\'échéance) :', err?.message);
-    }
+        const state = row || getPanicRow(guild.id);
+        if (!state) return { ok: false, skipped: 'not_active' };
 
-    forgetPanicRow(guild.id);
-    await sendPanicLog(guild, { entering: false, method: state.method, liftedBy, logChannelId });
-    return { ok: true };
+        // Les invitations étaient déjà en pause avant mon intervention : je retire
+        // mon échéance, pas la décision de quelqu'un d'autre.
+        if (state.previous_invites_disabled) {
+            forgetPanicRow(guild.id);
+            await sendPanicLog(guild, { entering: false, method: state.method, liftedBy, restoredNothing: true, logChannelId });
+            return { ok: true };
+        }
+
+        // ─── ORDRE DES ÉCRITURES ────────────────────────────────────────────
+        // Méthode native : l'échéance est tenue par Discord, le serveur se rouvre
+        // même si ce processus disparaît. La ligne est donc supprimée AVANT
+        // l'appel : un SIGTERM entre l'appel et la suppression (redéploiement)
+        // laisserait sinon la ligne échue en base, et le balayage suivant
+        // posterait un SECOND message de levée.
+        //
+        // Le repli INVITES_DISABLED ne peut pas suivre la même règle : personne
+        // d'autre que moi ne rouvrira les invitations. Supprimer la ligne d'abord
+        // exposerait à un serveur fermé pour toujours si le processus meurt entre
+        // les deux. Un message de levée en double est infiniment préférable, la
+        // ligne n'est donc supprimée qu'après succès.
+        const holdsOwnDeadline = state.method !== METHOD_INVITES_DISABLED;
+        if (holdsOwnDeadline) forgetPanicRow(guild.id);
+
+        try {
+            if (state.method === METHOD_INVITES_DISABLED) {
+                await guild.disableInvites(false);
+            } else {
+                await guild.setIncidentActions({ invitesDisabledUntil: null });
+            }
+        } catch (err) {
+            // Le repli n'a pas d'échéance côté Discord : tant qu'il n'est pas levé,
+            // le serveur reste fermé. On garde la ligne et on retentera — c'est la
+            // même règle que la levée des bannissements temporaires.
+            if (state.method === METHOD_INVITES_DISABLED) {
+                console.error('[Quasar Anti-raid] Levée du mode panique en échec, nouvelle tentative au prochain passage :', err?.message);
+                return { ok: false, retry: true, error: err?.message || 'Erreur inconnue.' };
+            }
+            // Méthode native : l'échéance est tenue par Discord, le serveur est déjà
+            // rouvert ou le sera à la seconde près. Insister n'apporterait rien.
+            console.error('[Quasar Anti-raid] Retrait de l\'action d\'incident en échec (sans conséquence, Discord tient l\'échéance) :', err?.message);
+        }
+
+        if (!holdsOwnDeadline) forgetPanicRow(guild.id);
+        await sendPanicLog(guild, { entering: false, method: state.method, liftedBy, logChannelId });
+        return { ok: true };
+    } finally {
+        // finally obligatoire : une exception qui laisserait le verrou posé
+        // rendrait ce serveur définitivement inlevable.
+        lifting.delete(guild.id);
+    }
 }
 
 // ─── Journalisation ─────────────────────────────────────────────────────────
@@ -328,33 +366,49 @@ async function sendPanicLog(guild, opts) {
  * (tests, opération manuelle).
  */
 async function sweepExpiredPanics(client, now = Date.now()) {
-    let due;
+    // Verrou de ré-entrance : un tour qui déborde ne doit pas être doublé par le
+    // suivant. Le tour en cours traitera la file entière.
+    if (sweeping) return 0;
+    sweeping = true;
     try {
-        due = getDb()
-            .prepare('SELECT * FROM antiraid_panic WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT 50')
-            .all(Math.floor(now / 1000));
-    } catch (err) {
-        console.error('[Quasar Anti-raid] Lecture des modes panique en échec :', err.message);
-        return 0;
-    }
-    if (!due.length) return 0;
+        // Cache de serveurs vide = connexion incomplète, pas un bot sans serveur.
+        // La distinction est vitale ici : la branche « serveur introuvable »
+        // ci-dessous SUPPRIME l'échéance, ce qui laisserait un serveur fermé pour
+        // toujours si le cache n'était simplement pas encore rempli.
+        if (!client?.guilds?.cache || client.guilds.cache.size === 0) return 0;
 
-    let lifted = 0;
-    for (const row of due) {
-        const guild = client?.guilds?.cache?.get(row.guild_id);
-        if (!guild) {
-            // Bot retiré du serveur : il n'y a plus rien à lever, et garder
-            // l'échéance ferait retenter indéfiniment.
-            forgetPanicRow(row.guild_id);
-            continue;
+        let due;
+        try {
+            due = getDb()
+                .prepare('SELECT * FROM antiraid_panic WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT 50')
+                .all(Math.floor(now / 1000));
+        } catch (err) {
+            console.error('[Quasar Anti-raid] Lecture des modes panique en échec :', err.message);
+            return 0;
         }
-        const result = await liftPanic(guild, { row }).catch(err => {
-            console.error('[Quasar Anti-raid] Levée du mode panique en échec :', err?.message);
-            return { ok: false, retry: true };
-        });
-        if (result.ok) lifted += 1;
+        if (!due.length) return 0;
+
+        let lifted = 0;
+        for (const row of due) {
+            const guild = client.guilds.cache.get(row.guild_id);
+            if (!guild) {
+                // Bot retiré du serveur : il n'y a plus rien à lever, et garder
+                // l'échéance ferait retenter indéfiniment.
+                forgetPanicRow(row.guild_id);
+                continue;
+            }
+            const result = await liftPanic(guild, { row }).catch(err => {
+                console.error('[Quasar Anti-raid] Levée du mode panique en échec :', err?.message);
+                return { ok: false, retry: true };
+            });
+            if (result.ok) lifted += 1;
+        }
+        return lifted;
+    } finally {
+        // finally obligatoire : sans lui, une exception fige le balayage jusqu'au
+        // prochain redémarrage, et les modes panique ne seraient plus jamais levés.
+        sweeping = false;
     }
-    return lifted;
 }
 
 /**
@@ -379,10 +433,25 @@ function startPanicSweeper(client) {
     console.log('[Quasar Anti-raid] Balayage des modes panique démarré (tick 15 s).');
 }
 
+/**
+ * Arrête le balayage. Symétrique de `startPanicSweeper`, idempotent.
+ *
+ * Les deux timers sont `unref()`, donc ils ne retiennent pas le processus : ce
+ * qu'on ferme ici, c'est la possibilité qu'un tour parte PENDANT le drainage,
+ * après la fermeture de la base. Aujourd'hui l'erreur qui en résulterait serait
+ * avalée et le processus sortirait juste après — autrement dit ça tient par
+ * chance, pas par conception. Un arrêt ordonné n'a pas à reposer sur la chance.
+ */
+function stopPanicSweeper() {
+    if (sweepBootHandle) { clearTimeout(sweepBootHandle); sweepBootHandle = null; }
+    if (sweepHandle) { clearInterval(sweepHandle); sweepHandle = null; }
+}
+
 module.exports = {
     enterPanic,
     liftPanic,
     getPanicState,
     sweepExpiredPanics,
     startPanicSweeper,
+    stopPanicSweeper,
 };

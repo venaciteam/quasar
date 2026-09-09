@@ -563,6 +563,14 @@ const SWEEP_BOOT_DELAY_MS = 45_000; // laisse le bot finir de se connecter
 let sweepHandle = null;
 let sweepBootHandle = null;
 
+// Verrou de ré-entrance du balayage. Une levée de bannissement est un appel
+// réseau : cinquante échéances tombées ensemble, sous limitation de débit, et un
+// tour dépasse les 60 s du tick. Le tour suivant relirait alors les MÊMES lignes
+// (supprimées seulement une fois la levée faite) : seconde tentative de
+// débannissement, et surtout second message « Fin de bannissement temporaire »
+// dans le salon de logs. Modèle : bot/modules/breach/index.js.
+let sweeping = false;
+
 function scheduleUnban(guildId, userId, durationMs, reason, source) {
     try {
         const db = getDb();
@@ -598,52 +606,83 @@ function deactivateBanSanction(guildId, userId) {
 }
 
 async function sweepExpiredBans(client) {
-    let due;
+    // Verrou de ré-entrance : un tour qui déborde ne doit pas être doublé par le
+    // suivant. Le tour en cours traitera toute la file.
+    if (sweeping) return;
+    sweeping = true;
     try {
-        const db = getDb();
-        due = db.prepare('SELECT * FROM temp_bans WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT 50')
-            .all(Math.floor(Date.now() / 1000));
-    } catch (err) {
-        console.error('[Quasar AutoMod] Lecture des bannissements temporaires en échec :', err.message);
-        return;
-    }
-    if (!due.length) return;
+        // Cache de serveurs vide = connexion incomplète, pas un bot sans serveur.
+        // La distinction est vitale : la branche « serveur introuvable » ci-dessous
+        // SUPPRIME l'échéance, ce qui transformerait un bannissement temporaire en
+        // bannissement définitif si le cache n'était pas encore rempli.
+        if (!client?.guilds?.cache || client.guilds.cache.size === 0) return;
 
-    const db = getDb();
-    const forget = db.prepare('DELETE FROM temp_bans WHERE guild_id = ? AND user_id = ?');
-
-    for (const row of due) {
-        const guild = client.guilds.cache.get(row.guild_id);
-        if (!guild) {
-            // Bot retiré du serveur : plus rien à lever, et garder l'échéance
-            // ferait retenter indéfiniment.
-            forget.run(row.guild_id, row.user_id);
-            continue;
-        }
-
+        let due;
         try {
-            await guild.bans.remove(row.user_id, 'Fin du bannissement temporaire');
+            const db = getDb();
+            due = db.prepare('SELECT * FROM temp_bans WHERE expires_at <= ? ORDER BY expires_at ASC LIMIT 50')
+                .all(Math.floor(Date.now() / 1000));
         } catch (err) {
-            // 10026 = plus aucun bannissement : quelqu'un a déjà levé la sanction
-            // à la main. C'est un succès, pas un échec.
-            if (err?.code !== 10026) {
-                console.error(`[Quasar AutoMod] Levée du ban de ${row.user_id} en échec :`, describeError(err));
-                // Permission manquante : on garde l'échéance pour retenter au
-                // prochain passage, une fois les droits rétablis.
-                if (err?.code === 50013) continue;
-            }
+            console.error('[Quasar AutoMod] Lecture des bannissements temporaires en échec :', err.message);
+            return;
         }
+        if (!due.length) return;
 
-        forget.run(row.guild_id, row.user_id);
-        deactivateBanSanction(row.guild_id, row.user_id);
+        const db = getDb();
+        const forget = db.prepare('DELETE FROM temp_bans WHERE guild_id = ? AND user_id = ?');
 
-        await sendAutomodLog(guild, buildLogEmbed({
-            title: '🔓 Fin de bannissement temporaire',
-            color: 0x2ecc71,
-            targetId: row.user_id,
-            reason: row.reason || 'Bannissement temporaire arrivé à son terme',
-            source: row.source,
-        }), 'mod_ban', null);
+        for (const row of due) {
+            const guild = client.guilds.cache.get(row.guild_id);
+            if (!guild) {
+                // Bot retiré du serveur : plus rien à lever, et garder l'échéance
+                // ferait retenter indéfiniment.
+                forget.run(row.guild_id, row.user_id);
+                continue;
+            }
+
+            try {
+                await guild.bans.remove(row.user_id, 'Fin du bannissement temporaire');
+            } catch (err) {
+                // 10026 = plus aucun bannissement : quelqu'un a déjà levé la sanction
+                // à la main. C'est un succès, pas un échec.
+                if (err?.code !== 10026) {
+                    console.error(`[Quasar AutoMod] Levée du ban de ${row.user_id} en échec :`, describeError(err));
+                    // Permission manquante : on garde l'échéance pour retenter au
+                    // prochain passage, une fois les droits rétablis.
+                    if (err?.code === 50013) continue;
+                }
+            }
+
+            // ─── ORDRE DES ÉCRITURES ────────────────────────────────────────
+            // L'échéance est supprimée AVANT le message de log : un SIGTERM entre
+            // les deux fait perdre une ligne de log, jamais l'inverse (un second
+            // « Fin de bannissement temporaire » posté au redémarrage).
+            //
+            // L'ordre inverse — supprimer avant l'appel à Discord — n'est PAS
+            // retenu : le processus mourrait alors entre la suppression et le
+            // débannissement, et la sanction temporaire deviendrait définitive
+            // sans que rien ne le rattrape. Le débannissement reste donc en
+            // « au moins une fois ». Fenêtre résiduelle : mourir entre le
+            // débannissement réussi et la suppression de la ligne fait reposter le
+            // message de fin au redémarrage (le débannissement, lui, est
+            // idempotent — code 10026). La fermer demanderait une colonne d'état
+            // sur temp_bans, donc une migration : voir le rapport.
+            forget.run(row.guild_id, row.user_id);
+            deactivateBanSanction(row.guild_id, row.user_id);
+
+            await sendAutomodLog(guild, buildLogEmbed({
+                title: '🔓 Fin de bannissement temporaire',
+                color: 0x2ecc71,
+                targetId: row.user_id,
+                reason: row.reason || 'Bannissement temporaire arrivé à son terme',
+                source: row.source,
+            }), 'mod_ban', null);
+        }
+    } finally {
+        // finally obligatoire : sans lui, une exception fige le balayage jusqu'au
+        // prochain redémarrage, et les bannissements temporaires ne seraient plus
+        // jamais levés.
+        sweeping = false;
     }
 }
 
@@ -661,6 +700,20 @@ function startTempBanSweeper(client) {
     console.log('[Quasar AutoMod] Balayage des bannissements temporaires démarré (tick 60 s).');
 }
 
+/**
+ * Arrête le balayage. Symétrique de `startTempBanSweeper`, idempotent.
+ *
+ * Les deux timers sont `unref()`, donc ils ne retiennent pas le processus : ce
+ * qu'on ferme ici, c'est la possibilité qu'un tour parte PENDANT le drainage,
+ * après la fermeture de la base. Aujourd'hui l'erreur qui en résulterait serait
+ * avalée et le processus sortirait juste après — autrement dit ça tient par
+ * chance, pas par conception. Un arrêt ordonné n'a pas à reposer sur la chance.
+ */
+function stopTempBanSweeper() {
+    if (sweepBootHandle) { clearTimeout(sweepBootHandle); sweepBootHandle = null; }
+    if (sweepHandle) { clearInterval(sweepHandle); sweepHandle = null; }
+}
+
 module.exports = {
     parseDuration,
     formatDuration,
@@ -670,6 +723,7 @@ module.exports = {
     applyPunishments,
     sendAutomodLog,
     startTempBanSweeper,
+    stopTempBanSweeper,
     // Exporté pour permettre une levée immédiate des bannissements échus, sans
     // attendre le prochain tour de boucle (tests, opération manuelle).
     sweepExpiredBans,

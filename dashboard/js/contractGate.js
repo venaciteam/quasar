@@ -275,8 +275,37 @@
     const ICON_BLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
     const ICON_DOC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>';
 
+    // Un seul portail à la fois.
+    //
+    // La fonction construisait et empilait un calque à CHAQUE appel, sans jamais
+    // tester `OVERLAY_ID` qu'elle pose pourtant. Tant qu'il n'y avait qu'un
+    // appelant — le démarrage du dashboard — ça ne se voyait pas. Depuis que le
+    // helper API rouvre le portail sur un 403 « contrat non accepté », plusieurs
+    // requêtes parties en parallèle peuvent le demander en même temps : autant de
+    // calques superposés, et il fallait cliquer « J'accepte » une fois par calque,
+    // les suivants apparaissant sous le précédent.
+    //
+    // Les appels concurrents partagent donc la même promesse. Elle est relâchée
+    // une fois réglée, pour qu'un besoin ultérieur légitime rouvre bien un
+    // portail au lieu de réutiliser une réponse périmée.
+    let portailEnCours = null;
+
     window.checkContractGate = function checkContractGate() {
+        if (portailEnCours) return portailEnCours;
+        portailEnCours = ouvrirPortail();
+        portailEnCours.then(
+            () => { portailEnCours = null; },
+            () => { portailEnCours = null; },
+        );
+        return portailEnCours;
+    };
+
+    function ouvrirPortail() {
         return new Promise((resolve) => {
+            // Filet supplémentaire : si un calque traîne encore dans le document,
+            // ne pas en superposer un second.
+            const existant = document.getElementById(OVERLAY_ID);
+            if (existant) existant.remove();
             ensureStyles();
 
             // État d'affichage (rempli depuis le serveur, avec des replis sûrs).
@@ -528,5 +557,5 @@
 
             load();
         });
-    };
+    }
 })();

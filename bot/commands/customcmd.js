@@ -103,6 +103,64 @@ function reservedCommandNames() {
 }
 
 /**
+ * Valide un nom de commande personnalisée à la CRÉATION, avant toute écriture.
+ *
+ * Existait déjà pour le renommage, pas pour la création : `/cmd create` ne
+ * faisait qu'une normalisation, là où `/cmd edit` passait par
+ * `validateChatInputName()` et `reservedCommandNames()`. Un nom que Discord
+ * refuse était donc accepté et stocké, pour ne se manifester qu'au
+ * redéploiement du lot de commandes — c'est-à-dire loin de la personne qui
+ * l'avait saisi, et sur un lot ENTIER qui échoue à cause d'une seule entrée.
+ * Un nom déjà porté par une commande de Quasar produisait, lui, une commande
+ * qui ne répondait jamais et disparaissait au redémarrage suivant.
+ *
+ * Les textes sont volontairement repris mot pour mot de
+ * `validateCustomCommandRename` : deux formulations différentes pour la même
+ * règle finiraient par décrire deux règles différentes.
+ *
+ * @returns {{name:string}|{error:{title:string, cause:string, action:string}}}
+ */
+function validateCustomCommandCreate(db, guildId, rawName) {
+    const nom = normalizeCustomCommandName(rawName);
+
+    if (!nom) {
+        return { error: {
+            title: 'Nom de commande vide',
+            cause: 'Le nom de la commande est vide.',
+            action: 'Saisissez un nom entre 1 et 32 caractères, en minuscules et sans espace.',
+        } };
+    }
+
+    const validation = validateChatInputName(nom);
+    if (!validation.valid) {
+        return { error: {
+            title: 'Nom de commande refusé par Discord',
+            cause: `Discord refuse ce nom de commande : ${validation.reason}.`,
+            action: 'Choisissez un nom de 1 à 32 caractères, en minuscules, sans espace ni apostrophe (les tirets et underscores sont acceptés).',
+        } };
+    }
+
+    if (reservedCommandNames().has(nom)) {
+        return { error: {
+            title: 'Nom déjà pris par Quasar',
+            cause: `/${nom} est déjà une commande de Quasar.`,
+            action: 'Choisissez un autre nom : une commande personnalisée portant ce nom ne répondrait jamais, et elle disparaîtrait au prochain redémarrage du bot.',
+        } };
+    }
+
+    const collision = db.prepare('SELECT name FROM custom_commands WHERE guild_id = ? AND name = ?').get(guildId, nom);
+    if (collision) {
+        return { error: {
+            title: 'Cette commande existe déjà',
+            cause: `Une commande personnalisée **/${nom}** est déjà enregistrée sur ce serveur.`,
+            action: 'Modifiez-la avec `/cmd edit`, ou choisissez un autre nom.',
+        } };
+    }
+
+    return { name: nom };
+}
+
+/**
  * Valide un nouveau nom de commande personnalisée, AVANT toute écriture.
  *
  * @returns {{name:string, unchanged:boolean}|{error:{cause:string, action:string}}}
@@ -340,18 +398,15 @@ module.exports = {
             // déclencher la mention. On le signale sans l'empêcher, c'est un
             // choix légitime pour un embed qui ne ping qu'un petit rôle.
             const avertPing = (mode) => (embedPing && mode === 'everyone')
-                ? '\n\n⚠️ Cet embed a des mentions configurées : elles seront envoyées à **chaque** utilisation, et la commande est ouverte à tout le monde. Restreins son accès avec l\'option `acces` si ce n\'est pas voulu.'
+                ? '\n\n⚠️ Cet embed a des mentions configurées : elles seront envoyées à **chaque** utilisation, et la commande est ouverte à tout le monde. Restreignez son accès avec l\'option `acces` si ce n\'est pas voulu.'
                 : '';
 
             if (sub === 'create') {
-                const existing = db.prepare('SELECT name FROM custom_commands WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
-                if (existing) {
-                    return userError(interaction, {
-                        title: 'Cette commande existe déjà',
-                        cause: `Une commande personnalisée **/${nom}** est déjà enregistrée sur ce serveur.`,
-                        action: 'Modifiez-la avec `/cmd edit`, ou choisissez un autre nom.',
-                    });
-                }
+                // Forme du nom, collision avec une commande de Quasar, collision
+                // avec une commande existante : les trois d'un coup, et avec les
+                // mêmes textes que le renommage.
+                const nomValide = validateCustomCommandCreate(db, interaction.guild.id, nom);
+                if (nomValide.error) return userError(interaction, nomValide.error);
 
                 // À la création, l'absence d'option `acces` vaut « tout le
                 // monde » : c'est le défaut de la colonne et le comportement
@@ -586,6 +641,7 @@ async function syncCustomCommandRename(guildId, oldName, newName, response) {
 Object.assign(module.exports, {
     normalizeCustomCommandName,
     reservedCommandNames,
+    validateCustomCommandCreate,
     validateCustomCommandRename,
     updateCustomCommand,
     deployCustomCommand,

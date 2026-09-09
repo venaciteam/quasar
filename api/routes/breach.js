@@ -95,6 +95,21 @@ async function computeTargets(client, db) {
     return out;
 }
 
+/**
+ * L'appelant est-il admin d'au moins un serveur connecté non suspendu ?
+ * C'est la condition d'accès à la bannière : ni propriétaire, ni simple compte
+ * authentifié. Extrait de GET /banner pour que POST /banner/:id/ack applique
+ * exactement la même règle — la garde des deux routes ne doit pas pouvoir
+ * diverger à la faveur d'une retouche.
+ */
+function estAdminServeurConnecte(req, db) {
+    const connected = new Set(getTargetGuilds(db).map(g => g.guild_id));
+    return (req.user.guilds || []).some((g) => {
+        const isAdmin = (BigInt(g.permissions) & BigInt(0x8)) === BigInt(0x8);
+        return isAdmin && connected.has(g.id);
+    });
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  GESTION — réservée à la propriétaire (requireOwner)
 // ═══════════════════════════════════════════════════════════════
@@ -111,16 +126,23 @@ router.get('/', requireAuth, requireOwner, (req, res) => {
 
         const payload = incidents.map((inc) => {
             const messages = msgStmt.all(inc.id).map((m) => {
-                const deliveries = { sent: 0, failed: 0, pending: 0 };
+                // `sending` : remise en cours. Cet état est écrit AVANT l'appel
+                // à Discord, pour qu'un arrêt du processus au mauvais instant ne
+                // fasse pas repartir une seconde notification de violation vers
+                // la même personne. Il doit figurer dans les compteurs, sinon
+                // une remise en vol n'apparaît NULLE PART dans les totaux et la
+                // somme des états ne fait plus le nombre de destinataires.
+                const deliveries = { sent: 0, sending: 0, failed: 0, pending: 0 };
                 for (const r of sumStmt.all(m.id)) deliveries[r.status] = r.n;
                 return { ...m, deliveries };
             });
             const totals = messages.reduce((acc, m) => {
                 acc.sent += m.deliveries.sent;
+                acc.sending += m.deliveries.sending;
                 acc.failed += m.deliveries.failed;
                 acc.pending += m.deliveries.pending;
                 return acc;
-            }, { sent: 0, failed: 0, pending: 0 });
+            }, { sent: 0, sending: 0, failed: 0, pending: 0 });
             return { ...inc, messages, totals };
         });
 
@@ -313,12 +335,7 @@ router.get('/banner', requireAuth, (req, res) => {
         const db = getDb();
 
         // L'utilisateur est-il admin d'au moins un serveur connecté non suspendu ?
-        const connected = new Set(getTargetGuilds(db).map(g => g.guild_id));
-        const isAdminSomewhere = (req.user.guilds || []).some((g) => {
-            const isAdmin = (BigInt(g.permissions) & BigInt(0x8)) === BigInt(0x8);
-            return isAdmin && connected.has(g.id);
-        });
-        if (!isAdminSomewhere) return res.json([]);
+        if (!estAdminServeurConnecte(req, db)) return res.json([]);
 
         const openIncidents = db.prepare("SELECT * FROM breach_incidents WHERE status = 'open' ORDER BY created_at DESC").all();
         const ackStmt = db.prepare('SELECT 1 FROM breach_banner_ack WHERE incident_id = ? AND admin_id = ?');
@@ -342,6 +359,17 @@ router.get('/banner', requireAuth, (req, res) => {
 router.post('/banner/:incidentId/ack', requireAuth, (req, res) => {
     try {
         const db = getDb();
+
+        // Même garde que le GET /banner juste au-dessus. Avec le seul requireAuth,
+        // n'importe quel compte authentifié — sur l'instance publique, n'importe
+        // quel compte Discord — dénombrait les violations de données déclarées par
+        // énumération des identifiants séquentiels, en distinguant 404 et 200.
+        // Aucun contenu ne fuyait, mais « combien d'incidents cette instance a-t-elle
+        // déclarés » n'a pas à être une information publique.
+        if (!estAdminServeurConnecte(req, db)) {
+            return res.status(403).json({ error: 'Accès refusé' });
+        }
+
         const incident = db.prepare('SELECT id FROM breach_incidents WHERE id = ?').get(req.params.incidentId);
         if (!incident) return res.status(404).json({ error: 'Incident introuvable' });
 

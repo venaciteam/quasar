@@ -173,15 +173,49 @@ function createBot() {
     }
 
     // Charger les events
+    //
+    // La promesse rendue par event.execute était flottante, et six fichiers
+    // d'events n'ont aucun try : une exception y remontait donc soit en rejet non
+    // capté, soit — pour un throw synchrone — jusqu'à l'EventEmitter, sans jamais
+    // dire de QUEL event elle venait. Le scénario réel : une ligne modules.config
+    // corrompue fait lever le JSON.parse de bot/utils/logger.js, donc sendLog,
+    // donc guildMemberAdd rejette AVANT le message de bienvenue et les autorôles.
+    // L'administrateur constate « les autorôles ne marchent plus », sans aucun
+    // lien visible avec la cause.
+    //
+    // Promise.resolve().then() plutôt qu'un try/catch : il attrape aussi bien le
+    // throw synchrone que le rejet asynchrone, en une seule forme.
+    // L'alerte d'incident est conservée : sans elle, poser ce filet remplacerait
+    // un rejet non capté (journalisé ET annoncé sur le webhook) par un silence.
+    const { newIncidentCode, alertIncident } = require('../api/services/incidents');
+
+    const executerEvent = (event, args) => {
+        Promise.resolve()
+            .then(() => event.execute(...args))
+            .catch((err) => {
+                const code = newIncidentCode();
+                console.error(
+                    `[Quasar] ⚠️  INCIDENT ${code} | event ${event.name} | ` +
+                    `${err?.name || 'Error'}: ${err?.message || err}`,
+                );
+                console.error(err?.stack || err);
+                alertIncident(err, {
+                    code,
+                    source: `event ${event.name}`,
+                    details: { Event: event.name },
+                });
+            });
+    };
+
     const eventsPath = path.join(__dirname, 'events');
     if (fs.existsSync(eventsPath)) {
         const eventFiles = fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'));
         for (const file of eventFiles) {
             const event = require(path.join(eventsPath, file));
             if (event.once) {
-                client.once(event.name, (...args) => event.execute(...args));
+                client.once(event.name, (...args) => executerEvent(event, args));
             } else {
-                client.on(event.name, (...args) => event.execute(...args));
+                client.on(event.name, (...args) => executerEvent(event, args));
             }
             console.log(`[Quasar] Event chargé: ${event.name}`);
         }
@@ -373,136 +407,171 @@ function createBot() {
         }
     });
 
-    client.once('clientReady', async () => {
-        console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
-        console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
-
-        // Aucune télémétrie. Le heartbeat vers un hub central (identifiant d'instance
-        // persistant + nombre de serveurs) a été retiré en v3.3.0 : Quasar ne contacte
-        // aucun service tiers, rien ne sort de la machine qui l'héberge.
-
-        // Enregistrer les guilds en DB
-        const db = getDb();
-        const upsert = db.prepare('INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)');
-        client.guilds.cache.forEach(guild => {
-            upsert.run(guild.id, guild.name);
+    // Le handler est asynchrone : sans ce .catch, un rejet partirait dans le filet
+    // global du processus, qui journalise et LAISSE VIVRE. Le bot resterait donc en
+    // ligne sans aucun de ses balayages : aucun rappel programmé, aucun bannissement
+    // temporaire levé (un tempban devient définitif), aucun mode panique levé (un
+    // serveur reste fermé indéfiniment), aucune purge de rétention. Et rien ne le
+    // signalerait.
+    client.once('clientReady', () => {
+        demarrerServices(client).catch((err) => {
+            console.error('[Quasar] ❌ Échec du démarrage des services :', err?.message || err);
+            console.error(err?.stack || err);
+            process.exit(1);
         });
-
-        // Déployer les commandes slash
-        await deployCommands(client);
-
-        // Charger la présence depuis la DB (ou fallback)
-        try {
-            const presence = db.prepare('SELECT * FROM bot_presence WHERE id = 1').get();
-            if (presence) {
-                if (presence.activity_type === -1) {
-                    // Aucune activité — statut uniquement
-                    client.user.setPresence({
-                        status: presence.status,
-                        activities: []
-                    });
-                    console.log(`[Quasar] Présence chargée: ${presence.status} (aucune activité)`);
-                } else {
-                    client.user.setPresence({
-                        status: presence.status,
-                        activities: [{
-                            name: presence.activity_text,
-                            type: presence.activity_type
-                        }]
-                    });
-                    console.log(`[Quasar] Présence chargée: ${presence.status} — ${presence.activity_text}`);
-                }
-            } else {
-                client.user.setActivity('atlas.vena.city', { type: 3 });
-                console.log('[Quasar] Présence par défaut: Watching atlas.vena.city');
-            }
-        } catch (e) {
-            client.user.setActivity('atlas.vena.city', { type: 3 });
-            console.log('[Quasar] Présence fallback (erreur DB):', e.message);
-        }
-
-        // TempVoice — Charger les IDs actifs dans le Set (pour filtrage channelCreate/Delete)
-        try {
-            const { tempvoiceChannelIds } = require('./events/voiceStateUpdate');
-            const allActive = db.prepare('SELECT channel_id FROM tempvoice_active').all();
-            for (const row of allActive) tempvoiceChannelIds.add(row.channel_id);
-            if (allActive.length > 0) console.log(`[Quasar] TempVoice: ${allActive.length} ID(s) chargé(s) dans le tracker`);
-        } catch (e) {
-            console.error('[Quasar] Erreur chargement TempVoice IDs:', e.message || e);
-        }
-
-        // TempVoice — Nettoyage des vocaux orphelins au boot
-        try {
-            const tvActive = db.prepare('SELECT * FROM tempvoice_active').all();
-            let cleaned = 0;
-            for (const row of tvActive) {
-                const g = client.guilds.cache.get(row.guild_id);
-                const ch = g?.channels.cache.get(row.channel_id);
-                if (!ch || ch.members.size === 0) {
-                    if (ch) await ch.delete().catch(() => {});
-                    db.prepare('DELETE FROM tempvoice_active WHERE channel_id = ?').run(row.channel_id);
-                    cleaned++;
-                }
-            }
-            if (cleaned > 0) console.log(`[Quasar] TempVoice boot cleanup: ${cleaned} salon(s) orphelin(s) supprimé(s)`);
-        } catch (e) {
-            // Tables pas encore créées au premier boot, on ignore
-        }
-
-        // Scheduler — Démarrer la boucle d'envoi des rappels programmés
-        try {
-            const scheduler = require('./modules/scheduler');
-            scheduler.start(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur démarrage scheduler:', e.message || e);
-        }
-
-        // Rétention — Purge des serveurs quittés et des sanctions expirées
-        try {
-            const retention = require('./modules/retention');
-            retention.start(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
-        }
-
-        // Notification de violation (art. 33) — Boucle qui dépile et envoie les
-        // notifications enfilées depuis le dashboard owner.
-        try {
-            require('./modules/breach').start(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur demarrage notification de violation:', e.message || e);
-        }
-
-        // Effacement (art. 17) — Boucle de suivi des demandes de suppression
-        // (échéances légales, alertes owner).
-        try {
-            require('./modules/erasure').start(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
-        }
-
-        // Modération automatique — Levée des bannissements temporaires arrivés à
-        // terme. Discord n'a pas de ban à durée : sans ce balayage, un `tempban`
-        // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
-        // n'est en base (un SELECT indexé par minute).
-        try {
-            require('./utils/punishments').startTempBanSweeper(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
-        }
-
-        // Anti-raid — Levée des modes panique arrivés a terme. Meme raison que
-        // ci-dessus, en plus critique : un mode panique pose puis oublie parce que
-        // le processus a redemarre laisserait un serveur ferme indefiniment. Le
-        // balayage relit l'echeance en base et rend au serveur son etat d'origine.
-        try {
-            require('./modules/antiraid').startPanicSweeper(client);
-        } catch (e) {
-            console.error('[Quasar] Erreur demarrage anti-raid:', e.message || e);
-        }
     });
 
     return client;
 }
 
-module.exports = { createBot };
+async function demarrerServices(client) {
+    console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
+    console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
+
+    // Aucune télémétrie. Le heartbeat vers un hub central (identifiant d'instance
+    // persistant + nombre de serveurs) a été retiré en v3.3.0 : Quasar ne contacte
+    // aucun service tiers, rien ne sort de la machine qui l'héberge.
+
+    // Ouverture de la base et enregistrement des serveurs.
+    //
+    // Erreur FATALE et explicite, volontairement : un bot sans base n'a rien à
+    // faire en ligne. getDb() échoue pour une raison très concrète et déjà
+    // rencontrée — un volume monté appartenant à root après un redéploiement —
+    // et l'échec passait jusqu'ici dans le filet global, qui laissait le
+    // processus continuer. Le bot répondait alors aux commandes tout en ayant
+    // perdu ses balayages, sans que rien ne l'indique.
+    let db;
+    try {
+        db = getDb();
+        const upsert = db.prepare('INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)');
+        client.guilds.cache.forEach(guild => {
+            upsert.run(guild.id, guild.name);
+        });
+    } catch (err) {
+        console.error('[Quasar] ❌ Base de données inaccessible au démarrage :', err?.message || err);
+        console.error('[Quasar]    Vérifiez les droits du dossier data/ (en conteneur, le volume peut appartenir à root).');
+        throw err;
+    }
+
+    // Déploiement des commandes slash. Un échec ici n'est PAS fatal : les
+    // commandes déjà déployées sur Discord restent utilisables, et le bot rend
+    // encore tous ses autres services. Il doit en revanche se voir.
+    try {
+        await deployCommands(client);
+    } catch (err) {
+        console.error('[Quasar] ⚠️  Déploiement des commandes slash impossible :', err?.message || err);
+        console.error('[Quasar]    Les commandes déjà enregistrées sur Discord restent utilisables.');
+    }
+
+    // Charger la présence depuis la DB (ou fallback)
+    try {
+        const presence = db.prepare('SELECT * FROM bot_presence WHERE id = 1').get();
+        if (presence) {
+            if (presence.activity_type === -1) {
+                // Aucune activité — statut uniquement
+                client.user.setPresence({
+                    status: presence.status,
+                    activities: []
+                });
+                console.log(`[Quasar] Présence chargée: ${presence.status} (aucune activité)`);
+            } else {
+                client.user.setPresence({
+                    status: presence.status,
+                    activities: [{
+                        name: presence.activity_text,
+                        type: presence.activity_type
+                    }]
+                });
+                console.log(`[Quasar] Présence chargée: ${presence.status} — ${presence.activity_text}`);
+            }
+        } else {
+            client.user.setActivity('atlas.vena.city', { type: 3 });
+            console.log('[Quasar] Présence par défaut: Watching atlas.vena.city');
+        }
+    } catch (e) {
+        client.user.setActivity('atlas.vena.city', { type: 3 });
+        console.log('[Quasar] Présence fallback (erreur DB):', e.message);
+    }
+
+    // TempVoice — Charger les IDs actifs dans le Set (pour filtrage channelCreate/Delete)
+    try {
+        const { tempvoiceChannelIds } = require('./events/voiceStateUpdate');
+        const allActive = db.prepare('SELECT channel_id FROM tempvoice_active').all();
+        for (const row of allActive) tempvoiceChannelIds.add(row.channel_id);
+        if (allActive.length > 0) console.log(`[Quasar] TempVoice: ${allActive.length} ID(s) chargé(s) dans le tracker`);
+    } catch (e) {
+        console.error('[Quasar] Erreur chargement TempVoice IDs:', e.message || e);
+    }
+
+    // TempVoice — Nettoyage des vocaux orphelins au boot
+    try {
+        const tvActive = db.prepare('SELECT * FROM tempvoice_active').all();
+        let cleaned = 0;
+        for (const row of tvActive) {
+            const g = client.guilds.cache.get(row.guild_id);
+            const ch = g?.channels.cache.get(row.channel_id);
+            if (!ch || ch.members.size === 0) {
+                if (ch) await ch.delete().catch(() => {});
+                db.prepare('DELETE FROM tempvoice_active WHERE channel_id = ?').run(row.channel_id);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) console.log(`[Quasar] TempVoice boot cleanup: ${cleaned} salon(s) orphelin(s) supprimé(s)`);
+    } catch (e) {
+        // Tables pas encore créées au premier boot, on ignore
+    }
+
+    // Scheduler — Démarrer la boucle d'envoi des rappels programmés
+    try {
+        const scheduler = require('./modules/scheduler');
+        scheduler.start(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur démarrage scheduler:', e.message || e);
+    }
+
+    // Rétention — Purge des serveurs quittés et des sanctions expirées
+    try {
+        const retention = require('./modules/retention');
+        retention.start(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
+    }
+
+    // Notification de violation (art. 33) — Boucle qui dépile et envoie les
+    // notifications enfilées depuis le dashboard owner.
+    try {
+        require('./modules/breach').start(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur demarrage notification de violation:', e.message || e);
+    }
+
+    // Effacement (art. 17) — Boucle de suivi des demandes de suppression
+    // (échéances légales, alertes owner).
+    try {
+        require('./modules/erasure').start(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
+    }
+
+    // Modération automatique — Levée des bannissements temporaires arrivés à
+    // terme. Discord n'a pas de ban à durée : sans ce balayage, un `tempban`
+    // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
+    // n'est en base (un SELECT indexé par minute).
+    try {
+        require('./utils/punishments').startTempBanSweeper(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
+    }
+
+    // Anti-raid — Levée des modes panique arrivés a terme. Meme raison que
+    // ci-dessus, en plus critique : un mode panique pose puis oublie parce que
+    // le processus a redemarre laisserait un serveur ferme indefiniment. Le
+    // balayage relit l'echeance en base et rend au serveur son etat d'origine.
+    try {
+        require('./modules/antiraid').startPanicSweeper(client);
+    } catch (e) {
+        console.error('[Quasar] Erreur demarrage anti-raid:', e.message || e);
+    }
+}
+
+module.exports = { createBot, demarrerServices };

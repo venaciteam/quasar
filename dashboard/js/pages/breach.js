@@ -126,7 +126,13 @@ function renderBreachList() {
 
     list.innerHTML = _breachState.incidents.map((inc) => {
         const active = inc.id === _breachState.selectedId;
-        const t = inc.totals || { sent: 0, failed: 0, pending: 0 };
+        const t = inc.totals || { sent: 0, sending: 0, failed: 0, pending: 0 };
+        // Une remise en cours est comptée avec les remises en attente dans ce
+        // résumé compact : du point de vue de la personne concernée, les deux
+        // veulent dire « pas encore reçu ». C'est aussi ce qui garantit que
+        // reçu + en attente + échec fait bien le nombre de destinataires, la
+        // seule propriété qui compte pour la traçabilité de l'article 33.5. Le
+        // tableau détaillé plus bas distingue les deux états.
         const phases = (inc.messages || []).length;
         return `
             <button type="button" onclick="selectBreachIncident(${inc.id})"
@@ -139,7 +145,7 @@ function renderBreachList() {
                     ${inc.status === 'open' ? '<span style="font-size:.65rem;opacity:.85">● ouvert</span>' : '<span style="font-size:.65rem;opacity:.6">clôturé</span>'}
                 </div>
                 <div style="font-size:.7rem;opacity:${active ? '.9' : '.6'};margin-top:.25rem">
-                    ${phases} phase${phases > 1 ? 's' : ''} · ✅ ${t.sent} · ⏳ ${t.pending} · ❌ ${t.failed}
+                    ${phases} phase${phases > 1 ? 's' : ''} · ✅ ${t.sent} · ⏳ ${(t.pending || 0) + (t.sending || 0)} · ❌ ${t.failed}
                 </div>
             </button>`;
     }).join('');
@@ -443,7 +449,11 @@ async function loadBreachDeliveries(id) {
         return;
     }
 
-    const statusLabel = { sent: '✅ Reçu', failed: '❌ Échec', pending: '⏳ En attente' };
+    // `sending` : état intermédiaire écrit AVANT la remise à Discord, pour qu'un
+    // arrêt du processus au mauvais instant ne fasse pas repartir une seconde
+    // notification de violation vers la même personne. Sans ce libellé, le
+    // tableau afficherait le mot brut, en anglais.
+    const statusLabel = { sent: '✅ Reçu', sending: '📤 Envoi en cours', failed: '❌ Échec', pending: '⏳ En attente' };
     const channelLabel = { dm: 'MP', guild_channel: 'Salon serveur' };
 
     zone.innerHTML = `

@@ -116,7 +116,13 @@ router.delete('/active/:channelId', requireAuth, requireGuildAdmin, async (req, 
         }
     }
 
-    db.prepare('DELETE FROM tempvoice_active WHERE channel_id = ?').run(channelId);
+    // `AND guild_id = ?` obligatoire : `channel_id` est la clé primaire de la
+    // table, donc sans cloisonnement, l'identifiant d'un salon d'un AUTRE serveur
+    // supprimait sa ligne depuis n'importe quel serveur où l'appelant est admin.
+    // Le reste du fichier scope déjà toutes ses requêtes sur guild_id ; celle-ci
+    // était la seule à ne pas le faire.
+    db.prepare('DELETE FROM tempvoice_active WHERE guild_id = ? AND channel_id = ?')
+        .run(req.params.guildId, channelId);
     res.json({ success: true });
 });
 

@@ -23,6 +23,26 @@
   « ## » est ignoré.
 -->
 
+## 🌌 Quasar — v4.9.0
+### Quasar refuse de démarrer mal configuré, et s'arrête proprement
+> *9 septembre 2026*
+
+**✨ Nouveautés**
+- Quasar vérifie sa configuration au démarrage. S'il manque une variable essentielle, ou si l'une est restée sur sa valeur d'exemple, il refuse de se lancer et vous dit lesquelles, avec le symptôme que chacune provoque. Jusqu'ici il démarrait à moitié : le bot était en ligne mais la connexion au dashboard échouait sans explication.
+- L'arrêt est désormais ordonné : Quasar ferme le serveur web, puis ses boucles, puis le lien avec Discord, puis sa base. Si vous hébergez Quasar vous-même, pensez à laisser au conteneur le temps de finir — le fichier `docker-compose.yml` fourni le fait déjà.
+
+**🔧 Améliorations**
+- Le bouton de mise à jour est réservé à la personne qui possède l'instance. Il était accessible à tout compte connecté au dashboard.
+- L'acceptation du contrat de sous-traitance est désormais vérifiée par le serveur et plus seulement par votre navigateur. Sans acceptation, la configuration d'un serveur n'est plus accessible. Les demandes d'effacement de données restent possibles en toutes circonstances : une obligation légale ne se suspend pas.
+- Une session expirée vous ramène à la connexion au lieu d'afficher une erreur incompréhensible au moment d'enregistrer.
+
+**🐛 Corrections**
+- Un rappel programmé sur un serveur réglé sur un autre fuseau horaire que celui de Paris repartait à la mauvaise heure dès son premier envoi. Le fuseau que vous avez choisi est maintenant respecté à chaque fois.
+- Un redéploiement au mauvais moment pouvait renvoyer une seconde fois un rappel programmé, mentions comprises, ou une notification de violation de données déjà reçue. Ces envois sont désormais marqués avant d'être faits.
+- Un bannissement temporaire pouvait devenir définitif si le bot redémarrait juste avant l'échéance.
+- Une configuration de journalisation illisible empêchait les messages de bienvenue et les rôles automatiques de fonctionner, sans aucun rapport apparent avec la cause.
+- Le mode panique d'un serveur pouvait rester actif indéfiniment si le bot redémarrait au mauvais moment.
+
 ## 🌌 Quasar — v4.8.0
 ### Le dashboard et le formulaire de signalement sont durcis
 > *7 septembre 2026*
