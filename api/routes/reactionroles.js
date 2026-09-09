@@ -158,6 +158,73 @@ router.post('/panels', requireAuth, requireGuildAdmin, async (req, res) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  Validation de l'emoji d'un panneau de rôles
+//
+//  Ce champ n'était vérifié NULLE PART. C'est la cause racine du XSS stocké
+//  corrigé côté rendu en v4.8.0 : la valeur repartait telle quelle vers
+//  `innerHTML` dans le dashboard, si bien qu'un `<img src=x onerror=…>`
+//  enregistré comme « emoji » s'exécutait au simple affichage de la page. La
+//  commande `/reactionrole` étant ouverte à `ManageRoles`, n'importe quel membre
+//  de l'équipe de modération pouvait le poser.
+//
+//  L'échappement côté page ferme la faille ; cette garde ferme la porte par
+//  laquelle la donnée entrait. Les deux valent mieux qu'une seule : la valeur
+//  finit aussi dans une description d'embed Discord et dans un appel à
+//  `msg.react()`.
+//
+//  Choix assumé : je ne cherche PAS à prouver que la chaîne est un emoji. Les
+//  définir par une expression rationnelle est un piège — les emojis composés
+//  d'un chiffre et d'une enceinte (1️⃣), les drapeaux formés de deux indicateurs
+//  régionaux, les familles assemblées par jointeurs de largeur nulle échappent
+//  aux propriétés Unicode évidentes, et refuser un emoji que Discord accepte
+//  serait un défaut plus visible que celui qu'on corrige. Je vérifie donc qu'elle
+//  est COURTE et INOFFENSIVE. `msg.react()` rejettera de lui-même ce qui n'est
+//  pas un emoji valide, et c'est déjà le cas aujourd'hui.
+// ═══════════════════════════════════════════════════════════════
+
+// Format des emojis personnalisés de Discord : <:nom:id> ou <a:nom:id> animé.
+const EMOJI_PERSONNALISE = /^<a?:\w{2,32}:\d{17,20}>$/;
+// Tout ce qui permettrait de sortir d'un attribut HTML, d'une balise, ou
+// d'injecter dans une description d'embed.
+const CARACTERES_INTERDITS = /[<>"'`&\\\r\n\t]/;
+const MAX_POINTS_DE_CODE = 8;
+const MAX_DESCRIPTION = 100;
+
+function validerEmoji(valeur) {
+    if (typeof valeur !== 'string') return { error: "L'emoji doit être du texte." };
+    const v = valeur.trim();
+    if (!v) return { error: 'Aucun emoji fourni.' };
+
+    // Le format personnalisé contient des chevrons : il est testé en premier, et
+    // ses classes `\w` et `\d` n'admettent ni guillemet ni chevron supplémentaire.
+    if (EMOJI_PERSONNALISE.test(v)) return { value: v };
+
+    if (CARACTERES_INTERDITS.test(v)) {
+        return { error: "Cet emoji contient des caractères qui ne peuvent pas être affichés en toute sécurité. Utilisez un emoji, ou un emoji personnalisé du serveur." };
+    }
+    // Compté en points de code et non en octets : un seul emoji peut peser une
+    // dizaine d'octets.
+    if ([...v].length > MAX_POINTS_DE_CODE) {
+        return { error: "Cet emoji est trop long. Utilisez un emoji unique, ou un emoji personnalisé du serveur." };
+    }
+    // Un emoji n'est jamais purement ASCII. Les seules exceptions, les touches
+    // numériques, portent toujours leur enceinte U+20E3, hors ASCII.
+    if (!/[^\x00-\x7F]/.test(v)) {
+        return { error: "Cette valeur n'est pas un emoji." };
+    }
+    return { value: v };
+}
+
+function validerDescription(valeur) {
+    if (valeur === undefined || valeur === null || valeur === '') return { value: null };
+    if (typeof valeur !== 'string') return { error: 'La description doit être du texte.' };
+    if (valeur.length > MAX_DESCRIPTION) {
+        return { error: `La description d'une entrée est limitée à ${MAX_DESCRIPTION} caractères.` };
+    }
+    return { value: valeur };
+}
+
 // Ajouter un emoji → rôle à un panel
 router.post('/panels/:panelId/entries', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
@@ -175,9 +242,14 @@ router.post('/panels/:panelId/entries', requireAuth, requireGuildAdmin, async (r
     const resolved = resolveAssignableRole(req, roleId);
     if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
 
+    const emojiLu = validerEmoji(emoji);
+    if (emojiLu.error) return res.status(400).json({ error: emojiLu.error });
+    const descriptionLue = validerDescription(description);
+    if (descriptionLue.error) return res.status(400).json({ error: descriptionLue.error });
+
     db.prepare(`INSERT INTO reaction_roles (panel_id, emoji, role_id, description) VALUES (?, ?, ?, ?)
         ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?`)
-        .run(panelId, emoji, roleId, description || null, roleId, description || null);
+        .run(panelId, emojiLu.value, roleId, descriptionLue.value, roleId, descriptionLue.value);
 
     // Refresh le panel Discord
     await refreshPanelFromApi(req, panel, panelId, db);
@@ -290,3 +362,6 @@ async function refreshPanelFromApi(req, panel, panelId, db) {
 }
 
 module.exports = router;
+module.exports.validerEmoji = validerEmoji;
+module.exports.validerDescription = validerDescription;
+

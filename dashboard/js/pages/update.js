@@ -94,7 +94,14 @@ environment:
     }
 }
 
-function startUpdate() {
+// La mise à jour se déclenche désormais en POST authentifié par en-tête : en GET,
+// un simple préchargement de lien suffisait à la lancer, et le jeton voyageait
+// dans l'URL. `EventSource` ne sait faire ni l'un ni l'autre (GET seul, aucun
+// en-tête possible) : le flux est donc lu à la main avec fetch + ReadableStream.
+// Le format des événements reste identique côté serveur — du SSE, un événement
+// par bloc séparé d'une ligne vide, chaque ligne utile préfixée « data: » — c'est
+// seulement le découpage qui est fait ici au lieu d'être offert par le navigateur.
+async function startUpdate() {
     const actionDiv = document.getElementById('update-action');
     const outputDiv = document.getElementById('update-output');
     const logPre = document.getElementById('update-log');
@@ -103,57 +110,118 @@ function startUpdate() {
     actionDiv.style.display = 'none';
     outputDiv.style.display = 'block';
 
-    const token = getToken();
-    const es = new EventSource(`/api/update?token=${token}`);
+    // Passe à true dès que le serveur a annoncé la fin (done/fail) : au-delà, la
+    // fermeture du flux est attendue et ne doit plus être signalée comme une perte
+    // de connexion.
+    let acheve = false;
 
-    es.onmessage = (e) => {
-        let data;
-        try { data = JSON.parse(e.data); } catch { return; }
-
+    function ajouterLigne(className, texte) {
         const line = document.createElement('div');
+        if (className) line.className = className;
+        line.textContent = texte;
+        logPre.appendChild(line);
+        logPre.scrollTop = logPre.scrollHeight;
+    }
 
+    function traiterEvenement(data) {
         switch (data.type) {
             case 'status':
-                line.className = 'log-status';
-                line.textContent = `▸ ${data.message}`;
+                ajouterLigne('log-status', `▸ ${data.message}`);
                 statusTitle.textContent = data.message;
                 break;
             case 'error':
-                line.className = 'log-error';
-                line.textContent = data.message;
+                ajouterLigne('log-error', data.message);
                 break;
             case 'done':
-                line.className = 'log-success';
-                line.textContent = `\n✓ ${data.message}`;
+                ajouterLigne('log-success', `\n✓ ${data.message}`);
                 statusTitle.textContent = data.message;
-                es.close();
+                acheve = true;
                 waitForRestart();
                 break;
             case 'fail':
-                line.className = 'log-error';
-                line.textContent = `\n✗ ${data.message}`;
+                ajouterLigne('log-error', `\n✗ ${data.message}`);
                 statusTitle.textContent = data.message;
                 statusTitle.style.color = 'var(--danger)';
-                es.close();
+                acheve = true;
                 break;
             default:
-                line.textContent = data.message;
+                ajouterLigne(null, data.message);
         }
+    }
 
-        logPre.appendChild(line);
-        logPre.scrollTop = logPre.scrollHeight;
-    };
+    // Un bloc SSE peut porter plusieurs lignes ; seules celles préfixées « data: »
+    // nous intéressent, les commentaires de maintien de connexion (« : ping ») et
+    // les champs event/id sont ignorés sans bruit.
+    function traiterBloc(bloc) {
+        for (const ligne of bloc.split('\n')) {
+            if (!ligne.startsWith('data:')) continue;
+            let data;
+            try { data = JSON.parse(ligne.slice(5).trim()); } catch { continue; }
+            traiterEvenement(data);
+        }
+    }
 
-    es.onerror = () => {
-        es.close();
+    function signalerPerteConnexion() {
         // Si la connexion se ferme pendant l'update, c'est normal (le container redémarre)
-        const line = document.createElement('div');
-        line.className = 'log-status';
-        line.textContent = '\n▸ Connexion perdue — le serveur redémarre...';
-        logPre.appendChild(line);
-        logPre.scrollTop = logPre.scrollHeight;
+        statusTitle.textContent = 'Connexion perdue';
+        ajouterLigne('log-status', '\n▸ Connexion perdue — le serveur redémarre...');
         waitForRestart();
-    };
+    }
+
+    let reponse;
+    try {
+        reponse = await fetch('/api/update', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${getToken()}` }
+        });
+    } catch {
+        statusTitle.textContent = 'Serveur injoignable';
+        statusTitle.style.color = 'var(--danger)';
+        ajouterLigne('log-error', '✗ Impossible de joindre le serveur. Vérifiez votre connexion, puis réessayez.');
+        return;
+    }
+
+    // Refus avant même le flux : 403 pour un compte qui n'est pas propriétaire de
+    // l'instance, 409 si une mise à jour tourne déjà. Le corps JSON porte le motif.
+    if (!reponse.ok || !reponse.body) {
+        const corps = await reponse.json().catch(() => ({}));
+        const motif = corps.error
+            || (reponse.status === 403
+                ? 'La mise à jour est réservée à la personne propriétaire de l\'instance.'
+                : 'La mise à jour n\'a pas pu être lancée.');
+        statusTitle.textContent = 'Mise à jour refusée';
+        statusTitle.style.color = 'var(--danger)';
+        ajouterLigne('log-error', `✗ ${motif}`);
+        return;
+    }
+
+    const lecteur = reponse.body.getReader();
+    const decodeur = new TextDecoder();
+    let tampon = '';
+
+    try {
+        while (!acheve) {
+            const { value, done } = await lecteur.read();
+            if (done) break;
+            tampon += decodeur.decode(value, { stream: true });
+
+            // Un bloc se termine sur une ligne vide ; le reste attend le prochain
+            // morceau, un événement pouvant être coupé au milieu par le réseau.
+            let separateur;
+            while ((separateur = tampon.indexOf('\n\n')) !== -1) {
+                traiterBloc(tampon.slice(0, separateur));
+                tampon = tampon.slice(separateur + 2);
+            }
+        }
+        if (acheve) {
+            // Fin annoncée : on relâche le flux sans attendre que le serveur ferme.
+            lecteur.cancel().catch(() => {});
+        } else {
+            signalerPerteConnexion();
+        }
+    } catch {
+        if (!acheve) signalerPerteConnexion();
+    }
 }
 
 function waitForRestart() {

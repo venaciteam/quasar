@@ -13,24 +13,51 @@ if (urlToken) {
 
 const getToken = () => localStorage.getItem('quasar_token');
 
-const API = {
-    async get(url) {
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${getToken()}` } });
-        if (res.status === 401) { localStorage.removeItem('quasar_token'); window.location.href = '/'; return null; }
-        return res.json();
-    },
-    async put(url, data) {
-        const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify(data) });
-        return res.json();
-    },
-    async post(url, data) {
-        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` }, body: JSON.stringify(data) });
-        return res.json();
-    },
-    async delete(url) {
-        const res = await fetch(url, { method: 'DELETE', headers: { 'Authorization': `Bearer ${getToken()}` } });
-        return res.json();
+// Un seul chemin de requête pour les quatre verbes. Auparavant, seul `get`
+// traitait le 401 : une écriture sur session expirée rendait le corps d'erreur
+// à l'appelante, qui l'affichait comme un échec métier au lieu de renvoyer vers
+// la connexion.
+//
+// Le 403 « contrat non accepté » est né avec le middleware serveur qui impose
+// l'article 28.3. Sans ce traitement, l'appel rendrait un corps d'erreur là où
+// la page attend des données : un écran vide, sans explication, pour une
+// situation qui a pourtant une action évidente. On rouvre donc le portail
+// d'acceptation, puis on rejoue la requête UNE fois — le drapeau interdit toute
+// boucle si le portail se referme sans acceptation.
+const CONTRACT_REQUIRED = 'CONTRACT_REQUIRED';
+
+async function apiRequest(method, url, data, dejaRejoue = false) {
+    const options = { method, headers: { 'Authorization': `Bearer ${getToken()}` } };
+    if (data !== undefined) {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(data);
     }
+
+    const res = await fetch(url, options);
+
+    if (res.status === 401) {
+        localStorage.removeItem('quasar_token');
+        window.location.href = '/';
+        return null;
+    }
+
+    if (res.status === 403 && !dejaRejoue) {
+        const corps = await res.clone().json().catch(() => ({}));
+        if (corps && corps.code === CONTRACT_REQUIRED && typeof window.checkContractGate === 'function') {
+            const accepte = await window.checkContractGate();
+            if (accepte) return apiRequest(method, url, data, true);
+            return null;
+        }
+    }
+
+    return res.json();
+}
+
+const API = {
+    get: (url) => apiRequest('GET', url),
+    put: (url, data) => apiRequest('PUT', url, data),
+    post: (url, data) => apiRequest('POST', url, data),
+    delete: (url) => apiRequest('DELETE', url),
 };
 
 // Toast notifications
@@ -197,7 +224,10 @@ async function revealOwnerNav() {
     try {
         const data = await API.get('/api/presence');
         if (!data || !data.isOwner) return;
-        ['sidebar-owner', 'sidebar-breach'].forEach(id => {
+        // `sidebar-update` a rejoint la liste avec le passage de /api/update au
+        // seul propriétaire : laisser l'entrée visible pour tout le monde
+        // n'offrait qu'un refus au clic.
+        ['sidebar-owner', 'sidebar-breach', 'sidebar-update'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = '';
         });
