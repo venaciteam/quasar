@@ -606,12 +606,26 @@ function construireCsp({ vitrine }) {
         .join('; ');
 }
 
-function mountSecurityHeaders(app, { vitrine }) {
-    // Calculée une fois : les variables d'environnement ne changent pas en vol.
-    const csp = construireCsp({ vitrine });
+function mountSecurityHeaders(app) {
+    // Les deux politiques sont calculées une fois — les variables
+    // d'environnement ne changent pas en vol — puis choisies PAR CHEMIN.
+    //
+    // Le découpage par application ne marchait pas : en mode `public`, une seule
+    // application sert la vitrine ET le dashboard (`createApi` appelle
+    // `mountDashboard` puis `mountVitrine`). `createSiteApi` n'existe qu'en mode
+    // `site`. La vitrine recevait donc la politique du dashboard, qui n'autorise
+    // pas le design system distant : la page sortait entièrement sans style.
+    const cspDashboard = construireCsp({ vitrine: false });
+    const cspVitrine = construireCsp({ vitrine: true });
 
     app.use((req, res, next) => {
-        res.set('Content-Security-Policy', csp);
+        // `/dashboard` couvre la page de connexion, l'application et leurs
+        // ressources locales. Tout le reste — vitrine, pages légales, et les
+        // réponses d'API pour lesquelles la politique est sans effet — prend la
+        // politique de la vitrine, la plus permissive des deux d'un seul cran.
+        const estDashboard = req.path === '/dashboard' || req.path.startsWith('/dashboard/');
+        const vitrine = !estDashboard;
+        res.set('Content-Security-Policy', estDashboard ? cspDashboard : cspVitrine);
         // Doublon volontaire de frame-ancestors, pour les navigateurs anciens
         // qui ignorent la CSP mais respectent cet en-tête.
         res.set('X-Frame-Options', 'DENY');
@@ -862,7 +876,7 @@ function createApi(discordClient, mode = 'bot') {
     appliquerTrustProxy(app);
     // En-têtes avant tout le reste : une réponse d'erreur précoce doit les
     // porter aussi.
-    mountSecurityHeaders(app, { vitrine: false });
+    mountSecurityHeaders(app);
     // La version d'Express n'apprend rien d'utile à une visiteuse, et beaucoup
     // à qui cherche une faille connue.
     app.disable('x-powered-by');
@@ -982,7 +996,7 @@ function createSiteApi(mode) {
     const app = express();
 
     appliquerTrustProxy(app);
-    mountSecurityHeaders(app, { vitrine: true });
+    mountSecurityHeaders(app);
     app.disable('x-powered-by');
 
     mountBodyParsers(app);

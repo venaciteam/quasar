@@ -39,6 +39,8 @@ function ecouter(app) {
 before(async () => {
     apps.dashboard = await ecouter(createApi({}, 'bot'));
     apps.vitrine = await ecouter(createSiteApi('site'));
+    // Mode `public` : UNE application sert la vitrine ET le dashboard.
+    apps.mixte = await ecouter(createApi({}, 'public'));
     for (const [nom, serveur] of Object.entries(apps)) {
         bases[nom] = `http://127.0.0.1:${serveur.address().port}`;
     }
@@ -63,7 +65,7 @@ function directives(csp) {
 }
 
 test('les deux applications posent la CSP et les en-têtes de securite', async () => {
-    for (const nom of ['dashboard', 'vitrine']) {
+    for (const nom of ['dashboard', 'vitrine', 'mixte']) {
         const res = await get(bases[nom]);
         assert.ok(res.headers['content-security-policy'], `${nom} : CSP absente`);
         assert.equal(res.headers['x-frame-options'], 'DENY', nom);
@@ -147,4 +149,31 @@ test('script-src tolere encore l inline, et ce test doit echouer quand ce ne ser
     const d = directives(construireCsp({ vitrine: false }));
     assert.ok(d['script-src'].includes("'unsafe-inline'"),
         "si cette assertion tombe, c est que script-src a ete resserre : verifier que les gestionnaires en ligne ont bien tous disparu");
+});
+
+test('en mode public, la politique est choisie par CHEMIN et non par application', async () => {
+    // Régression vécue en preview : la vitrine sortait entièrement sans style.
+    // La politique était choisie à la construction de l'application, en
+    // supposant « une application = une surface ». Faux en mode `public` :
+    // createApi monte le dashboard PUIS la vitrine, et createSiteApi n'existe
+    // qu'en mode `site`. La vitrine héritait donc de la politique du dashboard,
+    // qui n'autorise pas le design system distant — feuille de style et script
+    // bloqués, page nue.
+    const dsAttendu = 'https://design.vena.city';
+
+    const racine = directives((await get(bases.mixte, '/')).headers['content-security-policy']);
+    assert.ok(racine['style-src'].includes(dsAttendu), 'la vitrine doit pouvoir charger la feuille du design system');
+    assert.ok(racine['script-src'].includes(dsAttendu), 'la vitrine doit pouvoir charger le script du design system');
+
+    const tableauDeBord = directives((await get(bases.mixte, '/dashboard/')).headers['content-security-policy']);
+    // Le dashboard tourne sur sa copie locale : lui ouvrir le design system
+    // distant elargirait la surface sans aucun usage.
+    assert.ok(!tableauDeBord['script-src'].includes(dsAttendu));
+    assert.ok(tableauDeBord['img-src'].includes('https://cdn.discordapp.com'), 'avatars Discord');
+});
+
+test('les deux politiques restent distinctes sur la meme application', async () => {
+    const a = (await get(bases.mixte, '/')).headers['content-security-policy'];
+    const b = (await get(bases.mixte, '/dashboard/')).headers['content-security-policy'];
+    assert.notEqual(a, b, 'une politique unique pour les deux surfaces est le bug corrigé ici');
 });
