@@ -13,6 +13,15 @@ const TICK_MS = 60_000;
 let tickHandle = null;
 let clientRef = null;
 
+// Verrou de ré-entrance. Le tick est de 60 s, mais un lot de rappels réglés à la
+// même heure part en série : sous limitation de débit Discord, un tour peut
+// dépasser 60 s. Sans ce verrou, le tick suivant relirait les MÊMES lignes et
+// renverrait chaque rappel une seconde fois, mentions @everyone comprises. Le
+// verrou porte sur runDueMessages lui-même, pas sur le timer, pour couvrir aussi
+// les appels directs (tick de rattrapage du boot, tests, déclenchement manuel).
+// Modèle : bot/modules/breach/index.js.
+let running = false;
+
 // ─── Helpers timezone (zoned ↔ UTC, DST-safe) ─────────────────
 
 function isValidTimezone(tz) {
@@ -153,8 +162,8 @@ function computeNextRun(row, fromMs = Date.now(), timezone = DEFAULT_TIMEZONE) {
 
 // ─── Envoi d'un message programmé ─────────────────────────────
 
-async function sendScheduledMessage(row) {
-    const guild = clientRef.guilds.cache.get(row.guild_id);
+async function sendScheduledMessage(row, client = clientRef) {
+    const guild = client.guilds.cache.get(row.guild_id);
     if (!guild) throw new Error(`guild ${row.guild_id} introuvable`);
     const channel = guild.channels.cache.get(row.channel_id);
     if (!channel || typeof channel.isTextBased !== 'function' || !channel.isTextBased()) {
@@ -198,51 +207,113 @@ async function sendScheduledMessage(row) {
 
 // ─── Tick ─────────────────────────────────────────────────────
 
-async function runDueMessages() {
-    if (!clientRef) return;
-    const db = getDb();
-    const now = Date.now();
-    const nowSec = Math.floor(now / 1000);
+/**
+ * Envoie les rappels arrivés à échéance.
+ * @returns {Promise<{ claimed:number, sent:number, failed:number, reentrant?:boolean }>}
+ *          — compte rendu du tour, utile aux tests et à un déclenchement manuel.
+ */
+async function runDueMessages(client = clientRef) {
+    if (!client) return { claimed: 0, sent: 0, failed: 0 };
 
-    let due;
+    // Verrou de ré-entrance : si le tour précédent envoie encore (série longue,
+    // limitation de débit), ne pas relire la file en parallèle. Le tour en cours
+    // videra les rappels dus ; les suivants seront pris au prochain tick.
+    if (running) return { claimed: 0, sent: 0, failed: 0, reentrant: true };
+    running = true;
+
+    let claimed = 0;
+    let sent = 0;
+    let failed = 0;
     try {
-        due = db.prepare(`
-            SELECT * FROM scheduled_messages
-            WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ?
-        `).all(nowSec);
-    } catch (e) {
-        console.error('[Quasar Planificateur] Erreur lecture rappels dus:', e.message);
-        return;
-    }
+        // Garde-fou repris de breach/retention : un cache de serveurs vide, c'est
+        // une connexion incomplète, pas un bot sans serveur. L'échéance étant
+        // désormais avancée AVANT l'envoi, traiter la file dans cet état
+        // consommerait des rappels sans rien envoyer.
+        if (!client?.guilds?.cache || client.guilds.cache.size === 0) return { claimed, sent, failed };
 
-    for (const row of due) {
+        const db = getDb();
+        const now = Date.now();
+        const nowSec = Math.floor(now / 1000);
+
+        let due;
         try {
-            await sendScheduledMessage(row);
-            console.log(`[Quasar Planificateur] Rappel envoyé id=${row.id} guild=${row.guild_id} channel=${row.channel_id}`);
-            const next = computeNextRun(row, now);
-            if (row.schedule_type === 'once' || next === null) {
-                db.prepare(`
-                    UPDATE scheduled_messages
-                    SET last_run = ?, enabled = 0, next_run = NULL, updated_at = ?
-                    WHERE id = ?
-                `).run(nowSec, nowSec, row.id);
-            } else {
-                db.prepare(`
-                    UPDATE scheduled_messages
-                    SET last_run = ?, next_run = ?, updated_at = ?
-                    WHERE id = ?
-                `).run(nowSec, Math.floor(next / 1000), nowSec, row.id);
-            }
-        } catch (err) {
-            console.error(`[Quasar Planificateur] Erreur envoi rappel ${row.id}:`, err.message);
-            // On avance next_run pour ne pas retomber dessus en boucle
-            const next = computeNextRun(row, now);
-            try {
-                db.prepare(`
-                    UPDATE scheduled_messages SET next_run = ?, updated_at = ? WHERE id = ?
-                `).run(next ? Math.floor(next / 1000) : null, nowSec, row.id);
-            } catch {}
+            due = db.prepare(`
+                SELECT * FROM scheduled_messages
+                WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ?
+            `).all(nowSec);
+        } catch (e) {
+            console.error('[Quasar Planificateur] Erreur lecture rappels dus:', e.message);
+            return { claimed, sent, failed };
         }
+
+        for (const row of due) {
+            // ─── ORDRE DES ÉCRITURES ───────────────────────────────────────
+            // L'échéance est avancée AVANT l'envoi, jamais après. Le verrou
+            // ci-dessus ne protège que dans CE processus : un SIGTERM entre
+            // l'envoi et l'écriture (redéploiement) laisserait next_run dans le
+            // passé, et le rappel repartirait au redémarrage — avec ses mentions.
+            //
+            // La mise à jour est conditionnée à `next_run = <valeur lue>` : c'est
+            // une prise de jeton atomique. Si une autre écriture est passée entre
+            // la lecture et ici (second processus, modification depuis le
+            // dashboard), changes vaut 0 et la ligne est laissée à qui l'a prise.
+            //
+            // Contrepartie assumée : un arrêt du processus entre la prise et
+            // l'envoi fait sauter CETTE occurrence. Pour un rappel programmé,
+            // un exemplaire manquant vaut mieux qu'un double ping @everyone ;
+            // une occurrence récurrente repartira à la suivante.
+            // Le fuseau du serveur, et non le défaut. Il manquait ici alors que
+            // la planification initiale de `start()` le passait correctement :
+            // un rappel récurrent sur un serveur hors Europe/Paris était donc
+            // posé à la bonne heure au démarrage, puis recalculé en heure de
+            // Paris dès son premier déclenchement. Le réglage « fuseau par
+            // serveur » ne tenait pas au-delà de la première occurrence.
+            const next = computeNextRun(row, now, getGuildTimezone(row.guild_id));
+            let claim;
+            try {
+                if (row.schedule_type === 'once' || next === null) {
+                    claim = db.prepare(`
+                        UPDATE scheduled_messages
+                        SET last_run = ?, enabled = 0, next_run = NULL, updated_at = ?
+                        WHERE id = ? AND next_run = ?
+                    `).run(nowSec, nowSec, row.id, row.next_run);
+                } else {
+                    claim = db.prepare(`
+                        UPDATE scheduled_messages
+                        SET last_run = ?, next_run = ?, updated_at = ?
+                        WHERE id = ? AND next_run = ?
+                    `).run(nowSec, Math.floor(next / 1000), nowSec, row.id, row.next_run);
+                }
+            } catch (e) {
+                // Échéance non écrite : ne PAS envoyer. Un envoi sans écriture est
+                // exactement le scénario du double envoi.
+                console.error(`[Quasar Planificateur] Échéance du rappel ${row.id} non avancée, envoi annulé:`, e.message);
+                continue;
+            }
+
+            // La ligne a déjà été prise par un autre tour ou modifiée entre-temps.
+            if (claim.changes === 0) continue;
+            claimed++;
+
+            // `last_run` marque la tentative, pas le succès : le rappel a bien été
+            // consommé pour ce tour, que l'envoi aboutisse ou non.
+            try {
+                await sendScheduledMessage(row, client);
+                sent++;
+                console.log(`[Quasar Planificateur] Rappel envoyé id=${row.id} guild=${row.guild_id} channel=${row.channel_id}`);
+            } catch (err) {
+                failed++;
+                // Plus rien à réparer en base : l'échéance est déjà avancée, donc
+                // aucune boucle d'échec possible sur la même occurrence.
+                console.error(`[Quasar Planificateur] Erreur envoi rappel ${row.id}:`, err.message);
+            }
+        }
+
+        return { claimed, sent, failed };
+    } finally {
+        // finally obligatoire : sans lui, une exception laisserait le verrou posé
+        // et la boucle serait morte jusqu'au prochain redémarrage.
+        running = false;
     }
 }
 
@@ -293,6 +364,9 @@ function stop() {
 module.exports = {
     start,
     stop,
+    // Exporté pour permettre un passage immédiat sans attendre le tour de boucle
+    // (tests, déclenchement manuel).
+    runDueMessages,
     computeNextRun,
     isValidTimezone,
     getGuildTimezone,

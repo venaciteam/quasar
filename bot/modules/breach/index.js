@@ -14,6 +14,8 @@
 //   • Reprise au boot : seules les lignes 'pending' sont traitées ; 'sent' et
 //     'failed' sont laissées telles quelles. La boucle est donc idempotente et
 //     reprenable après un redémarrage.
+//   • Marquage AVANT l'envoi : la ligne passe par un état 'sending' avant l'appel
+//     Discord, jamais après (voir le commentaire ORDRE DES ÉCRITURES plus bas).
 //
 //  Modèle : bot/modules/retention/index.js (tick, boot delay, unref, safeTick).
 // ═══════════════════════════════════════════════════════════════
@@ -25,6 +27,12 @@ const TICK_MS = 30 * 1000;       // 30 s : les notifications de violation sont u
 const BOOT_DELAY_MS = 20 * 1000; // laisse le bot finir de se connecter avant le premier passage
 const SPREAD_MS = 1200;          // étalement entre deux envois réels d'un même tick
 const MAX_ATTEMPTS = 5;          // au-delà, l'envoi est marqué 'failed' (et repli salon si c'était un MP)
+// Au-delà de ce délai, une ligne restée 'sending' ne peut plus être un envoi en
+// cours : le verrou de ré-entrance interdit deux traitements simultanés dans ce
+// processus, donc une telle ligne est forcément le résidu d'un arrêt brutal.
+// Large à dessein : un envoi Discord fortement limité en débit doit rester très
+// loin de cette borne, sous peine de reprise sur un envoi encore vivant.
+const STALE_SENDING_S = 300;
 
 let tickHandle = null;
 let bootHandle = null;
@@ -70,6 +78,40 @@ function ensureGuildFallback(db, messageId, guildId) {
 }
 
 /**
+ * Remet en file les envois interrompus par un arrêt du processus.
+ *
+ * Une ligne 'sending' veut dire : « le marquage est passé, la suite est
+ * inconnue ». Le message est peut-être parti, peut-être pas. Pour une
+ * notification de violation, l'arbitrage ne se fait PAS comme pour un rappel
+ * programmé : l'information doit parvenir aux personnes concernées (art. 34),
+ * donc le doute se tranche en faveur d'une nouvelle tentative. Le doublon
+ * possible est borné par MAX_ATTEMPTS et tracé dans la colonne `error`, ce qui
+ * laisse la traçabilité (art. 33.5) lisible : « statut d'envoi incertain » est
+ * une information, « rien » n'en est pas une.
+ */
+function recoverInterrupted(db) {
+    const cutoff = nowSec() - STALE_SENDING_S;
+    const stuck = db.prepare(
+        "SELECT * FROM breach_deliveries WHERE status = 'sending' AND (last_attempt_at IS NULL OR last_attempt_at <= ?)"
+    ).all(cutoff);
+
+    for (const row of stuck) {
+        if (row.attempts >= MAX_ATTEMPTS) {
+            // Plus de tentative disponible : la ligne est close en échec, avec la
+            // mention exacte du doute plutôt qu'un « envoyé » qui mentirait.
+            db.prepare("UPDATE breach_deliveries SET status = 'failed', error = ? WHERE id = ?")
+                .run('Envoi interrompu par un arrêt du service, statut incertain, plus aucune tentative disponible.', row.id);
+            continue;
+        }
+        db.prepare("UPDATE breach_deliveries SET status = 'pending', error = ? WHERE id = ?")
+            .run('Envoi interrompu par un arrêt du service, statut incertain : nouvelle tentative.', row.id);
+    }
+    if (stuck.length > 0) {
+        console.warn(`[Quasar Violation] ${stuck.length} envoi(s) interrompu(s) repris après un arrêt du service.`);
+    }
+}
+
+/**
  * Traite toutes les livraisons en attente. Peut être appelé directement (test,
  * déclenchement à la demande) ou par la boucle.
  * @returns {Promise<{ processed:number, sent:number, failed:number, skipped:number }>}
@@ -91,6 +133,11 @@ async function processPending(client) {
         }
 
         const db = getDb();
+
+        // Avant de lire la file : récupérer les lignes laissées 'sending' par un
+        // arrêt brutal, sans quoi elles n'y reviendraient jamais.
+        recoverInterrupted(db);
+
         const pending = db.prepare(
             "SELECT * FROM breach_deliveries WHERE status = 'pending' ORDER BY id ASC"
         ).all();
@@ -119,6 +166,31 @@ async function processPending(client) {
             // Étalement entre deux envois réels (pas avant le premier).
             if (processed > 0) await sleep(SPREAD_MS);
 
+            // ─── ORDRE DES ÉCRITURES ────────────────────────────────────────
+            // La ligne est marquée AVANT l'appel Discord, jamais après. Le verrou
+            // de ré-entrance ne protège que dans ce processus : un SIGTERM entre
+            // l'envoi et le marquage (redéploiement) laisserait la ligne
+            // 'pending', et la boucle renverrait au redémarrage la notification
+            // d'une violation de données personnelles à quelqu'un qui l'a déjà
+            // reçue — la pire conséquence possible pour ce module.
+            //
+            // Le marquage n'est PAS un simple « fait » : ce serait échanger le
+            // double envoi contre un non-envoi silencieux, inacceptable pour une
+            // obligation d'information (art. 34). L'état 'sending' dit « tentative
+            // en cours, issue inconnue » et reste distinct de 'sent' ; c'est
+            // recoverInterrupted qui décide de sa suite au tour suivant.
+            //
+            // La condition `status = 'pending'` fait de ce marquage une prise de
+            // jeton atomique : si une autre écriture est passée entre la lecture
+            // de la file et ici, changes vaut 0 et la ligne est laissée.
+            const claim = db.prepare(
+                "UPDATE breach_deliveries SET status = 'sending', attempts = ?, last_attempt_at = ? WHERE id = ? AND status = 'pending'"
+            ).run(row.attempts + 1, nowSec(), row.id);
+            if (claim.changes === 0) {
+                skipped++;
+                continue;
+            }
+
             let res;
             if (row.channel === 'guild_channel') {
                 // Repli salon : POINTEUR NEUTRE dans le salon de logs de modération.
@@ -131,7 +203,7 @@ async function processPending(client) {
                 res = await sendDM(client, row.recipient_id, embed);
             }
 
-            const attempts = row.attempts + 1;
+            const attempts = row.attempts + 1; // déjà écrit par le marquage ci-dessus
             const ts = nowSec();
             processed++;
 
@@ -155,9 +227,10 @@ async function processPending(client) {
                     ensureGuildFallback(db, row.message_id, row.guild_id);
                 }
             } else {
-                // On garde la ligne 'pending' pour re-tentative, en conservant l'erreur.
+                // Retour en 'pending' pour re-tentative (la ligne est en 'sending'
+                // depuis le marquage), en conservant l'erreur.
                 db.prepare(
-                    "UPDATE breach_deliveries SET attempts = ?, last_attempt_at = ?, error = ? WHERE id = ?"
+                    "UPDATE breach_deliveries SET status = 'pending', attempts = ?, last_attempt_at = ?, error = ? WHERE id = ?"
                 ).run(attempts, ts, res.error, row.id);
             }
         }
