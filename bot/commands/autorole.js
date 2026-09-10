@@ -16,6 +16,11 @@ module.exports = definirCommande({
     nom: 'autorole',
     description: 'Gérer les rôles attribués automatiquement à l\'arrivée',
     permission: 'MANAGE_ROLES',
+    // Permission du BOT, à ne pas confondre avec `permission` ci-dessus qui
+    // porte sur le membre. C'est elle qui alimente le contrôle du masque du lien
+    // d'invitation : sans MANAGE_ROLES, la configuration s'enregistre mais
+    // l'attribution échoue plus tard, à l'arrivée d'un membre.
+    permissionsBot: ['MANAGE_ROLES'],
 
     sousCommandes: [
         {

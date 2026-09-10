@@ -1,6 +1,6 @@
 const { getDb } = require('../../api/services/database');
 const { cancelPurge } = require('../modules/retention/purge');
-const { deployCommandsForGuild } = require('../utils/deploy-commands');
+const { deployCommandsForGuild } = require('../platform/discord/deploy');
 
 module.exports = {
     name: 'guildCreate',

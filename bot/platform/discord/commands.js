@@ -8,7 +8,7 @@
 //       neutre et module discord.js historique — pendant la migration.
 //
 //  Ce chargeur est le seul du projet à parcourir bot/commands/ : `bot/index.js`
-//  (exécution) et `bot/utils/deploy-commands.js` (déploiement) en avaient chacun
+//  (exécution) et `./deploy.js` (déploiement) en avaient chacun
 //  une copie, avec des règles subtilement différentes sur les fichiers à exports
 //  multiples. Deux copies finissent par diverger, et une commande chargée mais
 //  jamais déployée — ou l'inverse — est un symptôme qui ne désigne pas sa cause.
@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { SlashCommandBuilder } = require('discord.js');
 const { bitfield } = require('./permissions');
+const { versTypesDiscord } = require('./channels');
 const {
     estDescripteurNeutre,
     commandeDisponible,
@@ -61,9 +62,12 @@ function appliquerOption(constructeurOption, option) {
         if (option.min !== undefined) constructeurOption.setMinValue(option.min);
         if (option.max !== undefined) constructeurOption.setMaxValue(option.max);
     }
-    // L'autocomplétion et les choix figés s'excluent : Discord refuse une option
-    // qui déclare les deux.
+    // L'autocomplétion et les choix figés s'excluent ; le registre refuse déjà
+    // la combinaison, ce test n'est qu'une ceinture.
     if (option.autocompletion && option.type !== 'choix') constructeurOption.setAutocomplete(true);
+
+    // Filtrage du sélecteur de salon, déclaré en noms canoniques.
+    if (option.typesCanal) constructeurOption.addChannelTypes(...versTypesDiscord(option.typesCanal));
 
     return constructeurOption;
 }
@@ -89,8 +93,17 @@ function construireSlashCommand(descripteur) {
         .setName(descripteur.nom)
         .setDescription(descripteur.description);
 
+    // Accès. Le registre garantit qu'exactement l'un des deux est déclaré.
+    //   permission           -> setDefaultMemberPermissions(bitfield)
+    //   accesParDefaut:false -> setDefaultMemberPermissions(0), soit « administrateurs
+    //                           seulement » : c'est ce que porte /ticket aujourd'hui,
+    //                           et aucun nom de permission ne l'exprime.
+    //   accesParDefaut:true  -> rien : c'est le défaut de Discord, et le poser
+    //                           explicitement changerait le JSON déployé.
     if (descripteur.permission) {
         builder.setDefaultMemberPermissions(bitfield(descripteur.permission));
+    } else if (descripteur.accesParDefaut === false) {
+        builder.setDefaultMemberPermissions(0);
     }
     // `dansMessagePrive: false` réserve la commande aux serveurs. Non posé par
     // défaut : la valeur par défaut de Discord (autorisée en MP) est celle des

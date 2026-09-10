@@ -185,6 +185,28 @@ function initTables() {
             FOREIGN KEY (panel_id) REFERENCES reaction_panels(id) ON DELETE CASCADE
         );
 
+        -- Panneaux d'interaction persistants (couche multiplateforme).
+        --
+        -- Un panneau de ctx.choose({ persistant: true }) doit rester actif entre
+        -- deux redémarrages : le message vit sur la plateforme, ses choix vivent
+        -- ici. La colonne kind porte le préfixe déclaré à surPanneau()
+        -- ('ticket', 'reactionrole', 'tempvoice'...) et payload le JSON des
+        -- choix et de leurs emojis — indispensable côté Fluxer, où un panneau
+        -- se rend en réactions qu'il faut savoir reposer après un redémarrage.
+        --
+        -- Créée au lot 0 et non au lot 6 : api/services/ est interdit aux lots
+        -- parallèles, et c'est le lot 5 (tickets) qui en a besoin le premier.
+        CREATE TABLE IF NOT EXISTS interaction_panels (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id     TEXT NOT NULL,
+            channel_id   TEXT NOT NULL,
+            message_id   TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            payload      TEXT NOT NULL,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (channel_id, message_id)
+        );
+
         -- Embeds sauvegardés
         -- data = JSON de l'embed lui-même (titre, description, couleur...).
         -- Les mentions vivent dans leurs propres colonnes : elles sont postées
@@ -349,6 +371,8 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild_user ON sanctions(guild_id, user_id);
         CREATE INDEX IF NOT EXISTS idx_embeds_guild ON embeds(guild_id);
         CREATE INDEX IF NOT EXISTS idx_reaction_panels_guild ON reaction_panels(guild_id);
+        -- Le routage d'un clic part du message : c'est l'index qui compte.
+        CREATE INDEX IF NOT EXISTS idx_interaction_panels_message ON interaction_panels (message_id);
         CREATE INDEX IF NOT EXISTS idx_custom_commands_guild ON custom_commands(guild_id);
         CREATE INDEX IF NOT EXISTS idx_tickets_guild ON tickets(guild_id);
         CREATE INDEX IF NOT EXISTS idx_tickets_guild_closed ON tickets(guild_id, closed_at);

@@ -19,7 +19,11 @@ const {
     TextInputBuilder,
     TextInputStyle,
 } = require('discord.js');
-const { estEmbed } = require('../embed');
+const { estEmbed, ressembleAEmbedDiscord } = require('../embed');
+
+// Clés reconnues d'un corps de message composé. Un objet qui n'en porte aucune
+// et qui n'est pas un embed neutre est REFUSÉ : voir `rendreContenu`.
+const CLES_CORPS = Object.freeze(['contenu', 'embeds', 'fichiers', 'composants', 'mentionsAutorisees']);
 
 // Discord plafonne à 5 boutons par rangée et 5 rangées par message, soit 25
 // choix. Au-delà, l'API refuse le message entier : mieux vaut lever ici, avec
@@ -74,6 +78,18 @@ function horodatageVersDate(horodatage) {
  * pas la même chose qu'une absence de titre pour l'API.
  */
 function rendreEmbed(neutre) {
+    // Garde d'entrée : `rendreEmbed` est aussi appelée en boucle sur
+    // `corps.embeds`, où un EmbedBuilder recopié par habitude passerait sans
+    // bruit et ressortirait vide.
+    if (!estEmbed(neutre)) {
+        throw new TypeError(
+            ressembleAEmbedDiscord(neutre)
+                ? 'Embed au format Discord passé à rendreEmbed(). Construisez-le avec `embed({ … })` '
+                    + 'de bot/platform/embed.js.'
+                : `Embed neutre attendu, reçu ${neutre === null ? 'null' : typeof neutre}.`
+        );
+    }
+
     const builder = new EmbedBuilder();
 
     if (neutre.titre) builder.setTitle(neutre.titre);
@@ -113,12 +129,31 @@ function rendreEmbed(neutre) {
 }
 
 /**
+ * Pièce jointe neutre -> forme acceptée par discord.js.
+ * `{ nom, donnees, description? }` où `donnees` est un Buffer, une chaîne ou un
+ * flux. C'est ce qui permet à un ticket de rendre son transcript.
+ */
+function rendreFichier(fichier) {
+    if (!fichier || !fichier.nom) {
+        throw new Error('Pièce jointe invalide : { nom, donnees } est le minimum attendu.');
+    }
+    return { attachment: fichier.donnees, name: fichier.nom, description: fichier.description };
+}
+
+/**
  * Contenu neutre -> corps de message discord.js.
  *
- * Accepte une chaîne, un embed neutre, un tableau d'embeds neutres, ou un objet
- * déjà formé `{ contenu, embeds }` — les trois formes qui circulent dans le
- * code métier. Le résultat est fusionnable dans n'importe quel payload
- * (`reply`, `followUp`, `send`, `editReply`).
+ * Formes acceptées :
+ *   - une chaîne ;
+ *   - un embed neutre, ou un tableau d'embeds neutres ;
+ *   - un corps composé `{ contenu, embeds, fichiers, composants, mentionsAutorisees }`.
+ *
+ * ⚠️ Un embed au format Discord (`EmbedBuilder` ou `APIEmbed`) est REFUSÉ, avec
+ * une exception qui le dit. Le tolérer produirait un embed à moitié rendu — la
+ * description survivrait, le titre, la couleur, les champs et le pied non — ou
+ * un corps vide, et l'erreur (« Cannot send an empty message ») apparaîtrait
+ * très loin de sa cause. Il reste 146 `EmbedBuilder` à migrer : mieux vaut que
+ * chacun échoue à l'endroit exact où il est passé.
  */
 function rendreContenu(contenuOuEmbed) {
     if (contenuOuEmbed === null || contenuOuEmbed === undefined) return {};
@@ -126,12 +161,28 @@ function rendreContenu(contenuOuEmbed) {
     if (Array.isArray(contenuOuEmbed)) return { embeds: contenuOuEmbed.map(rendreEmbed) };
     if (estEmbed(contenuOuEmbed)) return { embeds: [rendreEmbed(contenuOuEmbed)] };
 
-    const payload = {};
-    if (contenuOuEmbed.contenu) payload.content = contenuOuEmbed.contenu;
-    if (contenuOuEmbed.embeds) {
-        payload.embeds = contenuOuEmbed.embeds.map(e => (estEmbed(e) ? rendreEmbed(e) : e));
+    if (typeof contenuOuEmbed === 'object' && CLES_CORPS.some(cle => cle in contenuOuEmbed)) {
+        const payload = {};
+        if (contenuOuEmbed.contenu !== undefined) payload.content = contenuOuEmbed.contenu;
+        if (contenuOuEmbed.embeds) payload.embeds = contenuOuEmbed.embeds.map(rendreEmbed);
+        if (contenuOuEmbed.fichiers) payload.files = contenuOuEmbed.fichiers.map(rendreFichier);
+        if (contenuOuEmbed.composants) payload.components = contenuOuEmbed.composants;
+        if (contenuOuEmbed.mentionsAutorisees) payload.allowedMentions = contenuOuEmbed.mentionsAutorisees;
+        return payload;
     }
-    return payload;
+
+    if (ressembleAEmbedDiscord(contenuOuEmbed)) {
+        throw new TypeError(
+            'Embed au format Discord passé à la couche neutre. Construisez-le avec '
+            + '`embed({ titre, description, couleur, champs, … })` de bot/platform/embed.js : '
+            + 'un EmbedBuilder ou un APIEmbed ne serait rendu qu\'à moitié.'
+        );
+    }
+
+    throw new TypeError(
+        `Contenu non reconnu par la couche neutre (${Object.keys(contenuOuEmbed).join(', ') || 'objet vide'}). `
+        + `Attendu : une chaîne, un embed neutre, ou un corps { ${CLES_CORPS.join(', ')} }.`
+    );
 }
 
 /**
@@ -225,6 +276,8 @@ function rendrePrompt(questions, options = {}, identifiant) {
 module.exports = {
     rendreEmbed,
     rendreContenu,
+    rendreFichier,
+    CLES_CORPS,
     rendreChoix,
     rendrePrompt,
     couleurVersEntier,

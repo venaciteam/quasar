@@ -1,8 +1,12 @@
-const { REST, Routes } = require('discord.js');
+// Déploiement des commandes slash — spécifique à Discord, donc dans
+// l'adaptateur. Le fichier vivait dans `bot/utils/`, que la DA décrit comme
+// sans dépendance à discord.js : l'adaptateur y remontait pour l'appeler, ce qui
+// inversait le sens des dépendances de la couche.
+const { Routes } = require('discord.js');
 const path = require('path');
-const { DISABLED_COMMAND_FILES } = require('./disabledCommands');
-const { chargerCommandes } = require('../platform/discord/commands');
-const { getDb } = require('../../api/services/database');
+const { DISABLED_COMMAND_FILES } = require('../../utils/disabledCommands');
+const { chargerCommandes } = require('./commands');
+const { getDb } = require('../../../api/services/database');
 const {
     CHAT_INPUT_TYPE,
     CHAT_INPUT_COMMAND_CHARACTERS_MAX,
@@ -11,7 +15,7 @@ const {
     commandCharacterCost,
     validateChatInputName,
     buildCustomCommandDescription,
-} = require('./slashCommandSpec');
+} = require('../../utils/slashCommandSpec');
 
 // Une guild saturée peut produire des centaines de rejets. Les détailler tous
 // noierait le démarrage : on nomme les premiers, on résume le reste.
@@ -49,13 +53,13 @@ const SEUIL_ALERTE_TAILLE_COMMANDE = 0.75;
  * les deux formats de commande pendant la migration (descripteur neutre ou
  * module discord.js historique).
  *
- * @param {import('../platform/discord/commands').EntreeCommande[]} [entrees]
+ * @param {import('./commands').EntreeCommande[]} [entrees]
  *   entrées déjà chargées par le bot, pour ne pas relire le dossier ni
  *   reconstruire les builders au démarrage.
  */
 function loadFileCommands(entrees = null) {
     const source = entrees || chargerCommandes({
-        dossier: path.join(__dirname, '..', 'commands'),
+        dossier: path.join(__dirname, '..', '..', 'commands'),
         exclus: DISABLED_COMMAND_FILES,
     });
     return source.map(entree => entree.data.toJSON());
@@ -206,7 +210,12 @@ async function deployCommands(client, entrees = null) {
     }
 
     const customParGuild = loadCustomCommandsByGuild();
-    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    // `client.rest` est déjà authentifié et partage le compteur de limitation de
+    // débit du bot. En reconstruire un depuis process.env.DISCORD_TOKEN créait
+    // un second client REST, qui ignorait les quotas connus du premier — et qui
+    // rendait le déploiement dépendant d'une variable d'environnement plutôt que
+    // de la session en cours.
+    const rest = client.rest;
 
     auditFileCommandSizes(fileCommands);
 
@@ -282,9 +291,8 @@ async function deployCommandsForGuild(guild) {
     // puis réinvité avant la fin du délai de grâce, auquel cas sa configuration
     // a été conservée et ses commandes doivent revenir avec lui.
     const customRows = loadCustomCommandsByGuild().get(guild.id) || [];
-    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
-    return deployToGuild(rest, guild, fileCommands, customRows);
+    return deployToGuild(guild.client.rest, guild, fileCommands, customRows);
 }
 
 module.exports = { deployCommands, deployCommandsForGuild };

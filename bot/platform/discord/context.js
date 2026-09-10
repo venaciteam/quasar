@@ -2,10 +2,10 @@
 //  Contexte d'exécution neutre — Discord
 //
 //  Traduit une interaction discord.js en l'objet décrit par la DA §5.4. C'est
-//  la seule chose qu'une commande migrée reçoit : si une information n'est pas
-//  ici, elle n'existe pas pour le code métier.
+//  la seule chose qu'une commande ou un panneau migré reçoit : si une
+//  information n'est pas ici, elle n'existe pas pour le code métier.
 //
-//  Deux règles à connaître avant d'écrire une commande :
+//  Trois règles à connaître avant d'écrire une commande :
 //
 //   • Une interaction Discord doit être acquittée dans les 3 secondes, et une
 //     seule fois. `repondre()` choisit donc lui-même entre reply, editReply et
@@ -18,11 +18,24 @@
 //     interaction, qui exige à son tour un acquittement. Après un `prompt()`
 //     qui n'a pas rendu `null`, `ctx.repondre()` répond donc au formulaire, et
 //     ne pas répondre du tout laisserait « L'interaction a échoué » à l'écran.
+//
+//   • Après un `ctx.choose()` éphémère, `ctx.repondre()` poste un message
+//     SUPPLÉMENTAIRE, il ne réécrit pas le panneau. Pour réécrire le panneau
+//     lui-même — le griser, afficher le choix retenu — il y a
+//     `ctx.modifierPanneau()`.
+//
+//   • Un `choose()` déclare ce qui l'enchaîne, par `suite: 'message' | 'saisie'`.
+//     Le code métier décrit son INTENTION, jamais la plomberie : « acquitter le
+//     clic » ne veut rien dire sur Fluxer, où un `choose` est une réaction emoji
+//     sans accusé de réception. Chaque adaptateur en fait ce qu'il peut — côté
+//     Discord, `'saisie'` laisse le clic vierge pour qu'un formulaire puisse
+//     s'ouvrir dessus ; côté Fluxer, l'option est inerte.
 // ═══════════════════════════════════════════════════════════════
 
 const { InteractionResponse } = require('discord.js');
 const { rendreContenu, rendreChoix, rendrePrompt } = require('./render');
 const { aPermission, BITS } = require('./permissions');
+const { versNomCanonique } = require('./channels');
 
 // Délais par défaut, en secondes. Alignés sur ce que Discord tolère : un modal
 // reste ouvert 15 minutes, mais attendre aussi longtemps retiendrait un
@@ -37,6 +50,16 @@ const DELAI_CHOOSE_DEFAUT = 120;
 // disponible à l'identique sur les deux plateformes.
 const PERMISSION_STAFF = 'MANAGE_GUILD';
 
+const MODES_AUTORISE = Object.freeze(['auteur', 'tous', 'staff']);
+
+// Ce qui enchaîne un `ctx.choose`. Formulé en intention et non en mécanique :
+//   'message' — l'appelant va poster une réponse ou modifier le panneau ;
+//   'saisie'  — l'appelant va ouvrir un formulaire (`ctx.prompt`).
+// Les deux seules valeurs acceptées : une troisième, mal orthographiée, ferait
+// silencieusement retomber sur le défaut et casserait le parcours « panneau
+// puis formulaire » sans le moindre message.
+const SUITES_CHOOSE = Object.freeze(['message', 'saisie']);
+
 let compteurInteractions = 0;
 
 /** Attache une référence native sans la rendre visible d'un log ou d'un JSON. */
@@ -44,19 +67,26 @@ function avecBrut(objet, brut) {
     // ⚠️ Échappatoire de transition. `brut` porte l'objet discord.js d'origine
     // pour le code pas encore migré ; il vaut `undefined` sur Fluxer. Une
     // commande migrée ne doit JAMAIS s'en servir — c'est exactement ce que ce
-    // chantier retire. À supprimer à la fin des lots 1 à 5.
+    // chantier retire, et un test l'interdit hors de bot/platform/.
+    // À supprimer à la fin des lots 1 à 5.
     Object.defineProperty(objet, 'brut', { value: brut, enumerable: false });
     return objet;
 }
 
 // ─── Normalisation des entités ───────────────────────────────────────────────
+//
+// Les normaliseurs tolèrent DEUX formes : l'objet discord.js (camelCase, issu
+// de la passerelle et du cache) et la réponse REST brute (snake_case, issue des
+// écritures de `api.js`). Sans cette tolérance, `api.envoyerMessage` rendrait un
+// message dont `canalId` serait `undefined` — donc inutilisable pour stocker un
+// panneau en base, ce qui est précisément son usage.
 
 function normaliserUtilisateur(user) {
     if (!user) return null;
     return avecBrut({
         id: user.id,
-        nom: user.globalName || user.username,
-        etiquette: user.tag,
+        nom: user.globalName ?? user.global_name ?? user.username ?? null,
+        etiquette: user.tag ?? user.username ?? null,
         mention: `<@${user.id}>`,
         estBot: Boolean(user.bot),
     }, user);
@@ -78,8 +108,13 @@ function normaliserCanal(canal) {
     return avecBrut({
         id: canal.id,
         nom: canal.name,
-        type: canal.type,
-        guildeId: canal.guildId ?? canal.guild?.id ?? null,
+        // Nom canonique quand Quasar connaît ce type, `null` sinon (forum, fil,
+        // annonce). Le type natif reste lisible par `typeNatif` pour le code de
+        // transition qui filtre encore sur `ChannelType`.
+        type: versNomCanonique(canal.type),
+        typeNatif: canal.type,
+        guildeId: canal.guildId ?? canal.guild_id ?? canal.guild?.id ?? null,
+        parentId: canal.parentId ?? canal.parent_id ?? null,
         mention: `<#${canal.id}>`,
     }, canal);
 }
@@ -92,12 +127,12 @@ function normaliserMembre(membre) {
 
     return avecBrut({
         id: membre.id ?? membre.user?.id,
-        nom: membre.displayName ?? membre.user?.username,
-        pseudo: membre.nickname ?? null,
+        nom: membre.displayName ?? membre.nick ?? membre.user?.username ?? null,
+        pseudo: membre.nickname ?? membre.nick ?? null,
         mention: `<@${membre.id ?? membre.user?.id}>`,
         roles,
         estBot: Boolean(membre.user?.bot),
-        rejointLe: membre.joinedTimestamp ?? null,
+        rejointLe: membre.joinedTimestamp ?? (membre.joined_at ? Date.parse(membre.joined_at) : null),
         estAdmin: aPermission(membre.permissions, 'ADMINISTRATOR'),
         aPermission: (nom) => aPermission(membre.permissions, nom),
     }, membre);
@@ -156,18 +191,83 @@ function creerLecteurOptions(interaction, descripteur, sousCommande) {
     };
 }
 
-// ─── Contexte de commande ────────────────────────────────────────────────────
+// ─── Contrôle d'accès d'un panneau ───────────────────────────────────────────
 
 /**
- * @param {import('discord.js').ChatInputCommandInteraction} interaction
- * @param {{adaptateur: object, descripteur: object, sousCommande?: object}} liaison
+ * Valide la règle `autorise` AVANT de rendre le panneau.
+ *
+ * Elle était évaluée dans le filtre du collecteur, appelé par un écouteur
+ * `async` de discord.js : une valeur invalide y devenait un rejet flottant que
+ * le `try/catch` de `choose` ne pouvait pas attraper, et le panneau restait
+ * muet jusqu'à son expiration. Levée ici, l'erreur désigne l'appel fautif.
  */
-function creerContexteCommande(interaction, { adaptateur, descripteur, sousCommande = null }) {
-    // L'interaction sur laquelle répondre. Elle change après un `prompt()` :
-    // voir l'avertissement en tête de fichier.
+function validerAutorise(autorise) {
+    if (autorise === undefined || typeof autorise === 'function') return;
+    if (typeof autorise !== 'string' || (!MODES_AUTORISE.includes(autorise) && !(autorise in BITS))) {
+        throw new Error(
+            `ctx.choose : « autorise: ${JSON.stringify(autorise)} » n'est ni un mode connu `
+            + `(${MODES_AUTORISE.join(', ')}), ni un nom canonique de permission, ni un prédicat.`
+        );
+    }
+}
+
+/**
+ * Valide la déclaration d'enchaînement d'un `choose`.
+ *
+ * Même sévérité que partout ailleurs dans le registre : une valeur inconnue
+ * retomberait sur le défaut, et le parcours « panneau puis formulaire »
+ * échouerait plus tard sur un « L'interaction a échoué » sans rapport visible
+ * avec la faute de frappe qui l'a causé.
+ */
+function validerSuite(suite) {
+    if (suite === undefined || SUITES_CHOOSE.includes(suite)) return;
+    throw new Error(
+        `ctx.choose : « suite: ${JSON.stringify(suite)} » inconnue. `
+        + `Valeurs acceptées : ${SUITES_CHOOSE.map(v => `'${v}'`).join(', ')}. `
+        + '\'message\' (défaut) si une réponse enchaîne, \'saisie\' si un formulaire enchaîne.'
+    );
+}
+
+/**
+ * Applique la règle `autorise` à un clic.
+ * @param {string} auteurId identifiant de la personne qui a lancé la commande
+ */
+function autoriseClic(clic, autorise, auteurId) {
+    if (typeof autorise === 'function') return Boolean(autorise(normaliserMembre(clic.member)));
+    if (autorise === 'tous') return true;
+
+    const permissions = clic.memberPermissions || clic.member?.permissions;
+    if (autorise === 'staff') return aPermission(permissions, PERMISSION_STAFF);
+    if (typeof autorise === 'string' && autorise !== 'auteur') return aPermission(permissions, autorise);
+
+    // Défaut : seule la personne qui a lancé la commande peut cliquer. Sans
+    // cette règle, n'importe qui pourrait répondre à sa place sur un panneau
+    // posté dans un salon public.
+    return clic.user.id === auteurId;
+}
+
+// ─── Noyau commun ────────────────────────────────────────────────────────────
+
+/**
+ * Cœur du contexte, partagé par les commandes et les panneaux persistants.
+ *
+ * @param {object} interaction interaction discord.js (commande ou composant)
+ * @param {object} liaison
+ * @param {object}  liaison.adaptateur
+ * @param {string}  liaison.etiquette  nom de commande ou préfixe de panneau,
+ *   sert de valeur par défaut aux identifiants de composants
+ */
+function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
+    // L'interaction sur laquelle répondre. Elle change après un `prompt()` et
+    // après un `choose()` : voir l'avertissement en tête de fichier.
     let courante = interaction;
 
-    const capacites = adaptateur.capacites;
+    // 'normal'    — `repondre` acquitte l'interaction courante ;
+    // 'apresClic' — un clic vient d'être acquitté par `deferUpdate` ; `repondre`
+    //               doit donc poster un message SUPPLÉMENTAIRE. Un `editReply`
+    //               réécrirait le panneau, ce qui n'est presque jamais
+    //               l'intention et fait disparaître les boutons.
+    let mode = 'normal';
 
     async function envoyer(contenuOuEmbed, { ephemere = false } = {}) {
         const payload = rendreContenu(contenuOuEmbed);
@@ -176,20 +276,20 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
         // rend les diagnostics illisibles.
         if (ephemere) payload.ephemeral = true;
 
+        if (mode === 'apresClic' || courante.replied) return courante.followUp(payload);
         // Une réponse différée est déjà acquittée : `ephemeral` y est décidé au
         // moment du defer, et Discord refuse de le changer après coup — le
         // laisser dans le corps ferait échouer l'édition.
-        if (courante.deferred && !courante.replied) {
+        if (courante.deferred) {
             const { ephemeral, ...corps } = payload;
             return courante.editReply(corps);
         }
-        if (courante.replied) return courante.followUp(payload);
         return courante.reply(payload);
     }
 
     const ctx = {
         plateforme: adaptateur.nom,
-        capacites,
+        capacites: adaptateur.capacites,
 
         guildeId: interaction.guild?.id ?? null,
         canalId: interaction.channel?.id ?? interaction.channelId ?? null,
@@ -198,9 +298,7 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
         auteur: normaliserUtilisateur(interaction.user),
         membre: normaliserMembre(interaction.member),
 
-        options: creerLecteurOptions(interaction, descripteur, sousCommande),
-
-        // Horodatage de RÉCEPTION de la commande, pour mesurer une latence sans
+        // Horodatage de RÉCEPTION de l'interaction, pour mesurer une latence sans
         // rien savoir de la plateforme (utilisé par /ping).
         creeLe: interaction.createdTimestamp,
         latencePasserelle: Number.isFinite(interaction.client?.ws?.ping)
@@ -210,7 +308,7 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
         api: adaptateur.api,
         get db() {
             // Chargement différé : la chaîne base de données ne doit être
-            // ouverte que si une commande s'en sert.
+            // ouverte que si le handler s'en sert.
             return require('../../../api/services/database').getDb();
         },
 
@@ -222,7 +320,7 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
          *   `sensible` ne change rien sur Discord (l'éphémère y est réellement
          *   privé) ; il pilote la stratégie de repli côté Fluxer, où il impose
          *   le message privé plutôt que l'auto-suppression. On le passe donc dès
-         *   maintenant, pour que la commande soit correcte sur les deux
+         *   maintenant, pour que le handler soit correct sur les deux
          *   plateformes le jour de sa bascule.
          */
         repondre(contenuOuEmbed, options = {}) {
@@ -251,6 +349,19 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
         },
 
         /**
+         * Réécrit le message du panneau lui-même — pour le griser, afficher le
+         * choix retenu, ou retirer ses boutons. À ne pas confondre avec
+         * `repondre`, qui poste une suite.
+         */
+        modifierPanneau(contenuOuEmbed) {
+            const payload = rendreContenu(contenuOuEmbed);
+            // Un panneau sans `composants` déclarés garde ses boutons : les
+            // retirer implicitement casserait un panneau persistant. Pour les
+            // enlever, passer `{ composants: [] }`.
+            return courante.editReply(payload);
+        },
+
+        /**
          * Erreur d'USAGE : ce n'est pas un bug, rien n'est journalisé et aucun
          * code d'incident n'est affiché. Même rendu que `userError()`, dont
          * cette méthode est le passage neutre.
@@ -270,8 +381,17 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
          * ⚠️ `showModal` exige une interaction NON acquittée : ne rien répondre
          * avant d'appeler `prompt()`. Et répondre APRÈS, toujours — la
          * soumission du formulaire est une nouvelle interaction à acquitter.
+         * Après un `choose()`, il faut donc lui avoir déclaré `{ suite: 'saisie' }`.
          */
         async prompt(questions, options = {}) {
+            if (courante.deferred || courante.replied) {
+                throw new Error(
+                    'ctx.prompt : l\'interaction est déjà acquittée, aucun formulaire ne peut plus être ouvert. '
+                    + 'Appelez prompt() avant toute réponse — et si un ctx.choose() le précède, '
+                    + 'déclarez-lui { suite: \'saisie\' }.'
+                );
+            }
+
             const identifiant = `qprompt:${interaction.id}:${compteurInteractions++}`;
             await courante.showModal(rendrePrompt(questions, options, identifiant));
 
@@ -288,6 +408,7 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
             }
 
             courante = soumission;
+            mode = 'normal';
 
             const reponses = {};
             for (const question of questions) {
@@ -315,16 +436,39 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
          * @param {string}  [options.identifiant] préfixe de customId d'un panneau persistant
          * @param {string|Function} [options.autorise] 'auteur' (défaut), 'tous',
          *        'staff', un nom canonique de permission, ou un prédicat (membre) => boolean
-         * @param {number}  [options.delai]        secondes, panneau éphémère seulement
+         * @param {number}  [options.delai]      secondes, panneau éphémère seulement
          * @param {boolean} [options.ephemere]
+         * @param {'message'|'saisie'} [options.suite]  ce qui enchaîne. Voir ci-dessous.
          * @returns {Promise<string|null|{persistant: true, canalId: string, messageId: string}>}
          *   la clé choisie ; `null` à expiration ; les coordonnées du message
          *   pour un panneau persistant, à stocker en base par l'appelant.
+         *
+         * ⚠️ Ce qui se passe APRÈS le clic dépend de `suite`, qui déclare
+         * l'INTENTION de l'appelant et non la plomberie d'une plateforme :
+         *
+         *   suite: 'message' (défaut) — un message ou une réécriture du panneau
+         *     enchaîne. Côté Discord, le clic est acquitté sans rien afficher :
+         *     `ctx.repondre()` poste ensuite un message supplémentaire et
+         *     `ctx.modifierPanneau()` réécrit le panneau. `ctx.prompt()` est
+         *     alors IMPOSSIBLE — Discord n'ouvre un formulaire que sur une
+         *     interaction vierge — et prompt() le dira explicitement.
+         *
+         *   suite: 'saisie' — un formulaire enchaîne. Côté Discord, le clic
+         *     n'est pas acquitté et le contexte bascule dessus tel quel : c'est
+         *     ce qui rend possible « panneau de ticket puis formulaire ». En
+         *     contrepartie, il FAUT appeler prompt() ou repondre() dans les
+         *     3 secondes, sinon Discord affiche « L'interaction a échoué ».
+         *     Côté Fluxer, où un choose est une réaction emoji sans accusé de
+         *     réception, l'option est inerte : le dialogue séquentiel s'ouvre
+         *     de la même façon dans les deux cas.
          */
         async choose(message, choix, options = {}) {
+            validerAutorise(options.autorise);
+            validerSuite(options.suite);
+
             const persistant = Boolean(options.persistant);
             const prefixe = persistant
-                ? (options.identifiant || `qpanel:${descripteur.nom}`)
+                ? (options.identifiant || etiquette)
                 : `qchoose:${interaction.id}:${compteurInteractions++}`;
 
             const payload = { ...rendreContenu(message), components: rendreChoix(choix, prefixe) };
@@ -333,11 +477,11 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
             // `reply` rend un InteractionResponse, `followUp` et `editReply` un
             // Message : c'est `resoudreMessage` qui les ramène à une forme unique.
             let reponse;
-            if (courante.deferred && !courante.replied) {
+            if (mode === 'apresClic' || courante.replied) {
+                reponse = await courante.followUp(payload);
+            } else if (courante.deferred) {
                 const { ephemeral, ...corps } = payload;
                 reponse = await courante.editReply(corps);
-            } else if (courante.replied) {
-                reponse = await courante.followUp(payload);
             } else {
                 reponse = await courante.reply(payload);
             }
@@ -345,29 +489,36 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
             const msg = await resoudreMessage(reponse, courante);
 
             // Un panneau persistant ne collecte rien : ses clics sont routés par
-            // les handlers d'interactions, qui survivent aux redémarrages. On
-            // rend ses coordonnées pour que l'appelant les stocke en base.
+            // `adaptateur.surPanneau`, qui survit aux redémarrages. On rend ses
+            // coordonnées pour que l'appelant les stocke en base.
             if (persistant) {
                 return { persistant: true, canalId: msg?.channelId ?? ctx.canalId, messageId: msg?.id ?? null };
             }
 
             if (!msg) return null;
 
+            let clic;
             try {
-                const clic = await msg.awaitMessageComponent({
+                clic = await msg.awaitMessageComponent({
                     time: (options.delai ?? DELAI_CHOOSE_DEFAUT) * 1000,
                     filter: (i) => i.customId.startsWith(`${prefixe}:`)
                         && autoriseClic(i, options.autorise, interaction.user.id),
                 });
-                // Acquitter le clic sans rien afficher : c'est l'appelant qui
-                // décide de la suite, et le contexte bascule sur ce clic pour
-                // que ses réponses aboutissent.
-                await clic.deferUpdate();
-                courante = clic;
-                return clic.customId.slice(prefixe.length + 1);
             } catch {
                 return null;
             }
+
+            if (options.suite === 'saisie') {
+                // Clic laissé vierge : c'est la seule façon d'ouvrir un modal
+                // dessus. Rien n'est acquitté, l'appelant doit répondre.
+                courante = clic;
+                mode = 'normal';
+            } else {
+                await clic.deferUpdate();
+                courante = clic;
+                mode = 'apresClic';
+            }
+            return clic.customId.slice(prefixe.length + 1);
         },
     };
 
@@ -396,33 +547,39 @@ async function resoudreMessage(reponse, interaction) {
     }
 }
 
+// ─── Contextes concrets ──────────────────────────────────────────────────────
+
 /**
- * Applique la règle `autorise` de `ctx.choose` à un clic.
- *
- * @param {string} auteurId identifiant de la personne qui a lancé la commande
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @param {{adaptateur: object, descripteur: object, sousCommande?: object}} liaison
  */
-function autoriseClic(clic, autorise, auteurId) {
-    if (typeof autorise === 'function') return Boolean(autorise(normaliserMembre(clic.member)));
-    if (autorise === 'tous') return true;
+function creerContexteCommande(interaction, { adaptateur, descripteur, sousCommande = null }) {
+    const ctx = creerNoyauContexte(interaction, { adaptateur, etiquette: `qpanel:${descripteur.nom}` });
+    ctx.options = creerLecteurOptions(interaction, descripteur, sousCommande);
+    ctx.commande = descripteur.nom;
+    return ctx;
+}
 
-    const permissions = clic.memberPermissions || clic.member?.permissions;
-    // 'staff' est le vocabulaire de la DA ; il désigne l'encadrement du serveur,
-    // traduit par « Gérer le serveur » (cf. PERMISSION_STAFF).
-    if (autorise === 'staff') return aPermission(permissions, PERMISSION_STAFF);
-    if (typeof autorise === 'string' && autorise !== 'auteur') {
-        if (!(autorise in BITS)) {
-            throw new Error(
-                `ctx.choose : « autorise: ${autorise} » n'est ni un mode connu (auteur, tous, staff) `
-                + 'ni un nom canonique de permission.'
-            );
-        }
-        return aPermission(permissions, autorise);
-    }
-
-    // Défaut : seule la personne qui a lancé la commande peut cliquer. Sans
-    // cette règle, n'importe qui pourrait répondre à sa place sur un panneau
-    // posté dans un salon public.
-    return clic.user.id === auteurId;
+/**
+ * Contexte d'un clic sur un panneau persistant.
+ *
+ * L'interaction arrive NON acquittée, volontairement : c'est ce qui permet à un
+ * handler de panneau d'ouvrir directement un formulaire (`ctx.prompt`), sans
+ * quoi le parcours « panneau de ticket → formulaire » serait impossible. La
+ * contrepartie est la règle habituelle de Discord : il faut répondre dans les
+ * 3 secondes.
+ *
+ * @param {import('discord.js').MessageComponentInteraction} interaction
+ * @param {{adaptateur: object, prefixe: string, cle: string}} liaison
+ */
+function creerContextePanneau(interaction, { adaptateur, prefixe, cle }) {
+    const ctx = creerNoyauContexte(interaction, { adaptateur, etiquette: prefixe });
+    ctx.panneau = {
+        prefixe,
+        cle,
+        messageId: interaction.message?.id ?? null,
+    };
+    return ctx;
 }
 
 /** Contexte réduit servi aux handlers d'autocomplétion. */
@@ -449,7 +606,12 @@ function creerContexteCompletion(interaction, { adaptateur, descripteur }) {
 
 module.exports = {
     creerContexteCommande,
+    creerContextePanneau,
     creerContexteCompletion,
+    creerNoyauContexte,
+    validerAutorise,
+    validerSuite,
+    autoriseClic,
     normaliserUtilisateur,
     normaliserMembre,
     normaliserRole,
@@ -458,4 +620,6 @@ module.exports = {
     DELAI_PROMPT_DEFAUT,
     DELAI_CHOOSE_DEFAUT,
     PERMISSION_STAFF,
+    MODES_AUTORISE,
+    SUITES_CHOOSE,
 };

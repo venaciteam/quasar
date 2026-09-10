@@ -36,6 +36,35 @@ const PERMISSIONS = {
     ManageGuild: [5n, 'AutoMod de Discord et mode panique anti-raid'],
 };
 
+// Nom canonique du contrat -> nom discord.js, via le bit. Écrit ainsi plutôt
+// qu'en table recopiée : une table de plus serait une table de plus à tenir à
+// jour, et elle divergerait au premier ajout.
+function permissionsBotDeclarees() {
+    process.env.QUASAR_DB_PATH = process.env.QUASAR_DB_PATH || ':memory:';
+    const { PermissionFlagsBits } = require('discord.js');
+    const { BITS } = require('../bot/platform/discord/permissions');
+    const { chargerCommandes } = require('../bot/platform/discord/commands');
+    const { DISABLED_COMMAND_FILES } = require('../bot/utils/disabledCommands');
+
+    const nomParBit = new Map(Object.entries(PermissionFlagsBits).map(([nom, bit]) => [bit, nom]));
+    const declarees = new Set();
+
+    const entrees = chargerCommandes({
+        dossier: path.join(__dirname, '..', 'bot', 'commands'),
+        exclus: DISABLED_COMMAND_FILES,
+    });
+    for (const entree of entrees) {
+        const sources = [entree.descripteur, ...(entree.descripteur?.sousCommandes || [])];
+        for (const source of sources) {
+            for (const canonique of source?.permissionsBot || []) {
+                const nomDiscord = nomParBit.get(BITS[canonique]);
+                if (nomDiscord) declarees.add(nomDiscord);
+            }
+        }
+    }
+    return declarees;
+}
+
 function masque() {
     let total = 0n;
     for (const [bit] of Object.values(PERMISSIONS)) total |= 1n << bit;
@@ -66,10 +95,22 @@ test('chaque permission du masque est justifiée par un usage', () => {
 });
 
 test('les permissions citées dans le code sont toutes couvertes par le masque', () => {
-    // Balayage du code source : toute PermissionFlagsBits.X que Quasar teste
-    // pour LUI-MÊME doit se retrouver dans le lien d'invitation. Administrator
-    // et les permissions testées sur la personne qui utilise une commande sont
-    // écartées : ce ne sont pas des permissions du bot.
+    // Deux sources, le temps de la transition.
+    //
+    //  1. Balayage du code source : toute `PermissionFlagsBits.X` que Quasar
+    //     teste doit se retrouver dans le lien d'invitation. C'est le garde-fou
+    //     d'origine, et il s'érode : une commande migrée passe de
+    //     `PermissionFlagsBits.ManageRoles` à la chaîne canonique
+    //     'MANAGE_ROLES', et sort du regex. À la fin du lot 5 il ne verrait
+    //     plus rien, tout en continuant de passer — un faux témoin.
+    //
+    //  2. Déclarations `permissionsBot` des descripteurs migrés. C'est la forme
+    //     qui remplace le balayage, au fur et à mesure des lots.
+    //
+    // La forme déclarative règle au passage un défaut du balayage : il ne
+    // distingue pas les permissions du BOT de celles exigées du MEMBRE, et
+    // capture donc les `setDefaultMemberPermissions`. `permissionsBot` ne porte
+    // que les premières, `permission` les secondes.
     const racine = path.join(__dirname, '..');
     const citees = new Set();
 
@@ -92,6 +133,8 @@ test('les permissions citées dans le code sont toutes couvertes par le masque',
         }
     })(path.join(racine, 'bot'));
 
+    for (const nom of permissionsBotDeclarees()) citees.add(nom);
+
     // Administrator n'est jamais une permission demandée : c'est le raccourci
     // proposé à l'invitation, et le test de droits de la personne qui commande.
     citees.delete('Administrator');
@@ -99,4 +142,22 @@ test('les permissions citées dans le code sont toutes couvertes par le masque',
     const manquantes = [...citees].filter((nom) => !PERMISSIONS[nom]);
     assert.deepEqual(manquantes, [],
         `permissions testées dans le code mais absentes du lien d'invitation : ${manquantes.join(', ')}`);
+});
+
+test('une commande migrée déclare ses permissions de bot au lieu de les cacher', () => {
+    // Sans cette déclaration, une commande migrée disparaît du balayage et le
+    // garde-fou devient muet. Les deux commandes témoins du lot 0 la portent ;
+    // les lots 1 à 5 rempliront le champ en migrant les 27 autres.
+    for (const fichier of ['ping', 'autorole']) {
+        const descripteur = require(path.join(__dirname, '..', 'bot', 'commands', fichier));
+        assert.ok(
+            Array.isArray(descripteur.permissionsBot),
+            `/${fichier} : « permissionsBot » manquant (un tableau vide est une réponse valable)`,
+        );
+    }
+    assert.ok(
+        permissionsBotDeclarees().has('ManageRoles'),
+        '/autorole doit déclarer MANAGE_ROLES : sans elle, la configuration s\'enregistre '
+        + 'mais l\'attribution échoue plus tard, à l\'arrivée d\'un membre',
+    );
 });

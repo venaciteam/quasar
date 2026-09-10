@@ -15,8 +15,15 @@ const { creerClient } = require('./client');
 const { creerCapacites } = require('../capabilities');
 const { creerApi } = require('./api');
 const { chargerCommandes, construireSlashCommand } = require('./commands');
-const { surEvenement, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
+const { surEvenement, chargerEvenements, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
+const { creerContextePanneau } = require('./context');
 const { BITS } = require('./permissions');
+
+// Séparateur entre le préfixe d'un panneau neutre et la clé du choix. Les
+// panneaux historiques utilisent `_` (`ticket_open`, `tv_lock`) : les deux jeux
+// ne peuvent donc pas se confondre, et le routage neutre peut passer en premier
+// sans risquer d'intercepter un bouton pas encore migré.
+const SEPARATEUR_PANNEAU = ':';
 
 // Discord sait tout faire de ce que Quasar demande. La table §4.2 de la DA est
 // reprise ici colonne par colonne — c'est le seul endroit où elle est écrite
@@ -39,6 +46,11 @@ const CAPACITES_DISCORD = creerCapacites({
  */
 function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
     const clientDiscord = client || creerClient();
+
+    // Préfixe -> handler de panneau persistant. Vit sur l'adaptateur, donc pour
+    // la durée du processus : un panneau posté avant un redémarrage redevient
+    // routable dès que son lot s'est réenregistré au démarrage suivant.
+    const panneaux = new Map();
 
     const adaptateur = {
         nom: 'discord',
@@ -75,16 +87,16 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
         /**
          * Déploie les commandes sur Discord.
          *
-         * Délègue à `bot/utils/deploy-commands.js`, qui porte des règles
-         * qu'aucune réécriture ne doit perdre : plafond de 100 commandes par
-         * serveur, arbitrage stable des commandes personnalisées, journalisation
-         * des rejets, et déploiement ciblé à l'invitation du bot. Le require est
-         * différé pour éviter le cycle (deploy-commands charge ce chargeur).
+         * Délègue à `./deploy.js`, qui porte des règles qu'aucune réécriture ne
+         * doit perdre : plafond de 100 commandes par serveur, arbitrage stable
+         * des commandes personnalisées, journalisation des rejets, et
+         * déploiement ciblé à l'invitation du bot. Le require est différé pour
+         * éviter le cycle (deploy.js charge le chargeur de commandes).
          *
          * @param {import('./commands').EntreeCommande[]} entrees
          */
         async enregistrerCommandes(entrees) {
-            const { deployCommands } = require('../../utils/deploy-commands');
+            const { deployCommands } = require('./deploy');
             return deployCommands(clientDiscord, entrees);
         },
 
@@ -98,11 +110,70 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
             return chargerCommandes({ ...options, adaptateur });
         },
 
+        /** Charge bot/events/ dans les deux formats et branche les handlers. */
+        chargerEvenements(options) {
+            return chargerEvenements({ ...options, adaptateur });
+        },
+
+        // ─── Panneaux persistants ────────────────────────────────────────────
+        //
+        // Le routage des clics vivait dans le `interactionCreate` de
+        // `bot/index.js`, par préfixes écrits en dur. Les lots 4 et 5 auraient
+        // donc dû modifier `bot/index.js`, qui leur est interdit. Ce registre
+        // est la voie neutre : un lot déclare son panneau, il est routé, et
+        // aucun fichier partagé n'est touché.
+
+        /**
+         * Enregistre le handler des clics d'un panneau persistant.
+         *
+         * @param {string} prefixe  le même que `ctx.choose({ identifiant })`
+         * @param {(ctx: object, cle: string) => Promise<void>} handler
+         *   `ctx` est un contexte complet (repondre, prompt, choose, api, db) et
+         *   l'interaction y arrive NON acquittée : le handler peut donc ouvrir
+         *   un formulaire directement, et doit répondre dans les 3 secondes.
+         */
+        surPanneau(prefixe, handler) {
+            if (typeof prefixe !== 'string' || !prefixe || prefixe.includes(SEPARATEUR_PANNEAU)) {
+                throw new Error(
+                    `surPanneau : préfixe invalide « ${prefixe} ». Attendu une chaîne non vide `
+                    + `et sans « ${SEPARATEUR_PANNEAU} », qui sépare le préfixe de la clé du choix.`
+                );
+            }
+            if (panneaux.has(prefixe)) {
+                throw new Error(`surPanneau : le préfixe « ${prefixe} » est déjà enregistré.`);
+            }
+            panneaux.set(prefixe, handler);
+            return () => panneaux.delete(prefixe);
+        },
+
+        /**
+         * Route un clic vers son panneau, s'il en a un.
+         *
+         * @returns {Promise<void>|null} `null` si aucun panneau neutre ne
+         *   revendique ce customId — l'appelant poursuit alors vers les
+         *   handlers historiques.
+         */
+        routerPanneau(interaction) {
+            const customId = interaction?.customId;
+            if (typeof customId !== 'string') return null;
+
+            const separateur = customId.indexOf(SEPARATEUR_PANNEAU);
+            if (separateur <= 0) return null;
+
+            const prefixe = customId.slice(0, separateur);
+            const handler = panneaux.get(prefixe);
+            if (!handler) return null;
+
+            const cle = customId.slice(separateur + 1);
+            return handler(creerContextePanneau(interaction, { adaptateur, prefixe, cle }), cle);
+        },
+
         /** Exposé pour les tests et pour deploy-commands : descripteur -> builder. */
         construireSlashCommand,
 
         EVENEMENTS,
         NOMS_EVENEMENTS,
+        SEPARATEUR_PANNEAU,
     };
 
     // Identité du bot dès qu'elle est connue. Posé ici et non dans `connecter`
@@ -117,3 +188,4 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
 
 module.exports = creerAdaptateurDiscord;
 module.exports.CAPACITES_DISCORD = CAPACITES_DISCORD;
+module.exports.SEPARATEUR_PANNEAU = SEPARATEUR_PANNEAU;

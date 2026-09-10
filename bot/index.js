@@ -1,9 +1,8 @@
-const fs = require('fs');
 const path = require('path');
 const { resolvePlatform } = require('./platform');
 const { getDb, effectiveAccessMode } = require('../api/services/database');
 const { buildMentionPayload } = require('../api/services/mentions');
-const { deployCommands } = require('./utils/deploy-commands');
+const { deployCommands } = require('./platform/discord/deploy');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
 const { reportIncident, userError } = require('./utils/errors');
 const { isSuspended } = require('./utils/suspension');
@@ -177,42 +176,42 @@ function createBot({ plateforme = null } = {}) {
     // L'administrateur constate « les autorôles ne marchent plus », sans aucun
     // lien visible avec la cause.
     //
-    // Promise.resolve().then() plutôt qu'un try/catch : il attrape aussi bien le
-    // throw synchrone que le rejet asynchrone, en une seule forme.
-    // L'alerte d'incident est conservée : sans elle, poser ce filet remplacerait
-    // un rejet non capté (journalisé ET annoncé sur le webhook) par un silence.
+    // Le branchement passe désormais par le chargeur de la plateforme, qui
+    // accepte les DEUX formats — descripteur neutre `{ nom, executer }` et
+    // handler discord.js historique `{ name, execute }`. Sans lui, un handler
+    // migré serait abonné à `client.on('roleCree')`, un événement que discord.js
+    // n'émet jamais : pas d'erreur, pas de journal, la fonctionnalité disparaît.
+    // Le filet d'incident, lui, reste ici : c'est la politique du bootstrap, pas
+    // celle de la couche d'abstraction.
     const { newIncidentCode, alertIncident } = require('../api/services/incidents');
 
-    const executerEvent = (event, args) => {
-        Promise.resolve()
-            .then(() => event.execute(...args))
-            .catch((err) => {
-                const code = newIncidentCode();
-                console.error(
-                    `[Quasar] ⚠️  INCIDENT ${code} | event ${event.name} | ` +
-                    `${err?.name || 'Error'}: ${err?.message || err}`,
-                );
-                console.error(err?.stack || err);
-                alertIncident(err, {
-                    code,
-                    source: `event ${event.name}`,
-                    details: { Event: event.name },
-                });
-            });
+    const signalerIncidentEvent = (err, { evenement }) => {
+        const code = newIncidentCode();
+        console.error(
+            `[Quasar] ⚠️  INCIDENT ${code} | event ${evenement} | ` +
+            `${err?.name || 'Error'}: ${err?.message || err}`,
+        );
+        console.error(err?.stack || err);
+        alertIncident(err, {
+            code,
+            source: `event ${evenement}`,
+            details: { Event: evenement },
+        });
     };
 
-    const eventsPath = path.join(__dirname, 'events');
-    if (fs.existsSync(eventsPath)) {
-        const eventFiles = fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'));
-        for (const file of eventFiles) {
-            const event = require(path.join(eventsPath, file));
-            if (event.once) {
-                client.once(event.name, (...args) => executerEvent(event, args));
-            } else {
-                client.on(event.name, (...args) => executerEvent(event, args));
-            }
-            console.log(`[Quasar] Event chargé: ${event.name}`);
-        }
+    const evenements = platform.chargerEvenements({
+        dossier: path.join(__dirname, 'events'),
+        surErreur: signalerIncidentEvent,
+    });
+
+    for (const evenement of evenements) {
+        // Un handler écarté faute de capacité doit se VOIR : c'est normal côté
+        // Fluxer (pas d'AutoMod), et ce serait un défaut côté Discord.
+        console.log(
+            evenement.branche
+                ? `[Quasar] Event chargé: ${evenement.nom}`
+                : `[Quasar] Event ignoré: ${evenement.nom} — capacité absente sur ${platform.nom}.`
+        );
     }
 
     // Handler d'interactions
@@ -267,6 +266,19 @@ function createBot({ plateforme = null } = {}) {
                 `[Quasar] → ${kind} ${interaction.customId} ` +
                 `| guild=${interaction.guild?.id || 'MP'} | user=${interaction.user?.id}`
             );
+
+            // Panneaux neutres d'abord. Ils se reconnaissent à leur séparateur
+            // « : », qu'aucun préfixe historique n'utilise (`tv_`, `ticket_`,
+            // `defer_`…) : les deux jeux ne peuvent pas se confondre, et un
+            // panneau migré l'emporte sans que son lot ait eu à toucher ce
+            // fichier — qui lui est interdit.
+            const routage = platform.routerPanneau(interaction);
+            if (routage) {
+                try { await routage; } catch (e) {
+                    reportIncident(interaction, e, { command: `panneau ${interaction.customId}` });
+                }
+                return;
+            }
 
             if (interaction.customId.startsWith('tv_')) {
                 try { await handleTempVoiceInteraction(interaction); } catch (e) {

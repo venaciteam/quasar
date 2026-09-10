@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
 
 // Le remplacement doit avoir lieu AVANT le require de guildCreate, qui
 // déstructure la fonction au chargement.
-const deployModule = require('../bot/utils/deploy-commands');
+const deployModule = require('../bot/platform/discord/deploy');
 const appels = { ciblé: [], global: 0 };
 let echec = null;
 
@@ -62,7 +62,7 @@ test('deployCommandsForGuild existe et est distincte du déploiement global', ()
     // Contrôle de cohérence : si quelqu'un remplaçait l'appel ciblé par l'appel
     // global « pour simplifier », les deux tests ci-dessus continueraient de
     // passer avec un stub unique. On vérifie donc que les deux existent bien.
-    const vrai = require.cache[require.resolve('../bot/utils/deploy-commands')];
+    const vrai = require.cache[require.resolve('../bot/platform/discord/deploy')];
     assert.ok(vrai, 'module chargé');
     assert.equal(typeof deployModule.deployCommandsForGuild, 'function');
     assert.equal(typeof deployModule.deployCommands, 'function');

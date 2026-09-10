@@ -1,21 +1,25 @@
 // ═══════════════════════════════════════════════════════════════
 //  Événements normalisés — Discord
 //
-//  Table de correspondance de la DA §7.2, et normalisation des payloads. Un
-//  handler neutre reçoit toujours `(ctx, ...donnees)`, où `ctx` porte l'accès
-//  à la plateforme et où `donnees` a la MÊME forme sur Discord et sur Fluxer.
+//  Table de correspondance de la DA §7.2, normalisation des payloads, et
+//  chargement de bot/events/ dans les deux formats.
 //
-//  Les payloads sont documentés ci-dessous, à l'endroit qui les porte : c'est
-//  le contrat que consommeront les seize handlers de bot/events/ quand ils
+//  Un handler neutre reçoit toujours `(ctx, ...donnees)`, où `ctx` porte
+//  l'accès à la plateforme et où `donnees` a la MÊME forme sur Discord et sur
+//  Fluxer. Les payloads sont documentés ci-dessous, à l'endroit qui les porte :
+//  c'est le contrat que consommeront les seize handlers de bot/events/ quand ils
 //  seront migrés (lots 1 à 5). Toute donnée absente de ces structures est
 //  inaccessible au code métier — si un handler en a besoin, elle s'ajoute ici
 //  pour les DEUX plateformes, jamais en lisant `brut`.
 //
 //  ⚠️ `sanctionAutomatique` n'existe que sur Discord (Fluxer n'a pas d'automod).
-//  C'est le seul événement de la table qui ne soit pas universel : le code qui
-//  s'y abonne doit tester `capacites.automod`, jamais le nom de la plateforme.
+//  Un handler qui s'y abonne déclare `capaciteRequise: 'automod'` : il n'est
+//  alors branché que là où la capacité existe, sans jamais tester le nom de la
+//  plateforme.
 // ═══════════════════════════════════════════════════════════════
 
+const fs = require('fs');
+const path = require('path');
 const {
     normaliserUtilisateur,
     normaliserMembre,
@@ -23,19 +27,24 @@ const {
     normaliserCanal,
     normaliserGuilde,
 } = require('./context');
+const { EVENEMENTS_NEUTRES, estDescripteurEvenement } = require('../events');
 
 /**
  * message : { id, canalId, guildeId, auteur, contenu, embeds, estBot, partiel }
+ *
  * `partiel` signale un message hors cache : seuls `id`, `canalId` et `guildeId`
  * sont alors fiables. C'est le cas courant d'une suppression ou d'une réaction
  * sur un message antérieur au démarrage.
+ *
+ * Tolère la forme discord.js (`channelId`) comme la réponse REST brute
+ * (`channel_id`) : `api.envoyerMessage` normalise ce qu'il reçoit de l'API.
  */
 function normaliserMessage(message) {
     if (!message) return null;
     return {
         id: message.id,
-        canalId: message.channelId ?? message.channel?.id ?? null,
-        guildeId: message.guildId ?? message.guild?.id ?? null,
+        canalId: message.channelId ?? message.channel_id ?? message.channel?.id ?? null,
+        guildeId: message.guildId ?? message.guild_id ?? message.guild?.id ?? null,
         auteur: normaliserUtilisateur(message.author),
         contenu: message.content ?? null,
         embeds: message.embeds ?? [],
@@ -45,10 +54,24 @@ function normaliserMessage(message) {
 }
 
 /**
- * reaction : { messageId, canalId, guildeId, emoji: { id, nom, cle } }
- * `cle` est la forme utilisée en base par les reaction roles : l'identifiant
- * pour un emoji personnalisé, le caractère unicode sinon.
+ * Clé d'un emoji, telle qu'elle est STOCKÉE EN BASE.
+ *
+ * ⚠️ Ce n'est pas l'identifiant. `bot/commands/reactionrole.js` enregistre la
+ * chaîne saisie par l'administrateur — `🎮` pour un unicode, `<:nom:id>` ou
+ * `<a:nom:id>` pour un emoji personnalisé — et c'est cette forme exacte que
+ * `reaction_roles.emoji` contient. Rendre `emoji.id` produirait `55` là où la
+ * base porte `<:quasar:55>` : les emojis unicode continueraient de fonctionner
+ * par coïncidence, les personnalisés cesseraient d'attribuer leur rôle, sans
+ * erreur ni journal. D'où `anime` dans le payload : sans lui, la forme d'un
+ * emoji animé est irreconstructible.
  */
+function cleEmoji(emoji) {
+    if (!emoji) return null;
+    if (emoji.id) return `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>`;
+    return emoji.name ?? null;
+}
+
+/** reaction : { messageId, canalId, guildeId, emoji: { id, nom, anime, cle } } */
 function normaliserReaction(reaction) {
     if (!reaction) return null;
     const emoji = reaction.emoji || {};
@@ -56,19 +79,38 @@ function normaliserReaction(reaction) {
         messageId: reaction.message?.id ?? null,
         canalId: reaction.message?.channelId ?? null,
         guildeId: reaction.message?.guildId ?? null,
-        emoji: { id: emoji.id ?? null, nom: emoji.name ?? null, cle: emoji.id || emoji.name || null },
+        emoji: {
+            id: emoji.id ?? null,
+            nom: emoji.name ?? null,
+            anime: Boolean(emoji.animated),
+            cle: cleEmoji(emoji),
+        },
     };
 }
 
-/** etatVocal : { guildeId, membreId, canalId, muet, sourd } */
+/**
+ * etatVocal : { guildeId, membreId, membre, canalId, muetServeur, muetSoi,
+ *               sourdServeur, sourdSoi, muet, sourd }
+ *
+ * Les quatre drapeaux sont exposés séparément, et `muet`/`sourd` n'en sont que
+ * le résumé. Fusionner « rendu muet par un modérateur » et « s'est mis en muet »
+ * est une perte irréversible : un journal de modération qui les confond annonce
+ * une sanction là où quelqu'un a simplement coupé son micro. Les deux drapeaux
+ * existent à l'identique dans le VOICE_STATE_UPDATE de Fluxer.
+ */
 function normaliserEtatVocal(etat) {
     if (!etat) return null;
     return {
         guildeId: etat.guild?.id ?? etat.guildId ?? null,
         membreId: etat.id ?? etat.member?.id ?? null,
+        membre: normaliserMembre(etat.member),
         canalId: etat.channelId ?? null,
-        muet: Boolean(etat.serverMute || etat.selfMute),
-        sourd: Boolean(etat.serverDeaf || etat.selfDeaf),
+        muetServeur: Boolean(etat.serverMute),
+        muetSoi: Boolean(etat.selfMute),
+        sourdServeur: Boolean(etat.serverDeaf),
+        sourdSoi: Boolean(etat.selfDeaf),
+        get muet() { return this.muetServeur || this.muetSoi; },
+        get sourd() { return this.sourdServeur || this.sourdSoi; },
     };
 }
 
@@ -110,21 +152,46 @@ const EVENEMENTS = Object.freeze({
 
 const NOMS_EVENEMENTS = Object.freeze(Object.keys(EVENEMENTS));
 
+// La table doit couvrir tout le vocabulaire neutre. Un nom déclaré au contrat
+// mais absent ici ferait échouer un abonnement au démarrage, très loin du
+// fichier fautif.
+const manquants = EVENEMENTS_NEUTRES.filter(nom => !EVENEMENTS[nom]);
+if (manquants.length > 0) {
+    throw new Error(
+        `Table des événements Discord incomplète : ${manquants.join(', ')}. `
+        + 'Ajoutez la correspondance dans bot/platform/discord/events.js.'
+    );
+}
+
+/**
+ * Filet d'erreur par défaut d'un handler d'événement.
+ *
+ * Il ne remplace pas celui de `bot/index.js` (qui produit un code d'incident et
+ * une alerte) : il existe pour qu'un abonnement pris hors du chargeur ne laisse
+ * JAMAIS une promesse flottante. Une promesse rendue à l'EventEmitter part sinon
+ * dans le filet global du processus, où elle devient un « rejet non capté »
+ * anonyme — sans le nom de l'événement, donc sans le seul indice utile.
+ */
+function surErreurParDefaut(err, contexte) {
+    console.error(
+        `[Quasar] ⚠️  Événement ${contexte.evenement} | ${err?.name || 'Error'}: ${err?.message || err}`
+    );
+    if (err?.stack) console.error(err.stack);
+}
+
 /**
  * Abonne un handler neutre à un événement de la passerelle Discord.
- *
- * Le handler reçoit `(ctx, ...donnees)`. Les exceptions ne sont PAS attrapées
- * ici : c'est `bot/index.js` qui pose le filet commun (journalisation avec code
- * d'incident et alerte), et deux filets superposés produiraient deux traces
- * pour un seul défaut.
  *
  * @param {import('discord.js').Client} client
  * @param {object} adaptateur
  * @param {string} nomNeutre
  * @param {(ctx: object, ...donnees: any[]) => any} handler
- * @param {{une?: boolean}} [options] `une: true` pour un abonnement unique
+ * @param {object} [options]
+ * @param {boolean}  [options.une]       abonnement unique (`once`)
+ * @param {Function} [options.surErreur] (err, { evenement }) => void
+ * @returns {() => void} fonction de désabonnement
  */
-function surEvenement(client, adaptateur, nomNeutre, handler, { une = false } = {}) {
+function surEvenement(client, adaptateur, nomNeutre, handler, { une = false, surErreur } = {}) {
     const entree = EVENEMENTS[nomNeutre];
     if (!entree) {
         throw new Error(
@@ -132,8 +199,18 @@ function surEvenement(client, adaptateur, nomNeutre, handler, { une = false } = 
         );
     }
     const [nomNatif, normaliser] = entree;
+    const signaler = surErreur || surErreurParDefaut;
 
-    const pont = (...args) => handler(creerContexteEvenement(adaptateur), ...normaliser(...args));
+    // `Promise.resolve().then()` plutôt qu'un try/catch : il attrape aussi bien
+    // le throw synchrone que le rejet asynchrone, en une seule forme. Et la
+    // promesse n'est SURTOUT pas rendue à l'EventEmitter, qui la laisserait
+    // flotter.
+    const pont = (...args) => {
+        Promise.resolve()
+            .then(() => handler(creerContexteEvenement(adaptateur), ...normaliser(...args)))
+            .catch((err) => signaler(err, { evenement: nomNeutre }));
+    };
+
     if (une) client.once(nomNatif, pont);
     else client.on(nomNatif, pont);
 
@@ -155,13 +232,71 @@ function creerContexteEvenement(adaptateur) {
     };
 }
 
+/**
+ * Charge bot/events/ et branche chaque handler, dans LES DEUX formats.
+ *
+ * C'est le pendant de `chargerCommandes`, et il est aussi indispensable : sans
+ * lui, un handler migré en `{ nom: 'roleCree', executer }` serait abonné à
+ * `client.on('roleCree')`, un événement que discord.js n'émet jamais. Le
+ * handler ne serait pas appelé, aucune erreur ne serait levée, et la
+ * fonctionnalité disparaîtrait en silence.
+ *
+ * @param {object} options
+ * @param {string}   options.dossier
+ * @param {object}   options.adaptateur
+ * @param {Function} [options.surErreur] filet commun, appliqué aux deux formats
+ * @returns {Array<{nom: string, fichier: string, neutre: boolean, branche: boolean}>}
+ */
+function chargerEvenements({ dossier, adaptateur, surErreur } = {}) {
+    if (!fs.existsSync(dossier)) return [];
+    const client = adaptateur.client;
+    const signaler = surErreur || surErreurParDefaut;
+    const charges = [];
+
+    for (const fichier of fs.readdirSync(dossier).filter(f => f.endsWith('.js'))) {
+        const mod = require(path.join(dossier, fichier));
+
+        if (estDescripteurEvenement(mod)) {
+            // Un handler qui exige une capacité absente n'est pas branché du
+            // tout : c'est la voie par laquelle `sanctionAutomatique` reste
+            // Discord-only sans qu'aucun code métier ne nomme la plateforme.
+            if (mod.capaciteRequise && !adaptateur.capacites[mod.capaciteRequise]) {
+                charges.push({ nom: mod.nom, fichier, neutre: true, branche: false });
+                continue;
+            }
+            surEvenement(client, adaptateur, mod.nom, mod.executer, { une: mod.une, surErreur: signaler });
+            charges.push({ nom: mod.nom, fichier, neutre: true, branche: true });
+            continue;
+        }
+
+        // Format historique : `{ name, once, execute }`, avec les objets
+        // discord.js bruts en argument. Même filet, pour que les deux voies
+        // produisent la même trace.
+        if (typeof mod?.name !== 'string' || typeof mod?.execute !== 'function') continue;
+
+        const pont = (...args) => {
+            Promise.resolve()
+                .then(() => mod.execute(...args))
+                .catch((err) => signaler(err, { evenement: mod.name }));
+        };
+        if (mod.once) client.once(mod.name, pont);
+        else client.on(mod.name, pont);
+        charges.push({ nom: mod.name, fichier, neutre: false, branche: true });
+    }
+
+    return charges;
+}
+
 module.exports = {
     EVENEMENTS,
     NOMS_EVENEMENTS,
     surEvenement,
+    chargerEvenements,
     creerContexteEvenement,
+    surErreurParDefaut,
     normaliserMessage,
     normaliserReaction,
     normaliserEtatVocal,
     normaliserSanction,
+    cleEmoji,
 };

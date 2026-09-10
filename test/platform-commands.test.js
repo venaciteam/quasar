@@ -88,6 +88,7 @@ test('chaque type d\'option du contrat est dérivé vers le bon type Discord', (
     const descripteur = definirCommande({
         nom: 'temoin',
         description: 'Commande de contrôle des types',
+        accesParDefaut: true,
         options: [
             { nom: 'a', type: 'texte', description: 'chaîne', requis: true },
             { nom: 'b', type: 'entier', description: 'nombre' },
@@ -113,6 +114,7 @@ test('les bornes min et max portent la longueur sur un texte et la valeur sur un
     const json = corpsEnvoye(construireSlashCommand(definirCommande({
         nom: 'bornes',
         description: 'Contrôle des bornes',
+        accesParDefaut: true,
         options: [
             { nom: 'texte', type: 'texte', description: 't', min: 2, max: 10 },
             { nom: 'entier', type: 'entier', description: 'e', min: 1, max: 99 },
@@ -129,11 +131,11 @@ test('les bornes min et max portent la longueur sur un texte et la valeur sur un
 // ── Validation du descripteur ────────────────────────────────────────────────
 
 test('un descripteur incomplet ou fautif est refusé AU CHARGEMENT', () => {
-    const base = { nom: 'x', description: 'd', async executer() {} };
+    const base = { nom: 'x', description: 'd', accesParDefaut: true, async executer() {} };
 
     assert.throws(() => definirCommande({ description: 'd' }), /nom/);
     assert.throws(() => definirCommande({ nom: 'x' }), /description/);
-    assert.throws(() => definirCommande({ nom: 'x', description: 'd' }), /executer/);
+    assert.throws(() => definirCommande({ nom: 'x', description: 'd', accesParDefaut: true }), /executer/);
     // Une faute de frappe sur un type produirait sinon une commande déployée
     // sans son option, ou un lot entier refusé par Discord.
     assert.throws(
@@ -145,7 +147,7 @@ test('un descripteur incomplet ou fautif est refusé AU CHARGEMENT', () => {
 });
 
 test('les règles que Discord impose à l\'ordre des options sont vérifiées ici', () => {
-    const base = { nom: 'x', description: 'd', async executer() {} };
+    const base = { nom: 'x', description: 'd', accesParDefaut: true, async executer() {} };
 
     // Discord refuse une option requise après une option facultative.
     assert.throws(() => definirCommande({
@@ -169,6 +171,7 @@ test('les règles que Discord impose à l\'ordre des options sont vérifiées ic
     assert.throws(() => definirCommande({
         nom: 'x',
         description: 'd',
+        accesParDefaut: true,
         options: [{ nom: 'a', type: 'texte', description: 'd' }],
         sousCommandes: [{ nom: 's', description: 'd', async executer() {} }],
     }), /sous-commandes ne peut pas porter d'options/);
@@ -240,7 +243,8 @@ test('une commande indisponible sur la plateforme active est écartée du charge
     fs.writeFileSync(path.join(dossier, 'ailleurs.js'), `
         const { definirCommande } = require(${JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'commands'))});
         module.exports = definirCommande({
-            nom: 'ailleurs', description: 'Ailleurs', plateformes: ['fluxer'], async executer() {},
+            nom: 'ailleurs', description: 'Ailleurs', accesParDefaut: true,
+            plateformes: ['fluxer'], async executer() {},
         });
     `);
     assert.deepEqual(chargerCommandes({ dossier }).map(e => e.nom), []);

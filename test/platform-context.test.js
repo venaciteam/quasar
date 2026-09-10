@@ -257,3 +257,164 @@ test('ctx.prompt se rend en formulaire, dans la limite de Discord', () => {
     const trop = Array.from({ length: 6 }, (_, i) => ({ cle: `c${i}`, libelle: `C${i}` }));
     assert.throws(() => rendrePrompt(trop, {}, 'x'), /5 au maximum/);
 });
+
+// ── Enchaînements après un ctx.choose ────────────────────────────────────────
+
+/** Interaction minimale, non acquittée, avec capture. */
+function faireInteractionNue(surReponse = () => {}) {
+    const journal = [];
+    const interaction = {
+        id: '1', createdTimestamp: Date.now(),
+        client: { ws: { ping: 1 } },
+        guild: { id: GUILDE }, channel: { id: SALON }, channelId: SALON,
+        user: { id: AUTEUR, username: 'leeva' },
+        member: { id: AUTEUR, roles: { cache: new Map() }, permissions: { has: () => true } },
+        deferred: false, replied: false,
+        reply(p) { journal.push(['reply', p]); this.replied = true; return Promise.resolve(surReponse(p)); },
+        followUp(p) { journal.push(['followUp', p]); return Promise.resolve(p); },
+        editReply(p) { journal.push(['editReply', p]); return Promise.resolve(p); },
+        showModal(m) { journal.push(['showModal', m]); this.replied = true; return Promise.resolve(); },
+        deferUpdate() { journal.push(['deferUpdate']); this.deferred = true; return Promise.resolve(); },
+    };
+    return { interaction, journal };
+}
+
+/** Panneau éphémère dont le clic est déjà décidé. */
+function faireChoose() {
+    const clics = [];
+    const clic = {
+        customId: null,
+        user: { id: AUTEUR },
+        deferred: false, replied: false,
+        deferUpdate() { clics.push('deferUpdate'); this.deferred = true; return Promise.resolve(); },
+        reply(p) { clics.push(['reply', p]); this.replied = true; return Promise.resolve(p); },
+        followUp(p) { clics.push(['followUp', p]); return Promise.resolve(p); },
+        editReply(p) { clics.push(['editReply', p]); return Promise.resolve(p); },
+        showModal(m) { clics.push(['showModal', m]); this.replied = true; return Promise.resolve(); },
+    };
+    const message = {
+        id: 'm1', channelId: SALON,
+        awaitMessageComponent: ({ filter }) => {
+            clic.customId = `${prefixeVu}:ouvrir`;
+            filter(clic);
+            return Promise.resolve(clic);
+        },
+    };
+    let prefixeVu = '';
+    const { interaction, journal } = faireInteractionNue((payload) => {
+        prefixeVu = payload.components[0].toJSON().components[0].custom_id.split(':').slice(0, -1).join(':');
+        return message;
+    });
+    return { interaction, journal, clic, clics };
+}
+
+test('après un clic, ctx.repondre poste une suite et ne réécrit pas le panneau', async () => {
+    // Le contexte basculait sur le clic acquitté par deferUpdate, donc `deferred`
+    // : `repondre` partait alors en editReply et REMPLAÇAIT le panneau, boutons
+    // compris. Ce n'est presque jamais l'intention — et pour le cas où ça l'est,
+    // il y a `modifierPanneau`.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, clic, clics } = faireChoose();
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    // `suite` non déclarée : le défaut est 'message'.
+    const cle = await ctx.choose('Choisissez.', [{ cle: 'ouvrir', libelle: 'Ouvrir' }]);
+    assert.equal(cle, 'ouvrir');
+    assert.equal(clics[0], 'deferUpdate', 'le clic est acquitté sans rien afficher');
+
+    await ctx.repondre('Voilà la suite.');
+    assert.deepEqual(clics[1], ['followUp', { content: 'Voilà la suite.' }]);
+
+    await ctx.modifierPanneau({ contenu: 'Choix enregistré.', composants: [] });
+    assert.deepEqual(clics[2], ['editReply', { content: 'Choix enregistré.', components: [] }]);
+    assert.equal(clic.deferred, true);
+});
+
+test('ctx.prompt refuse une interaction déjà acquittée, et le dit', async () => {
+    // Discord n'ouvre un formulaire que sur une interaction vierge. Sans ce
+    // garde, l'échec remontait en DiscordAPIError opaque au milieu du parcours
+    // « panneau de ticket → formulaire ».
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction } = faireChoose();
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    await ctx.choose('Choisissez.', [{ cle: 'ouvrir', libelle: 'Ouvrir' }]);
+    await assert.rejects(
+        () => ctx.prompt([{ cle: 'sujet', libelle: 'Sujet' }]),
+        /déjà acquittée.*suite: 'saisie'/s,
+    );
+});
+
+test('ctx.choose({ suite: \'saisie\' }) laisse le clic vierge pour un formulaire', async () => {
+    // C'est le parcours « panneau puis formulaire » du lot 5 : sans cette
+    // option, il est impossible sur un panneau éphémère.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, clic, clics } = faireChoose();
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    await ctx.choose('Choisissez.', [{ cle: 'ouvrir', libelle: 'Ouvrir' }], { suite: 'saisie' });
+    assert.equal(clics.includes('deferUpdate'), false, 'le clic ne doit pas être acquitté');
+    assert.equal(clic.deferred, false);
+
+    // Le formulaire s'ouvre donc bien sur le clic. `awaitModalSubmit` n'existe
+    // pas sur la doublure : l'expiration rend `null`, ce qui suffit à prouver
+    // que showModal a été appelé.
+    clic.awaitModalSubmit = () => Promise.reject(new Error('expiré'));
+    assert.equal(await ctx.prompt([{ cle: 'sujet', libelle: 'Sujet' }]), null);
+    assert.equal(clics.some(c => Array.isArray(c) && c[0] === 'showModal'), true);
+});
+
+test('une règle « autorise » invalide échoue AVANT que le panneau ne soit posté', async () => {
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, journal } = faireInteractionNue();
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    await assert.rejects(
+        () => ctx.choose('Choisissez.', [{ cle: 'a', libelle: 'A' }], { autorise: 'modo' }),
+        /n'est ni un mode connu/,
+    );
+    assert.deepEqual(journal, [], 'aucun message ne doit avoir été posté');
+});
+
+test('une « suite » inconnue est refusée avant que le panneau ne soit posté', async () => {
+    // Même sévérité que le reste du registre : une valeur mal orthographiée
+    // retomberait sur le défaut, et « panneau puis formulaire » échouerait plus
+    // tard sur un « L'interaction a échoué » sans rapport visible avec la faute.
+    const { validerSuite, SUITES_CHOOSE } = require('../bot/platform/discord/context');
+
+    // Le vocabulaire décrit l'INTENTION de l'appelant, jamais la mécanique d'une
+    // plateforme : « acquitter » ne veut rien dire sur Fluxer, où un choose est
+    // une réaction emoji sans accusé de réception.
+    assert.deepEqual([...SUITES_CHOOSE], ['message', 'saisie']);
+    for (const valeur of [undefined, 'message', 'saisie']) {
+        assert.doesNotThrow(() => validerSuite(valeur), `refusée à tort : ${String(valeur)}`);
+    }
+    for (const valeur of ['formulaire', 'saise', false, 0]) {
+        assert.throws(() => validerSuite(valeur), /suite.*inconnue/s, `acceptée à tort : ${String(valeur)}`);
+    }
+
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, journal } = faireInteractionNue();
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    await assert.rejects(
+        () => ctx.choose('Choisissez.', [{ cle: 'a', libelle: 'A' }], { suite: 'formulaire' }),
+        /Valeurs acceptées : 'message', 'saisie'/,
+    );
+    assert.deepEqual(journal, [], 'aucun message ne doit avoir été posté');
+});

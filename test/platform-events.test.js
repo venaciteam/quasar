@@ -9,7 +9,14 @@ process.env.QUASAR_DB_PATH = ':memory:';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { EVENEMENTS, NOMS_EVENEMENTS, normaliserMessage, normaliserReaction } = require('../bot/platform/discord/events');
+const {
+    EVENEMENTS,
+    NOMS_EVENEMENTS,
+    normaliserMessage,
+    normaliserReaction,
+    normaliserEtatVocal,
+    cleEmoji,
+} = require('../bot/platform/discord/events');
 const creerAdaptateurDiscord = require('../bot/platform/discord');
 
 // Les dix-sept noms neutres de la DA §4.4, dans l'ordre du document.
@@ -57,7 +64,7 @@ test('un nom d\'événement inconnu lève, et nomme les noms acceptés', () => {
     assert.throws(() => adaptateur.surEvenement('messageCree2', () => {}), /messageCree/);
 });
 
-test('un handler neutre reçoit un contexte puis le payload normalisé', () => {
+test('un handler neutre reçoit un contexte puis le payload normalisé', async () => {
     const abonnements = new Map();
     const client = {
         once: () => {},
@@ -74,6 +81,10 @@ test('un handler neutre reçoit un contexte puis le payload normalisé', () => {
         id: '1', channelId: '2', guildId: '3', content: 'coucou',
         author: { id: '4', username: 'leeva', bot: false },
     });
+    // Le pont passe par Promise.resolve().then() : c'est ce qui empêche la
+    // promesse du handler de partir flotter jusqu'à l'EventEmitter. Le handler
+    // n'est donc plus appelé de façon synchrone.
+    await new Promise(setImmediate);
 
     assert.equal(vu.ctx.plateforme, 'discord');
     assert.equal(vu.ctx.capacites.interactions, true);
@@ -94,11 +105,52 @@ test('un message hors cache est signalé comme partiel', () => {
     assert.equal(partiel.auteur, null);
 });
 
-test('une réaction porte une clé d\'emoji utilisable en base', () => {
-    // Les panneaux de rôles indexent par cette clé : identifiant pour un emoji
-    // personnalisé, caractère unicode sinon.
+test('la clé d\'emoji est la forme STOCKÉE EN BASE, pas l\'identifiant', () => {
+    // reaction_roles.emoji contient la chaîne saisie par l'administrateur —
+    // « 🎫 » ou « <:quasar:55> » — et messageReactionAdd.js reconstruit cette
+    // forme pour comparer. Rendre « 55 » ferait échouer toute attribution de
+    // rôle par emoji personnalisé, sans erreur ni journal : les unicode
+    // continueraient de marcher par coïncidence, et le symptôme serait
+    // « certains emojis ne marchent plus ».
     const unicode = normaliserReaction({ message: { id: '1', channelId: '2', guildId: '3' }, emoji: { id: null, name: '🎫' } });
     assert.equal(unicode.emoji.cle, '🎫');
+
     const perso = normaliserReaction({ message: { id: '1' }, emoji: { id: '55', name: 'quasar' } });
-    assert.equal(perso.emoji.cle, '55');
+    assert.equal(perso.emoji.cle, '<:quasar:55>');
+    assert.equal(perso.emoji.id, '55');
+    assert.equal(perso.emoji.anime, false);
+
+    // Sans `anime`, la forme d'un emoji animé serait irreconstructible.
+    const anime = normaliserReaction({ message: { id: '1' }, emoji: { id: '77', name: 'boum', animated: true } });
+    assert.equal(anime.emoji.cle, '<a:boum:77>');
+    assert.equal(anime.emoji.anime, true);
+});
+
+test('la clé rendue est exactement celle que reconstruit messageReactionAdd', () => {
+    // Contrôle croisé avec le code non migré : la forme doit être identique,
+    // sinon la migration du lot 2 cassera l'attribution en silence.
+    const reconstruire = (e) => (e.id ? `<${e.animated ? 'a' : ''}:${e.name}:${e.id}>` : e.name);
+    for (const emoji of [
+        { id: null, name: '🎮' },
+        { id: '55', name: 'quasar' },
+        { id: '77', name: 'boum', animated: true },
+    ]) {
+        assert.equal(cleEmoji(emoji), reconstruire(emoji));
+    }
+});
+
+test('un état vocal distingue la coupure serveur de la coupure volontaire', () => {
+    // Les fusionner ferait annoncer une sanction là où quelqu'un a simplement
+    // coupé son micro.
+    const etat = normaliserEtatVocal({
+        guild: { id: '1' }, id: '2', channelId: '3',
+        serverMute: true, selfMute: false, serverDeaf: false, selfDeaf: true,
+    });
+    assert.equal(etat.muetServeur, true);
+    assert.equal(etat.muetSoi, false);
+    assert.equal(etat.sourdServeur, false);
+    assert.equal(etat.sourdSoi, true);
+    // Les résumés restent disponibles pour qui n'a pas besoin de la nuance.
+    assert.equal(etat.muet, true);
+    assert.equal(etat.sourd, true);
 });

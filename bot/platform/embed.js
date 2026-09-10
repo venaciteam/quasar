@@ -24,6 +24,23 @@ const CHAMPS_EMBED = Object.freeze([
     'titre', 'description', 'couleur', 'champs', 'pied', 'horodatage', 'auteur', 'image', 'vignette',
 ]);
 
+// Champs qui n'existent QUE dans le vocabulaire neutre.
+//
+// `description` et `image` portent le même nom qu'en API Discord : les tester
+// pour reconnaître un embed neutre ferait passer un `APIEmbed` brut pour l'un
+// des nôtres, et le rendu perdrait alors titre, couleur, champs et pied sans un
+// mot. Il reste 146 `EmbedBuilder` à migrer : le piège se déclencherait.
+const CHAMPS_EXCLUSIFS = Object.freeze(
+    CHAMPS_EMBED.filter(champ => champ !== 'description' && champ !== 'image')
+);
+
+// Champs d'un embed au format Discord. Servent uniquement à produire un message
+// d'erreur qui DÉSIGNE la faute (« passez par embed() ») au lieu d'un « Cannot
+// send an empty message » émis très loin de sa cause.
+const CHAMPS_DISCORD = Object.freeze([
+    'title', 'color', 'footer', 'fields', 'thumbnail', 'author', 'timestamp', 'url',
+]);
+
 /**
  * Construit un embed neutre.
  *
@@ -46,15 +63,38 @@ function embed({ titre, description, couleur, champs = [], pied, horodatage, aut
 }
 
 /**
- * Un embed neutre ? Le marqueur d'abord, la forme ensuite : une structure
- * recopiée (`{ ...embed }`, `structuredClone`, aller-retour JSON) perd le
- * symbole mais reste un embed parfaitement valide, et les adaptateurs doivent
- * continuer de la rendre comme telle.
+ * Un embed neutre ? Le marqueur d'abord, la forme ensuite.
+ *
+ * Une structure recopiée (`{ ...embed }`, `structuredClone`, aller-retour JSON)
+ * perd le symbole mais reste un embed valide : on la reconnaît à la présence
+ * d'un champ EXCLUSIVEMENT neutre. Jamais à `description` ni à `image`, que le
+ * format Discord porte sous le même nom — un `APIEmbed` reconnu à moitié perdrait
+ * tout le reste en silence.
  */
 function estEmbed(valeur) {
     if (!valeur || typeof valeur !== 'object' || Array.isArray(valeur)) return false;
     if (valeur[MARQUEUR_EMBED] === true) return true;
-    return CHAMPS_EMBED.some(champ => champ in valeur);
+    return CHAMPS_EXCLUSIFS.some(champ => champ in valeur);
 }
 
-module.exports = { embed, estEmbed, CHAMPS_EMBED, MARQUEUR_EMBED };
+/**
+ * L'objet ressemble-t-il à un embed au format Discord (APIEmbed ou
+ * EmbedBuilder) ? Sert au diagnostic, pas au rendu : un embed Discord n'est
+ * JAMAIS accepté par la couche neutre, il est refusé avec une explication.
+ */
+function ressembleAEmbedDiscord(valeur) {
+    if (!valeur || typeof valeur !== 'object') return false;
+    // EmbedBuilder : porte ses champs dans `data` et sait se sérialiser.
+    if (typeof valeur.toJSON === 'function' && valeur.data && typeof valeur.data === 'object') return true;
+    return CHAMPS_DISCORD.some(champ => champ in valeur);
+}
+
+module.exports = {
+    embed,
+    estEmbed,
+    ressembleAEmbedDiscord,
+    CHAMPS_EMBED,
+    CHAMPS_EXCLUSIFS,
+    CHAMPS_DISCORD,
+    MARQUEUR_EMBED,
+};

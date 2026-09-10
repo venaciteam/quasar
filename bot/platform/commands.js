@@ -14,6 +14,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { estPermissionCanonique, PERMISSIONS } = require('./permissions');
+const { estTypeCanalCanonique, TYPES_CANAL } = require('./channels');
 
 // Types d'option du descripteur. La colonne Discord et la colonne Fluxer de la
 // DA (§5.1) se dérivent toutes deux de cette liste ; l'adaptateur qui ne sait
@@ -29,6 +30,49 @@ const TYPES_OPTION = Object.freeze([
 ]);
 
 const PLATEFORMES_CONNUES = Object.freeze(['discord', 'fluxer']);
+
+// ─── Clés reconnues ──────────────────────────────────────────────────────────
+//
+// La validation LÈVE sur une clé inconnue, exactement comme `creerCapacites`.
+// Sans cette sévérité, un `maxLength` écrit à la place de `max`, ou un
+// `autocomplete` à la place de `autocompletion`, serait accepté puis déployé
+// SANS la contrainte : l'option existerait, elle ne validerait simplement rien.
+// Vingt-sept commandes restent à migrer par cinq agents : c'est la faute la plus
+// probable du chantier, et la plus silencieuse.
+
+/** Clés d'un descripteur de commande. */
+const CLES_COMMANDE = Object.freeze([
+    'nom',              // string, nom de la commande
+    'description',      // string, 1 à 100 caractères
+    'permission',       // string, nom canonique exigé du MEMBRE (cf. platform/permissions.js)
+    'accesParDefaut',   // boolean, false = réservée aux administrateurs (cf. ci-dessous)
+    'permissionsBot',   // string[], permissions dont le BOT a besoin (cf. ci-dessous)
+    'plateformes',      // string[], omission = toutes
+    'dansMessagePrive', // boolean, false = commande réservée aux serveurs
+    'options',          // Option[], exclusif avec sousCommandes
+    'sousCommandes',    // SousCommande[], exclusif avec options
+    'executer',         // (ctx) => Promise<void>
+    'completer',        // (ctx) => Promise<void>, autocomplétion
+]);
+
+/** Clés d'une sous-commande. */
+const CLES_SOUS_COMMANDE = Object.freeze([
+    'nom', 'description', 'options', 'executer', 'permissionsBot',
+]);
+
+/** Clés d'une option. */
+const CLES_OPTION = Object.freeze([
+    'nom',            // string
+    'description',    // string, obligatoire (Discord la refuse vide)
+    'type',           // string, cf. TYPES_OPTION
+    'requis',         // boolean
+    'reste',          // boolean, capte la fin de ligne côté Fluxer, dernière option seulement
+    'choix',          // [{ nom, valeur }], obligatoire pour type 'choix'
+    'min',            // number, longueur minimale (texte) ou valeur minimale (entier)
+    'max',            // number, longueur maximale (texte) ou valeur maximale (entier)
+    'autocompletion', // boolean, exclusif avec 'choix'
+    'typesCanal',     // string[], noms canoniques (cf. platform/channels.js), type 'canal' seulement
+]);
 
 function erreur(nomCommande, message) {
     return new Error(`Descripteur de commande « ${nomCommande || '?'} » invalide : ${message}`);
@@ -47,6 +91,12 @@ function validerOptions(nomCommande, contexte, options) {
         if (vues.has(option.nom)) throw erreur(nomCommande, `${ou} : nom d'option en double.`);
         vues.add(option.nom);
 
+        for (const cle of Object.keys(option)) {
+            if (!CLES_OPTION.includes(cle)) {
+                throw erreur(nomCommande, `${ou} : clé inconnue « ${cle} ». Clés reconnues : ${CLES_OPTION.join(', ')}.`);
+            }
+        }
+
         if (typeof option.description !== 'string' || !option.description) {
             throw erreur(nomCommande, `${ou} : « description » est obligatoire (Discord la refuse vide).`);
         }
@@ -61,6 +111,42 @@ function validerOptions(nomCommande, contexte, options) {
                 if (!choix || typeof choix.nom !== 'string' || choix.valeur === undefined) {
                     throw erreur(nomCommande, `${ou} : chaque choix doit porter { nom, valeur }.`);
                 }
+            }
+        } else if (option.choix !== undefined) {
+            throw erreur(nomCommande, `${ou} : « choix » n'a de sens que sur une option de type « choix ».`);
+        }
+
+        // `autocompletion` et `choix` s'excluent : Discord refuse une option qui
+        // déclare les deux, et le lot entier avec.
+        if (option.autocompletion && option.type === 'choix') {
+            throw erreur(nomCommande, `${ou} : « autocompletion » et « choix » s'excluent.`);
+        }
+
+        // Sept commandes filtrent leur sélecteur de salon. Le filtre passe par
+        // les noms canoniques, jamais par un entier de plateforme.
+        if (option.typesCanal !== undefined) {
+            if (option.type !== 'canal') {
+                throw erreur(nomCommande, `${ou} : « typesCanal » n'a de sens que sur une option de type « canal ».`);
+            }
+            if (!Array.isArray(option.typesCanal) || option.typesCanal.length === 0) {
+                throw erreur(nomCommande, `${ou} : « typesCanal » doit être un tableau non vide.`);
+            }
+            for (const type of option.typesCanal) {
+                if (!estTypeCanalCanonique(type)) {
+                    throw erreur(nomCommande, `${ou} : type de salon « ${type} » inconnu. Valeurs acceptées : ${TYPES_CANAL.join(', ')}.`);
+                }
+            }
+        }
+
+        // `min`/`max` ne sont interprétables que sur un texte (longueur) ou un
+        // entier (valeur). Ailleurs, ils seraient silencieusement ignorés.
+        for (const borne of ['min', 'max']) {
+            if (option[borne] === undefined) continue;
+            if (option.type !== 'texte' && option.type !== 'entier') {
+                throw erreur(nomCommande, `${ou} : « ${borne} » ne s'applique qu'aux types « texte » et « entier ».`);
+            }
+            if (typeof option[borne] !== 'number') {
+                throw erreur(nomCommande, `${ou} : « ${borne} » doit être un nombre.`);
             }
         }
 
@@ -87,13 +173,18 @@ function validerOptions(nomCommande, contexte, options) {
  * @param {object} descripteur
  * @param {string}   descripteur.nom
  * @param {string}   descripteur.description
- * @param {string}   [descripteur.permission]     nom canonique (cf. platform/permissions.js)
- * @param {string[]} [descripteur.plateformes]    omission = toutes
+ * @param {string}   [descripteur.permission]     nom canonique exigé du MEMBRE
+ * @param {boolean}  [descripteur.accesParDefaut]  false = administrateurs, true = tout le monde
+ * @param {string[]} [descripteur.permissionsBot]  permissions dont le BOT a besoin
+ * @param {string[]} [descripteur.plateformes]     omission = toutes
  * @param {Array}    [descripteur.options]
- * @param {Array}    [descripteur.sousCommandes]  chacune { nom, description, options?, executer }
- * @param {Function} [descripteur.executer]       (ctx) => Promise<void>
- * @param {Function} [descripteur.completer]      autocomplétion, optionnelle
- * @returns {object} le descripteur figé, augmenté du pont de compatibilité `data`
+ * @param {Array}    [descripteur.sousCommandes]   chacune { nom, description, options?, executer }
+ * @param {Function} [descripteur.executer]        (ctx) => Promise<void>
+ * @param {Function} [descripteur.completer]       autocomplétion, optionnelle
+ * @returns {object} le descripteur lui-même, validé et augmenté du pont de
+ *   compatibilité `data`. Il n'est volontairement PAS gelé : les adaptateurs
+ *   doivent pouvoir y attacher ce dont ils ont besoin, et geler en surface
+ *   donnerait l'illusion d'une immuabilité que les options imbriquées n'ont pas.
  */
 function definirCommande(descripteur) {
     if (!descripteur || typeof descripteur !== 'object') {
@@ -101,11 +192,65 @@ function definirCommande(descripteur) {
     }
     const nom = descripteur.nom;
     if (typeof nom !== 'string' || !nom) throw erreur(nom, '« nom » est obligatoire.');
+
+    for (const cle of Object.keys(descripteur)) {
+        if (!CLES_COMMANDE.includes(cle)) {
+            throw erreur(nom, `clé inconnue « ${cle} ». Clés reconnues : ${CLES_COMMANDE.join(', ')}.`);
+        }
+    }
+
     if (typeof descripteur.description !== 'string' || !descripteur.description) {
         throw erreur(nom, '« description » est obligatoire.');
     }
     if (descripteur.permission !== undefined && !estPermissionCanonique(descripteur.permission)) {
         throw erreur(nom, `permission « ${descripteur.permission} » inconnue. Noms acceptés : ${PERMISSIONS.join(', ')}.`);
+    }
+
+    // ─── Accès : jamais ouvert par défaut ────────────────────────────────────
+    //
+    // `permission` nomme la permission exigée du membre. `accesParDefaut: false`
+    // correspond au `setDefaultMemberPermissions(0)` de Discord : réservée aux
+    // administrateurs, ce qu'aucun nom de permission n'exprime (`/ticket` s'en
+    // sert). `accesParDefaut: true` déclare l'ouverture VOLONTAIRE (`/ping`).
+    //
+    // Ne déclarer ni l'un ni l'autre est refusé. C'est le défaut le plus
+    // dangereux du registre : une commande d'administration migrée en oubliant
+    // le champ deviendrait accessible à n'importe quel membre — sans erreur,
+    // sans journal, et sans que rien ne distingue « ouverte exprès » de
+    // « ouverte par oubli ».
+    if (descripteur.accesParDefaut !== undefined && typeof descripteur.accesParDefaut !== 'boolean') {
+        throw erreur(nom, '« accesParDefaut » doit valoir true (ouverte à tous) ou false (administrateurs).');
+    }
+    if (descripteur.permission === undefined && descripteur.accesParDefaut === undefined) {
+        throw erreur(
+            nom,
+            'l\'accès n\'est pas déclaré. Renseignez « permission » (nom canonique exigé du membre), '
+            + '« accesParDefaut: false » (réservée aux administrateurs) ou « accesParDefaut: true » '
+            + '(ouverte à tout le monde, volontairement). L\'ouverture n\'est jamais implicite.',
+        );
+    }
+    if (descripteur.permission !== undefined && descripteur.accesParDefaut !== undefined) {
+        throw erreur(
+            nom,
+            '« permission » et « accesParDefaut » se contredisent : déclarez l\'un OU l\'autre. '
+            + 'Une permission nommée décrit déjà qui voit la commande.',
+        );
+    }
+
+    // Permissions dont le BOT a besoin — à ne pas confondre avec `permission`,
+    // qui porte sur le membre. Elles alimentent le contrôle du masque du lien
+    // d'invitation (test/invite-permissions.test.js) : sans elles, une commande
+    // migrée sort du balayage `PermissionFlagsBits` et le garde-fou devient un
+    // faux témoin.
+    if (descripteur.permissionsBot !== undefined) {
+        if (!Array.isArray(descripteur.permissionsBot)) {
+            throw erreur(nom, '« permissionsBot » doit être un tableau de noms canoniques (éventuellement vide).');
+        }
+        for (const permission of descripteur.permissionsBot) {
+            if (!estPermissionCanonique(permission)) {
+                throw erreur(nom, `permissionsBot : « ${permission} » inconnue. Noms acceptés : ${PERMISSIONS.join(', ')}.`);
+            }
+        }
     }
     if (descripteur.plateformes !== undefined) {
         if (!Array.isArray(descripteur.plateformes) || descripteur.plateformes.length === 0) {
@@ -131,6 +276,11 @@ function definirCommande(descripteur) {
         const vues = new Set();
         for (const sous of sousCommandes) {
             if (!sous || typeof sous.nom !== 'string' || !sous.nom) throw erreur(nom, 'chaque sous-commande doit porter un « nom ».');
+            for (const cle of Object.keys(sous)) {
+                if (!CLES_SOUS_COMMANDE.includes(cle)) {
+                    throw erreur(nom, `sous-commande « ${sous.nom} » : clé inconnue « ${cle} ». Clés reconnues : ${CLES_SOUS_COMMANDE.join(', ')}.`);
+                }
+            }
             if (vues.has(sous.nom)) throw erreur(nom, `sous-commande « ${sous.nom} » en double.`);
             vues.add(sous.nom);
             if (typeof sous.description !== 'string' || !sous.description) {
@@ -205,6 +355,9 @@ function trouverSousCommande(descripteur, nomSousCommande) {
 module.exports = {
     TYPES_OPTION,
     PLATEFORMES_CONNUES,
+    CLES_COMMANDE,
+    CLES_SOUS_COMMANDE,
+    CLES_OPTION,
     definirCommande,
     estDescripteurNeutre,
     commandeDisponible,

@@ -19,12 +19,14 @@
 //  `serialiserBitfield`.
 // ═══════════════════════════════════════════════════════════════
 
-const { Routes, ChannelType } = require('discord.js');
-const { serialiserBitfield, estPermissionCanonique } = require('../permissions');
-const { bitfield } = require('./permissions');
+const { Routes } = require('discord.js');
+const { serialiserBitfield, estPermissionCanonique, exigerPermissionCanonique } = require('../permissions');
+const { bitfield, BITS } = require('./permissions');
 const { exigerTypeCanalCanonique } = require('../channels');
+const { TYPES: TYPES_CANAL_DISCORD } = require('./channels');
 const { rendreContenu } = require('./render');
 const { normaliserMembre, normaliserRole, normaliserCanal, normaliserGuilde } = require('./context');
+const { normaliserMessage } = require('./events');
 
 // Discord refuse la suppression groupée des messages de plus de 14 jours, et
 // rejette le LOT ENTIER si un seul dépasse (erreur 50034). On filtre donc en
@@ -36,22 +38,24 @@ const TAILLE_LOT_SUPPRESSION = 100;
 // l'âge d'un message se lit dans son identifiant, sans aucun appel réseau.
 const EPOQUE_SNOWFLAKE = 1420070400000n;
 
-const TYPE_CANAL_VERS_DISCORD = Object.freeze({
-    texte: ChannelType.GuildText,
-    vocal: ChannelType.GuildVoice,
-    categorie: ChannelType.GuildCategory,
-    conference: ChannelType.GuildStageVoice,
-});
-
 /** Horodatage d'émission porté par un snowflake. */
 function dateDuSnowflake(id) {
     return Number((BigInt(id) >> 22n) + EPOQUE_SNOWFLAKE);
 }
 
-/** Corps REST d'un message, à partir d'un contenu ou d'un embed neutre. */
+/**
+ * Corps REST d'un message, à partir d'un contenu ou d'un embed neutre.
+ *
+ * `rendreContenu` produit des structures discord.js (EmbedBuilder,
+ * `files: [{ attachment, name }]`). L'API REST brute attend du JSON et
+ * `files: [{ name, data }]` : la conversion est ici, et seulement ici.
+ */
 function corpsMessage(contenu) {
     const rendu = rendreContenu(contenu);
     if (rendu.embeds) rendu.embeds = rendu.embeds.map(e => (typeof e?.toJSON === 'function' ? e.toJSON() : e));
+    if (rendu.files) {
+        rendu.files = rendu.files.map(f => ({ name: f.name, data: f.attachment, contentType: f.contentType }));
+    }
     return rendu;
 }
 
@@ -92,6 +96,29 @@ function encoderEmoji(emoji) {
 }
 
 /**
+ * Deltas de permission d'un overwrite unitaire.
+ * `{ CONNECT: false, VIEW_CHANNEL: true, SEND_MESSAGES: null }`
+ *   true  -> autorisée
+ *   false -> refusée
+ *   null  -> héritée (le bit est retiré des deux masques)
+ * @returns {{allow: bigint, deny: bigint}} les masques après application
+ */
+function appliquerDeltas(allow, deny, deltas) {
+    for (const [nom, valeur] of Object.entries(deltas || {})) {
+        exigerPermissionCanonique(nom);
+        const bit = BITS[nom];
+        // Le bit est d'abord retiré des DEUX masques : sans ça, passer une
+        // permission de « refusée » à « autorisée » la laisserait dans `deny`,
+        // et Discord fait primer le refus.
+        allow &= ~bit;
+        deny &= ~bit;
+        if (valeur === true) allow |= bit;
+        else if (valeur === false) deny |= bit;
+    }
+    return { allow, deny };
+}
+
+/**
  * @param {import('discord.js').Client} client
  * @returns {object} client REST normalisé (DA §4.3)
  */
@@ -109,15 +136,66 @@ function creerApi(client) {
         return guilde.members.cache.get(membreId) || guilde.members.fetch(membreId);
     }
 
+    /**
+     * Overwrite courant d'une cible, en BigInt.
+     *
+     * Le cache est privilégié quand il est chaud (le cas nominal d'un salon que
+     * le bot vient de créer), la lecture REST sert de repli. Rendre `null` pour
+     * « pas d'overwrite » se distingue de `{allow: 0n, deny: 0n}`, qui signifie
+     * « overwrite présent mais vide » — et seul le premier oblige à connaître le
+     * type de la cible.
+     */
+    async function lireOverwrite(canalId, cibleId) {
+        const cache = client.channels.cache.get(canalId)?.permissionOverwrites?.cache?.get(cibleId);
+        if (cache) {
+            return { type: cache.type === 'role' ? 0 : cache.type === 'member' ? 1 : cache.type,
+                allow: BigInt(cache.allow?.bitfield ?? 0), deny: BigInt(cache.deny?.bitfield ?? 0) };
+        }
+        try {
+            const canal = await rest().get(Routes.channel(canalId));
+            const trouve = (canal.permission_overwrites || []).find(o => o.id === cibleId);
+            if (!trouve) return null;
+            return { type: trouve.type, allow: BigInt(trouve.allow), deny: BigInt(trouve.deny) };
+        } catch {
+            return null;
+        }
+    }
+
     return {
         // ─── Messages ────────────────────────────────────────────────────────
 
+        /** @returns {Promise<object>} le message posté, NORMALISÉ (cf. events.js) */
         async envoyerMessage(canalId, contenu) {
-            return rest().post(Routes.channelMessages(canalId), { body: corpsMessage(contenu) });
+            // Normalisé, et pas rendu brut : l'appelant s'en sert pour stocker
+            // un identifiant de panneau en base, et une réponse REST en
+            // snake_case l'obligerait à connaître la forme de l'API Discord.
+            return normaliserMessage(await rest().post(Routes.channelMessages(canalId), { body: corpsMessage(contenu) }));
         },
 
         async modifierMessage(canalId, messageId, contenu) {
-            return rest().patch(Routes.channelMessage(canalId, messageId), { body: corpsMessage(contenu) });
+            return normaliserMessage(await rest().patch(Routes.channelMessage(canalId, messageId), { body: corpsMessage(contenu) }));
+        },
+
+        /** @returns {Promise<object|null>} null si le message a disparu entre-temps */
+        async obtenirMessage(canalId, messageId) {
+            try {
+                return normaliserMessage(await rest().get(Routes.channelMessage(canalId, messageId)));
+            } catch {
+                return null;
+            }
+        },
+
+        /**
+         * Historique d'un salon, du plus récent au plus ancien.
+         * @param {object} [options] { limite = 50, avant, apres } — identifiants
+         *   de message, jamais des dates : c'est la pagination de l'API.
+         */
+        async listerMessages(canalId, { limite = 50, avant, apres } = {}) {
+            const query = new URLSearchParams({ limit: String(Math.min(limite, 100)) });
+            if (avant) query.set('before', avant);
+            if (apres) query.set('after', apres);
+            const messages = await rest().get(Routes.channelMessages(canalId), { query });
+            return messages.map(normaliserMessage);
         },
 
         async supprimerMessage(canalId, messageId, raison) {
@@ -125,14 +203,24 @@ function creerApi(client) {
         },
 
         /**
-         * @returns {Promise<number>} nombre de messages effectivement supprimés.
-         *   Les messages de plus de 14 jours sont ÉCARTÉS, pas rejetés : c'est
-         *   la seule façon d'obtenir un résultat partiel plutôt qu'une erreur
-         *   50034 sur le lot entier.
+         * Suppression groupée.
+         *
+         * Les messages de plus de 14 jours sont ÉCARTÉS, pas rejetés : c'est la
+         * seule façon d'obtenir un résultat partiel plutôt qu'une erreur 50034
+         * sur le lot ENTIER.
+         *
+         * @returns {Promise<{supprimes: number, ignores: number}>}
+         *   `supprimes` ne compte que les lots que l'API a réellement acceptés.
+         *   L'API ne rend aucun corps sur un 204 : le seul fait vérifiable est
+         *   qu'elle n'a pas refusé. Un lot en échec n'est donc PAS compté, et
+         *   l'erreur remonte à l'appelant — `bot/utils/errors.js` sait déjà
+         *   traduire 50034 et 50013, et annoncer « 40 messages supprimés » après
+         *   un refus serait pire qu'un message d'erreur.
          */
         async supprimerMessagesEnLot(canalId, ids, raison) {
             const limite = Date.now() - AGE_MAX_SUPPRESSION_LOT_MS;
-            const eligibles = [...new Set(ids)].filter(id => dateDuSnowflake(id) > limite);
+            const uniques = [...new Set(ids)];
+            const eligibles = uniques.filter(id => dateDuSnowflake(id) > limite);
             let supprimes = 0;
 
             for (let debut = 0; debut < eligibles.length; debut += TAILLE_LOT_SUPPRESSION) {
@@ -146,13 +234,29 @@ function creerApi(client) {
                 }
                 supprimes += lot.length;
             }
-            return supprimes;
+            return { supprimes, ignores: uniques.length - eligibles.length };
         },
 
         async ajouterReaction(canalId, messageId, emoji) {
             return rest().put(
                 Routes.channelMessageOwnReaction(canalId, messageId, encoderEmoji(emoji))
             );
+        },
+
+        /**
+         * Retire une réaction. Sans `utilisateurId`, retire CELLE DU BOT.
+         *
+         * Le cas courant est l'inverse : les panneaux de rôles retirent la
+         * réaction de la personne pour garder le panneau propre et faire office
+         * d'accusé de réception. Cette opération demande MANAGE_MESSAGES et
+         * échoue sans elle — comportement historique conservé, l'appelant
+         * décide s'il l'ignore.
+         */
+        async retirerReaction(canalId, messageId, emoji, utilisateurId = null) {
+            const code = encoderEmoji(emoji);
+            return utilisateurId
+                ? rest().delete(Routes.channelMessageUserReaction(canalId, messageId, code, utilisateurId))
+                : rest().delete(Routes.channelMessageOwnReaction(canalId, messageId, code));
         },
 
         // ─── Membres ─────────────────────────────────────────────────────────
@@ -170,6 +274,11 @@ function creerApi(client) {
         /**
          * @param {object} patch  { roles?, pseudo?, muet?, sourd?, canalVocalId?, timeoutJusqua? }
          *   `timeoutJusqua` accepte une Date, un timestamp ou null (levée).
+         * @returns {Promise<object>} le membre après modification, normalisé.
+         *   ⚠️ La réponse REST ne porte PAS les permissions calculées : `estAdmin`
+         *   y vaut donc toujours false, et `aPermission` toujours false. Pour un
+         *   contrôle de droits, passer par `obtenirMembre`, qui lit l'objet
+         *   complet.
          */
         async modifierMembre(guildeId, membreId, patch = {}, raison) {
             const body = {};
@@ -183,7 +292,7 @@ function creerApi(client) {
                     ? null
                     : new Date(patch.timeoutJusqua).toISOString();
             }
-            return rest().patch(Routes.guildMember(guildeId, membreId), { body, ...motif(raison) });
+            return normaliserMembre(await rest().patch(Routes.guildMember(guildeId, membreId), { body, ...motif(raison) }));
         },
 
         async ajouterRole(guildeId, membreId, roleId, raison) {
@@ -215,10 +324,10 @@ function creerApi(client) {
          * @param {Date|number|null} expireLe  null lève le timeout
          */
         async appliquerTimeout(guildeId, membreId, expireLe, raison) {
-            return rest().patch(Routes.guildMember(guildeId, membreId), {
+            return normaliserMembre(await rest().patch(Routes.guildMember(guildeId, membreId), {
                 body: { communication_disabled_until: expireLe === null ? null : new Date(expireLe).toISOString() },
                 ...motif(raison),
-            });
+            }));
         },
 
         // ─── Rôles ───────────────────────────────────────────────────────────
@@ -253,17 +362,28 @@ function creerApi(client) {
          *   `type` est un nom canonique (platform/channels.js), jamais un entier
          *   de plateforme.
          */
+        /** @returns {Promise<object>} le salon créé, NORMALISÉ */
         async creerCanal(guildeId, spec = {}, raison) {
-            const body = { name: spec.nom, type: TYPE_CANAL_VERS_DISCORD[exigerTypeCanalCanonique(spec.type)] };
+            const body = { name: spec.nom, type: TYPES_CANAL_DISCORD[exigerTypeCanalCanonique(spec.type)] };
             if (spec.parentId !== undefined) body.parent_id = spec.parentId;
             if (spec.sujet !== undefined) body.topic = spec.sujet;
             if (spec.position !== undefined) body.position = spec.position;
             if (spec.limiteUtilisateurs !== undefined) body.user_limit = spec.limiteUtilisateurs;
             const overwrites = normaliserOverwrites(spec.permissions);
             if (overwrites) body.permission_overwrites = overwrites;
-            return rest().post(Routes.guildChannels(guildeId), { body, ...motif(raison) });
+            // Normalisé : le salon créé part directement en base (tickets,
+            // TempVoice), et l'appelant ne doit pas avoir à lire `guild_id`.
+            return normaliserCanal(await rest().post(Routes.guildChannels(guildeId), { body, ...motif(raison) }));
         },
 
+        /**
+         * ⚠️ `permissions` REMPLACE l'intégralité des overwrites du salon —
+         * c'est la sémantique de `permission_overwrites` dans l'API, et elle
+         * n'est presque jamais celle qu'on veut. Pour modifier UNE cible sans
+         * toucher aux autres (verrouiller un salon temporaire, autoriser une
+         * personne), utilisez `definirOverwrite`. Ne passez `permissions` ici
+         * que si vous réécrivez sciemment tout le jeu.
+         */
         async modifierCanal(canalId, patch = {}, raison) {
             const body = {};
             if (patch.nom !== undefined) body.name = patch.nom;
@@ -273,7 +393,54 @@ function creerApi(client) {
             if (patch.limiteUtilisateurs !== undefined) body.user_limit = patch.limiteUtilisateurs;
             const overwrites = normaliserOverwrites(patch.permissions);
             if (overwrites) body.permission_overwrites = overwrites;
-            return rest().patch(Routes.channel(canalId), { body, ...motif(raison) });
+            return normaliserCanal(await rest().patch(Routes.channel(canalId), { body, ...motif(raison) }));
+        },
+
+        /**
+         * Modifie l'overwrite d'UNE cible, sans toucher aux autres.
+         *
+         * C'est l'équivalent neutre de `channel.permissionOverwrites.edit()`, et
+         * la seule primitive à utiliser pour un verrouillage ou une autorisation
+         * ponctuelle. Elle lit l'overwrite existant, applique les deltas et
+         * réécrit cette entrée seule : sans elle, un `modifierCanal({permissions})`
+         * effacerait les droits de toutes les autres cibles — le propriétaire
+         * d'un salon temporaire perdrait les siens à chaque verrouillage.
+         *
+         * @param {string} canalId
+         * @param {string} cibleId  identifiant de rôle ou de membre
+         * @param {Record<string, true|false|null>} deltas  nom canonique -> autorisée / refusée / héritée
+         * @param {{type?: 'role'|'membre', raison?: string}} [options]
+         *   `type` est déduit de l'overwrite existant s'il y en a un ; il est
+         *   obligatoire pour en créer un nouveau, l'API ne le devine pas.
+         */
+        async definirOverwrite(canalId, cibleId, deltas, { type, raison } = {}) {
+            const actuel = await lireOverwrite(canalId, cibleId);
+            const typeCible = type !== undefined
+                ? (type === 'role' ? 0 : type === 'membre' ? 1 : type)
+                : actuel?.type;
+
+            if (typeCible === undefined || typeCible === null) {
+                throw new Error(
+                    `definirOverwrite : aucun overwrite existant pour ${cibleId} sur le salon ${canalId}, `
+                    + 'et « type » n\'est pas précisé. Passez { type: \'role\' } ou { type: \'membre\' }.'
+                );
+            }
+
+            const { allow, deny } = appliquerDeltas(actuel?.allow ?? 0n, actuel?.deny ?? 0n, deltas);
+
+            return rest().put(Routes.channelPermission(canalId, cibleId), {
+                body: {
+                    type: typeCible,
+                    allow: serialiserBitfield(allow),
+                    deny: serialiserBitfield(deny),
+                },
+                ...motif(raison),
+            });
+        },
+
+        /** Retire complètement l'overwrite d'une cible (retour à l'héritage). */
+        async supprimerOverwrite(canalId, cibleId, raison) {
+            return rest().delete(Routes.channelPermission(canalId, cibleId), motif(raison));
         },
 
         async supprimerCanal(canalId, raison) {
@@ -315,11 +482,11 @@ function creerApi(client) {
 
 module.exports = {
     creerApi,
+    appliquerDeltas,
     normaliserOverwrites,
     resoudreBits,
     encoderEmoji,
     corpsMessage,
     dateDuSnowflake,
-    TYPE_CANAL_VERS_DISCORD,
     AGE_MAX_SUPPRESSION_LOT_MS,
 };
