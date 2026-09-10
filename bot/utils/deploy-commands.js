@@ -1,7 +1,7 @@
 const { REST, Routes } = require('discord.js');
-const fs = require('fs');
 const path = require('path');
 const { DISABLED_COMMAND_FILES } = require('./disabledCommands');
+const { chargerCommandes } = require('../platform/discord/commands');
 const { getDb } = require('../../api/services/database');
 const {
     CHAT_INPUT_TYPE,
@@ -37,27 +37,28 @@ const SEUIL_ALERTE_TAILLE_COMMANDE = 0.75;
 //  de ce corps.
 // ═══════════════════════════════════════════════════════════════
 
-/** Charge les commandes issues des fichiers de bot/commands/ (communes à toutes les guilds). */
-function loadFileCommands() {
-    const commands = [];
-    const commandsPath = path.join(__dirname, '..', 'commands');
-    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f));
-
-    for (const file of commandFiles) {
-        const mod = require(path.join(commandsPath, file));
-        // Fichier avec exports multiples (ex: musiccontrols.js)
-        if (!mod.data && typeof mod === 'object') {
-            for (const key of Object.keys(mod)) {
-                if (mod[key]?.data) {
-                    commands.push(mod[key].data.toJSON());
-                }
-            }
-        } else if (mod.data) {
-            commands.push(mod.data.toJSON());
-        }
-    }
-
-    return commands;
+/**
+ * Charge les commandes issues des fichiers de bot/commands/ (communes à toutes
+ * les guilds), au format JSON attendu par l'API.
+ *
+ * Le parcours du dossier vit désormais dans `bot/platform/discord/commands.js`,
+ * partagé avec `bot/index.js`. Ce n'est pas un déplacement de confort : les deux
+ * fichiers en avaient chacun une copie, aux règles subtilement différentes sur
+ * les exports multiples, et une commande déployée mais non chargée — ou
+ * l'inverse — est un symptôme qui ne désigne pas sa cause. Le chargeur accepte
+ * les deux formats de commande pendant la migration (descripteur neutre ou
+ * module discord.js historique).
+ *
+ * @param {import('../platform/discord/commands').EntreeCommande[]} [entrees]
+ *   entrées déjà chargées par le bot, pour ne pas relire le dossier ni
+ *   reconstruire les builders au démarrage.
+ */
+function loadFileCommands(entrees = null) {
+    const source = entrees || chargerCommandes({
+        dossier: path.join(__dirname, '..', 'commands'),
+        exclus: DISABLED_COMMAND_FILES,
+    });
+    return source.map(entree => entree.data.toJSON());
 }
 
 /**
@@ -195,10 +196,10 @@ function auditFileCommandSizes(fileCommands) {
     }
 }
 
-async function deployCommands(client) {
+async function deployCommands(client, entrees = null) {
     let fileCommands;
     try {
-        fileCommands = loadFileCommands();
+        fileCommands = loadFileCommands(entrees);
     } catch (error) {
         console.error('[Quasar] Erreur chargement des commandes de fichiers:', error);
         return;

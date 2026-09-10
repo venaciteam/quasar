@@ -73,12 +73,20 @@ test('les permissions citées dans le code sont toutes couvertes par le masque',
     const racine = path.join(__dirname, '..');
     const citees = new Set();
 
+    // La table de correspondance de la couche plateforme n'est PAS un usage :
+    // elle traduit les 22 noms canoniques du contrat multiplateforme (DA §7.1)
+    // en drapeaux discord.js, y compris ceux que Quasar ne demande pas pour
+    // lui-même. La balayer ferait grossir le lien d'invitation de permissions
+    // dont personne n'a besoin — l'inverse exact de ce que ce fichier protège.
+    const TABLES_DE_CORRESPONDANCE = [path.join(racine, 'bot', 'platform', 'discord', 'permissions.js')];
+
     (function parcourir(dossier) {
         for (const entree of fs.readdirSync(dossier, { withFileTypes: true })) {
             if (entree.name === 'node_modules' || entree.name.startsWith('.')) continue;
             const chemin = path.join(dossier, entree.name);
             if (entree.isDirectory()) { parcourir(chemin); continue; }
             if (!entree.name.endsWith('.js')) continue;
+            if (TABLES_DE_CORRESPONDANCE.includes(chemin)) continue;
             const source = fs.readFileSync(chemin, 'utf8');
             for (const m of source.matchAll(/PermissionFlagsBits\.(\w+)/g)) citees.add(m[1]);
         }
