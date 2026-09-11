@@ -576,7 +576,12 @@ async function demarrerServices(client, platform = null) {
     // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
     // n'est en base (un SELECT indexé par minute).
     try {
-        require('./utils/punishments').startTempBanSweeper(client);
+        // L'ADAPTATEUR, pas le client : le balayeur emprunte alors la voie
+        // neutre (client REST normalisé, codes d'erreur neutres) et distingue
+        // « bot retiré du serveur » d'une panne réseau — la confusion qui
+        // transformerait un bannissement temporaire en bannissement définitif.
+        // Repli sur le client quand la plateforme n'est pas fournie (tests).
+        require('./utils/punishments').startTempBanSweeper(platform || client);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
     }

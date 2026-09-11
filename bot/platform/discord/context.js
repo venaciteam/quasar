@@ -138,9 +138,23 @@ function normaliserMembre(membre) {
     }, membre);
 }
 
+/**
+ * guilde : { id, nom, proprietaireId }
+ *
+ * `proprietaireId` n'est pas un ornement : c'est le seul moyen, sur la voie
+ * neutre, de savoir qu'une cible est le propriétaire du serveur — quelqu'un que
+ * Discord place au-dessus de tout et qu'aucune sanction ne doit viser. Sans
+ * lui, `unreachableTarget` ne protégeait le propriétaire que si l'appelant le
+ * déclarait de lui-même, et la sanction partait pour être refusée après coup
+ * par la plateforme, traduite en un vague « permission manquante ».
+ */
 function normaliserGuilde(guilde) {
     if (!guilde) return null;
-    return avecBrut({ id: guilde.id, nom: guilde.name }, guilde);
+    return avecBrut({
+        id: guilde.id,
+        nom: guilde.name,
+        proprietaireId: guilde.ownerId ?? guilde.owner_id ?? null,
+    }, guilde);
 }
 
 // ─── Lecture des options ─────────────────────────────────────────────────────
@@ -295,8 +309,22 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
         canalId: interaction.channel?.id ?? interaction.channelId ?? null,
         guilde: normaliserGuilde(interaction.guild),
 
+        // Propriétaire du serveur, remonté au premier niveau du contexte.
+        // `resoudrePorteeNeutre` (bot/utils/errors.js) lit `valeur.proprietaireId`
+        // pour construire une portée d'écriture : c'est par ici que la garde
+        // « on ne sanctionne pas le propriétaire » devient effective sur la voie
+        // neutre, sans que la commande ait à le déclarer elle-même.
+        proprietaireId: interaction.guild?.ownerId ?? null,
+
         auteur: normaliserUtilisateur(interaction.user),
         membre: normaliserMembre(interaction.member),
+
+        // Identité du bot, LUE À CHAQUE ACCÈS sur l'adaptateur et non capturée
+        // ici : `moi` est nul tant que la connexion n'est pas faite, et un
+        // contexte construit avant la connexion figerait ce nul pour toujours.
+        // C'est ce qui alimente la garde « le bot ne se sanctionne pas
+        // lui-même » et le pré-contrôle de permission de `applyPunishments`.
+        get moi() { return adaptateur.moi; },
 
         // Horodatage de RÉCEPTION de l'interaction, pour mesurer une latence sans
         // rien savoir de la plateforme (utilisé par /ping).

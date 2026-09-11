@@ -21,7 +21,9 @@
 
 const { Routes } = require('discord.js');
 const { serialiserBitfield, estPermissionCanonique, exigerPermissionCanonique } = require('../permissions');
-const { bitfield, BITS } = require('./permissions');
+const { bitfield, BITS, aPermission } = require('./permissions');
+const { CODES_NEUTRES, codeNeutre } = require('../erreurs');
+const { marquerErreur, marquerErreursApi } = require('./erreurs');
 const { exigerTypeCanalCanonique } = require('../channels');
 const { TYPES: TYPES_CANAL_DISCORD } = require('./channels');
 const { rendreContenu } = require('./render');
@@ -37,6 +39,33 @@ const TAILLE_LOT_SUPPRESSION = 100;
 // Époque des snowflakes Discord (2015-01-01). Fluxer utilise le même format :
 // l'âge d'un message se lit dans son identifiant, sans aucun appel réseau.
 const EPOQUE_SNOWFLAKE = 1420070400000n;
+
+// Permission exigée du BOT pour chaque action de sanction. C'est la moitié
+// « permission » de `verifierMembreSanctionnable` ; l'autre moitié est la
+// hiérarchie des rôles.
+const PERMISSION_PAR_SANCTION = Object.freeze({
+    timeout: 'MODERATE_MEMBERS',
+    kick: 'KICK_MEMBERS',
+    ban: 'BAN_MEMBERS',
+});
+
+const SANCTIONS = Object.freeze(Object.keys(PERMISSION_PAR_SANCTION));
+
+// Codes neutres qui valent « la ressource n'existe pas », et pour lesquels un
+// lecteur rend `null` plutôt que de lever. TOUT le reste — panne réseau,
+// permission manquante — remonte : rendre `null` sur une coupure ferait croire
+// que la ressource a disparu, et le balayeur de bannissements temporaires en
+// déduirait qu'il peut OUBLIER une échéance.
+const ABSENCES = Object.freeze([CODES_NEUTRES.introuvable, CODES_NEUTRES.guilde_inconnue]);
+
+/**
+ * Rend `null` si l'erreur signifie « ça n'existe pas », relance sinon.
+ * @param {string[]} [absences] codes neutres à traiter comme une absence
+ */
+function absenceOuLeve(err, absences = ABSENCES) {
+    if (absences.includes(codeNeutre(marquerErreur(err)))) return null;
+    throw err;
+}
 
 /** Horodatage d'émission porté par un snowflake. */
 function dateDuSnowflake(id) {
@@ -161,7 +190,12 @@ function creerApi(client) {
         }
     }
 
-    return {
+    // `marquerErreursApi` enveloppe TOUTES les méthodes ci-dessous : chaque
+    // rejet ressort avec `err.codeNeutre`, sans que `err.code` natif soit
+    // touché. C'est ce qui permet au code métier de raisonner sur 'permission'
+    // ou 'guilde_inconnue' au lieu de 50013 et 10004 — des numéros Discord qui
+    // ne voudront rien dire sur Fluxer.
+    return marquerErreursApi({
         // ─── Messages ────────────────────────────────────────────────────────
 
         /** @returns {Promise<object>} le message posté, NORMALISÉ (cf. events.js) */
@@ -176,12 +210,15 @@ function creerApi(client) {
             return normaliserMessage(await rest().patch(Routes.channelMessage(canalId, messageId), { body: corpsMessage(contenu) }));
         },
 
-        /** @returns {Promise<object|null>} null si le message a disparu entre-temps */
+        /**
+         * @returns {Promise<object|null>} `null` si le message ou son salon
+         *   n'existe plus. Même règle que les autres lecteurs : une panne LÈVE.
+         */
         async obtenirMessage(canalId, messageId) {
             try {
                 return normaliserMessage(await rest().get(Routes.channelMessage(canalId, messageId)));
-            } catch {
-                return null;
+            } catch (err) {
+                return absenceOuLeve(err);
             }
         },
 
@@ -261,14 +298,78 @@ function creerApi(client) {
 
         // ─── Membres ─────────────────────────────────────────────────────────
 
+        /**
+         * @returns {Promise<object|null>} `null` UNIQUEMENT si le membre ou le
+         *   serveur n'existe pas (cas courant d'une sanction expirée : la
+         *   personne est partie entre la lecture en base et l'appel). Une panne
+         *   réseau ou une permission manquante LÈVENT : les confondre avec une
+         *   absence ferait conclure « la personne n'est plus là » à chaque
+         *   coupure.
+         */
         async obtenirMembre(guildeId, membreId) {
             try {
                 return normaliserMembre(await membreDiscord(guildeId, membreId));
+            } catch (err) {
+                return absenceOuLeve(err);
+            }
+        },
+
+        /**
+         * Le bot peut-il appliquer cette sanction à ce membre ?
+         *
+         * Équivalent neutre de `member.moderatable / kickable / bannable`, que
+         * les pré-contrôles de `applyPunishments` utilisaient et que la voie
+         * neutre avait perdus. Les deux causes sont SÉPARÉES parce qu'elles
+         * n'appellent pas la même correction : remonter le rôle du bot, ou lui
+         * cocher une permission. Un message unique « permission manquante »
+         * envoie chercher au mauvais endroit une fois sur deux.
+         *
+         * Le propriétaire du serveur et le bot lui-même ressortent en
+         * « hierarchie » : Discord place l'un au-dessus de tout, et l'autre ne
+         * peut pas se sanctionner. C'est exact, et c'est une seconde ligne
+         * derrière `ctx.moi` / `guilde.proprietaireId`.
+         *
+         * @param {string} guildeId
+         * @param {string} membreId
+         * @param {'timeout'|'kick'|'ban'} action
+         * @returns {Promise<null|'hierarchie'|'permission'>} `null` = rien ne
+         *   s'y oppose. Rend aussi `null` quand la réponse est INDÉTERMINABLE
+         *   (membre illisible, identité du bot hors cache) : inventer un refus
+         *   empêcherait une sanction légitime, alors qu'en laissant passer c'est
+         *   la plateforme qui tranchera — et son erreur sera traduite.
+         */
+        async verifierMembreSanctionnable(guildeId, membreId, action) {
+            const permission = PERMISSION_PAR_SANCTION[action];
+            if (!permission) {
+                throw new Error(
+                    `verifierMembreSanctionnable : action « ${action} » inconnue. `
+                    + `Valeurs acceptées : ${SANCTIONS.join(', ')}.`
+                );
+            }
+
+            let membre;
+            try {
+                membre = await membreDiscord(guildeId, membreId);
             } catch {
-                // Membre parti entre la lecture en base et l'appel : ce n'est pas
-                // une panne, c'est le cas courant d'une sanction expirée.
+                // Ni membre parti, ni API injoignable ne sont des refus
+                // STRUCTURELS : dans les deux cas la sanction elle-même
+                // échouera, avec un code neutre exact. Ce pré-contrôle ne sert
+                // qu'à dire « inutile d'essayer », jamais à inventer un motif.
                 return null;
             }
+
+            // `manageable` porte la hiérarchie SEULE (et les deux cas absolus :
+            // propriétaire, bot lui-même). Il lève si l'identité du bot n'est pas
+            // en cache — un état transitoire, pas un refus.
+            try {
+                if (!membre.manageable) return 'hierarchie';
+            } catch {
+                return null;
+            }
+
+            const moi = membre.guild?.members?.me;
+            if (!moi) return null;
+            return aPermission(moi.permissions, permission) ? null : 'permission';
         },
 
         /**
@@ -453,36 +554,52 @@ function creerApi(client) {
             return canal.id;
         },
 
+        /**
+         * @returns {Promise<object|null>} `null` UNIQUEMENT si le bot n'est plus
+         *   sur ce serveur (code neutre 'guilde_inconnue').
+         *
+         * ⚠️ Une panne réseau LÈVE, et c'est le point le plus important de cette
+         *   méthode. Le balayage des bannissements temporaires en déduit s'il
+         *   doit OUBLIER une échéance : confondre « bot retiré » et « API
+         *   injoignable » transformerait un bannissement temporaire en
+         *   bannissement définitif, silencieusement, à la première coupure.
+         */
         async obtenirGuilde(guildeId) {
             try {
                 return normaliserGuilde(await guildeDiscord(guildeId));
-            } catch {
-                return null;
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue]);
             }
         },
 
+        /** @returns {Promise<object|null>} `null` si le salon n'existe plus ; lève sur une panne. */
         async obtenirCanal(canalId) {
             try {
                 return normaliserCanal(client.channels.cache.get(canalId) || await client.channels.fetch(canalId));
-            } catch {
-                return null;
+            } catch (err) {
+                return absenceOuLeve(err);
             }
         },
 
+        /** @returns {Promise<object|null>} `null` si le rôle n'existe plus ; lève sur une panne. */
         async obtenirRole(guildeId, roleId) {
             try {
                 const guilde = await guildeDiscord(guildeId);
+                // `roles.fetch` rend `null` pour un rôle inconnu au lieu de lever.
                 return normaliserRole(guilde.roles.cache.get(roleId) || await guilde.roles.fetch(roleId));
-            } catch {
-                return null;
+            } catch (err) {
+                return absenceOuLeve(err);
             }
         },
-    };
+    });
 }
 
 module.exports = {
     creerApi,
     appliquerDeltas,
+    absenceOuLeve,
+    PERMISSION_PAR_SANCTION,
+    SANCTIONS,
     normaliserOverwrites,
     resoudreBits,
     encoderEmoji,

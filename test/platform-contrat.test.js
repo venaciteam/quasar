@@ -282,6 +282,9 @@ test('le client REST porte les lectures et les écritures dont les lots ont beso
     for (const methode of [
         'obtenirMessage', 'listerMessages', 'retirerReaction',
         'definirOverwrite', 'supprimerOverwrite', 'obtenirRole', 'verifierRoleAttribuable',
+        // Lot 0.4 : le pré-contrôle de sanction, sans lequel la voie neutre
+        // protège moins que la voie historique.
+        'verifierMembreSanctionnable',
     ]) {
         assert.equal(typeof api[methode], 'function', `méthode « ${methode} » absente du client REST`);
     }
