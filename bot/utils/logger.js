@@ -1,5 +1,15 @@
-const { EmbedBuilder } = require('discord.js');
+// ═══════════════════════════════════════════════════════════════
+//  Journalisation des événements de serveur
+//
+//  Bi-format le temps de la migration multiplateforme : `sendLog` est appelée
+//  par quinze fichiers, migrés ou non. La voie historique reçoit une `Guild`
+//  discord.js et un `EmbedBuilder` ; la voie neutre reçoit une portée
+//  (`ctx`, ou `{ guildeId, api }`) et un embed neutre. La détection vient de
+//  `bot/utils/errors.js`, seul endroit du dépôt où elle est écrite.
+// ═══════════════════════════════════════════════════════════════
+
 const { getDb } = require('../../api/services/database');
+const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
 
 const LOG_CATEGORIES = {
     // Modération (déjà en place via modlog.js, on garde la compat)
@@ -64,16 +74,43 @@ function isLogEnabled(guildId, logType) {
     return logs[logType] === true;
 }
 
-async function sendLog(guild, logType, embed) {
-    if (!isLogEnabled(guild.id, logType)) return;
-    const config = getLogConfig(guild.id);
+/**
+ * Envoie un embed dans le salon de journalisation du serveur.
+ *
+ * @param {object} cible   `Guild` discord.js (voie historique), ou portée neutre :
+ *   un `ctx`, ou `{ guildeId, api }`. Reconnue à la présence d'un `api` normalisé.
+ * @param {string} logType clé de LOG_CATEGORIES
+ * @param {object} contenu embed neutre, ou `EmbedBuilder` sur la voie historique.
+ *   Un embed neutre passé avec une `Guild` est rendu au vol : un fichier à demi
+ *   migré (embed neutre, guilde discord.js) reste fonctionnel.
+ */
+async function sendLog(cible, logType, contenu) {
+    const portee = resoudrePorteeNeutre(cible);
+    const guildId = portee ? portee.guildeId : cible.id;
+
+    if (!isLogEnabled(guildId, logType)) return;
+    const config = getLogConfig(guildId);
     if (!config.logChannel) return;
 
-    const channel = guild.channels.cache.get(config.logChannel);
+    if (portee) {
+        try {
+            // Pas d'équivalent du « salon absent du cache » qui fait renoncer la
+            // voie historique sans un mot : le client REST neutre ne tient pas de
+            // cache. Un salon supprimé produit donc une erreur, attrapée ici et
+            // journalisée exactement comme un échec d'envoi.
+            await portee.api.envoyerMessage(config.logChannel, contenu);
+        } catch (e) {
+            console.error(`[Quasar] Erreur log ${logType}:`, e.message);
+        }
+        return;
+    }
+
+    // TRANSITION : format historique, à retirer au lot de consolidation
+    const channel = cible.channels.cache.get(config.logChannel);
     if (!channel) return;
 
     try {
-        await channel.send({ embeds: [embed] });
+        await channel.send({ embeds: [versEmbedDiscord(contenu)] });
     } catch (e) {
         console.error(`[Quasar] Erreur log ${logType}:`, e.message);
     }

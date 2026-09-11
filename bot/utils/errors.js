@@ -15,15 +15,120 @@
 //      complète, sans avoir à faire raconter la scène.
 //   3. Les erreurs Discord et SQLite sont traduites en langage humain. Personne
 //      ne devrait avoir à chercher ce que signifie « DiscordAPIError[50013] ».
+//
+//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
+//
+//  Ce fichier est importé par 23 autres, migrés ou non. Pendant la transition il
+//  est donc appelé des DEUX côtés à la fois : avec une `interaction` discord.js
+//  par le code historique, avec un `ctx` neutre par le code migré. Chaque
+//  fonction publique détecte donc son format d'entrée avant d'agir, et la voie
+//  historique est marquée `// TRANSITION : format historique, à retirer au lot
+//  de consolidation` — un seul `grep` sur cette phrase donnera tout ce qu'il
+//  reste à nettoyer.
+//
+//  C'est ici que vivent les DEUX détecteurs de format du dépôt, et nulle part
+//  ailleurs : `estContexteNeutre` (« est-ce un ctx ? ») et
+//  `resoudrePorteeNeutre` (« ai-je de quoi écrire sans discord.js ? »).
+//  `bot/utils/logger.js` et `bot/utils/punishments.js` les importent d'ici.
+//  Les dupliquer ferait diverger la détection d'un fichier à l'autre, ce qui est
+//  exactement le genre de bug qu'on ne voit pas passer.
 // ═══════════════════════════════════════════════════════════════
 
 const { EmbedBuilder } = require('discord.js');
+const { embed, estEmbed, ressembleAEmbedDiscord } = require('../platform/embed');
 // Une seule implémentation du code d'incident dans le projet : le dashboard en
 // génère aussi (gestionnaire d'erreurs de l'API, filet global du processus), et
 // deux alphabets qui divergent produiraient des codes impossibles à rapprocher.
 const { newIncidentCode } = require('../../api/services/incidents');
 
 const COLOR_ERROR = 0xED4245;
+
+// ─── Détection du format reçu ─────────────────────────────────────────────
+//
+// Le critère est POSITIF sur le neutre, et tout le reste retombe sur la voie
+// historique. L'inverse — reconnaître discord.js puis supposer le neutre —
+// enverrait un objet inattendu vers la voie neutre, donc vers un rendu qui
+// refuse les embeds Discord : un format non reconnu casserait au lieu de
+// continuer à fonctionner comme avant.
+
+/**
+ * L'objet est-il un contexte d'exécution neutre (DA §5.4) ?
+ *
+ * Les trois champs sont exigés ENSEMBLE, et ce sont les trois qui définissent le
+ * contrat : `plateforme` (le nom), `capacites` (ce qu'elle sait faire),
+ * `repondre` (par où sort une réponse). Aucun objet discord.js ne porte ces
+ * noms — ils sont en français, et ni `plateforme` ni `capacites` n'existent dans
+ * la bibliothèque. Exiger les trois évite qu'un objet métier doté d'un
+ * `repondre()` quelconque soit pris pour un contexte.
+ */
+function estContexteNeutre(valeur) {
+    return Boolean(valeur)
+        && typeof valeur === 'object'
+        && typeof valeur.plateforme === 'string'
+        && typeof valeur.capacites === 'object' && valeur.capacites !== null
+        && typeof valeur.repondre === 'function';
+}
+
+/**
+ * Portée d'écriture neutre : « où écrire, avec quel client REST ».
+ *
+ * Là où `estContexteNeutre` répond à une commande qui a un interlocuteur,
+ * ceci répond aux journaux et aux sanctions, qui n'en ont pas : ils n'ont besoin
+ * que d'un serveur et d'un `api`. Sont acceptés un `ctx` complet, l'adaptateur
+ * lui-même, ou un objet littéral `{ guildeId, api }`.
+ *
+ * Le marqueur est `api.envoyerMessage` : c'est la seule méthode que TOUTE
+ * écriture neutre finit par emprunter, et aucun objet discord.js ne l'expose
+ * (une `Guild` a `channels`, un `Client` a `rest`, jamais `api`).
+ *
+ * @returns {null|{guildeId: string|null, api: object, moiId: string|null,
+ *                 proprietaireId: string|null, nomGuilde: string|null, source: object}}
+ */
+function resoudrePorteeNeutre(valeur) {
+    if (!valeur || typeof valeur !== 'object') return null;
+    const api = valeur.api;
+    if (!api || typeof api !== 'object' || typeof api.envoyerMessage !== 'function') return null;
+    return {
+        guildeId: valeur.guildeId ?? valeur.guilde?.id ?? null,
+        api,
+        // Identité du bot. Sur l'adaptateur elle vaut `null` tant que la
+        // connexion n'est pas faite : c'est le signal de « pas encore prêt »,
+        // utilisé tel quel par le balayage des bannissements temporaires.
+        moiId: valeur.moi?.id ?? valeur.moiId ?? null,
+        // Hors contrat : `api.obtenirGuilde` ne rend pas le propriétaire du
+        // serveur. Renseigné seulement si l'appelant le connaît (cf. rapport).
+        proprietaireId: valeur.proprietaireId ?? null,
+        nomGuilde: valeur.guilde?.nom ?? valeur.nomGuilde ?? null,
+        source: valeur,
+    };
+}
+
+/**
+ * Embed neutre -> EmbedBuilder, pour la voie historique uniquement.
+ *
+ * Laisse passer tel quel ce qui n'est pas un embed neutre : un `EmbedBuilder`
+ * écrit par du code pas encore migré doit continuer à voyager sans être touché.
+ * Dans l'autre sens, un fichier à demi migré qui construirait son embed avec
+ * `embed()` tout en gardant une `Guild` discord.js sous la main fonctionne
+ * quand même — c'est le cas de figure le plus probable pendant les six lots.
+ */
+// TRANSITION : format historique, à retirer au lot de consolidation
+function versEmbedDiscord(valeur) {
+    if (!estEmbed(valeur)) return valeur;
+    const { rendreEmbed } = require('../platform/discord/render');
+    return rendreEmbed(valeur);
+}
+
+/** Refuse un embed Discord sur la voie neutre, en disant quoi faire. */
+function exigerContenuNeutre(contenu, appelant) {
+    if (ressembleAEmbedDiscord(contenu) && !estEmbed(contenu)) {
+        throw new TypeError(
+            `${appelant} : embed au format Discord passé à la voie neutre. Construisez-le avec `
+            + '`embed({ titre, description, couleur, champs, … })` de bot/platform/embed.js.'
+        );
+    }
+    return contenu;
+}
 
 // ─── Traduction des erreurs Discord ───────────────────────────────────────
 // Codes officiels de l'API Discord. Seuls ceux que Quasar peut réellement
@@ -171,38 +276,78 @@ function explain(error) {
 }
 
 /**
- * Construit l'embed affiché à l'utilisateur.
+ * Contenu de l'embed d'erreur, au format NEUTRE — la source unique.
+ *
  * Le code d'incident n'est présent que pour les vraies exceptions : sur une
  * erreur d'usage (« tu ne peux pas te warn toi-même »), il n'y a rien à
  * diagnostiquer et l'afficher ferait croire à un bug.
  */
-function buildErrorEmbed({ title, cause, action, code }) {
-    const embed = new EmbedBuilder()
-        .setTitle(`❌ ${title}`)
-        .setColor(COLOR_ERROR);
-
+function construireEmbedErreur({ title, cause, action, code }) {
     const parts = [];
     if (cause) parts.push(cause);
     if (action) parts.push(`\n**Que faire :** ${action}`);
-    embed.setDescription(parts.join('\n'));
 
-    if (code) {
-        embed.setFooter({ text: `Code : ${code} — à transmettre en cas de signalement` });
-    }
-    return embed;
+    return embed({
+        titre: `❌ ${title}`,
+        couleur: COLOR_ERROR,
+        description: parts.join('\n'),
+        pied: code ? { texte: `Code : ${code} — à transmettre en cas de signalement` } : undefined,
+    });
 }
 
 /**
- * Répond à une interaction, quel que soit son état (déjà répondue, différée…).
- * Sans cette précaution, une erreur survenant après un deferReply produit une
- * seconde erreur qui masque la première.
+ * Même embed, au format Discord. Construit à partir du neutre : il n'y a qu'un
+ * seul endroit où le TEXTE d'une erreur est décidé.
+ *
+ * Le builder est monté à la main plutôt que par `rendreEmbed` pour deux
+ * fidélités que le rendu générique ne garantit pas : `setDescription` est appelé
+ * MÊME sur une chaîne vide (le corps envoyé porte alors `description: ""`, et
+ * non pas rien), et l'ordre de pose des champs reste celui d'avant.
  */
-async function replyWithEmbed(interaction, embed, { ephemeral = true } = {}) {
-    const payload = { embeds: [embed], ephemeral };
+// TRANSITION : format historique, à retirer au lot de consolidation
+function buildErrorEmbed(spec) {
+    const neutre = construireEmbedErreur(spec);
+    const construit = new EmbedBuilder()
+        .setTitle(neutre.titre)
+        .setColor(neutre.couleur);
+
+    construit.setDescription(neutre.description);
+
+    if (neutre.pied) {
+        construit.setFooter({ text: neutre.pied.texte });
+    }
+    return construit;
+}
+
+/**
+ * Poste un embed sur la cible, quel que soit son format et quel que soit son
+ * état (déjà répondue, différée…). Sans cette précaution, une erreur survenant
+ * après un deferReply produit une seconde erreur qui masque la première.
+ *
+ * @param {object} cible  `ctx` neutre, ou interaction discord.js
+ * @param {object} contenu  embed neutre, ou EmbedBuilder sur la voie historique
+ */
+async function replyWithEmbed(cible, contenu, { ephemeral = true } = {}) {
+    if (estContexteNeutre(cible)) {
+        // Vérifié AVANT le try : un embed Discord passé ici serait refusé par le
+        // rendu neutre, et l'avaler avec le reste ferait disparaître la réponse
+        // sans un mot.
+        exigerContenuNeutre(contenu, 'replyWithEmbed');
+        try {
+            return await cible.repondre(contenu, { ephemere: ephemeral });
+        } catch {
+            // Même silence que la voie historique : l'incident est déjà tracé.
+        }
+        return undefined;
+    }
+
+    // TRANSITION : format historique, à retirer au lot de consolidation
+    const embedDiscord = versEmbedDiscord(contenu);
+    const payload = { embeds: [embedDiscord], ephemeral };
     try {
-        if (interaction.deferred) return await interaction.editReply({ embeds: [embed] });
-        if (interaction.replied) return await interaction.followUp(payload);
-        return await interaction.reply(payload);
+        if (cible.deferred) return await cible.editReply({ embeds: [embedDiscord] });
+        if (cible.replied) return await cible.followUp(payload);
+        return await cible.reply(payload);
     } catch {
         // L'interaction a expiré ou a déjà reçu sa réponse finale : il n'y a plus
         // rien à faire côté Discord, l'incident reste tracé dans les journaux.
@@ -212,23 +357,63 @@ async function replyWithEmbed(interaction, embed, { ephemeral = true } = {}) {
 /**
  * Erreur d'USAGE : l'utilisateur a demandé quelque chose d'impossible, ce n'est
  * pas un bug. Message explicite, pas de code d'incident, rien dans les journaux.
+ *
+ * Sur la voie neutre, DÉLÉGATION à `ctx.erreurUtilisateur` : le contexte porte
+ * déjà cette primitive (DA §5.4), et en réécrire une seconde ici ferait diverger
+ * les deux le jour où l'adaptateur Fluxer décidera autrement de l'éphémère.
+ *
+ * ⚠️ Corollaire pour les adaptateurs : `ctx.erreurUtilisateur` ne doit JAMAIS
+ * rappeler `userError(ctx, …)`, sous peine de boucle. L'adaptateur Discord
+ * rappelle `userError` avec son INTERACTION, qui repart par la voie historique.
+ *
+ * @param {object} cible  `ctx` neutre, ou interaction discord.js
+ * @param {{title?: string, titre?: string, cause?: string, action?: string,
+ *          ephemeral?: boolean, ephemere?: boolean}} spec
+ *   Les deux orthographes sont acceptées : le code historique écrit `title` et
+ *   `ephemeral`, le code migré écrit `titre` et `ephemere` comme partout
+ *   ailleurs dans la couche neutre. Ne reconnaître qu'une seule des deux
+ *   produirait un « ❌ undefined » parfaitement silencieux.
  */
-function userError(interaction, { title, cause, action, ephemeral = true }) {
-    return replyWithEmbed(interaction, buildErrorEmbed({ title, cause, action }), { ephemeral });
+function userError(cible, spec = {}) {
+    const title = spec.title ?? spec.titre;
+    const { cause, action } = spec;
+    const ephemeral = spec.ephemeral ?? spec.ephemere ?? true;
+
+    if (estContexteNeutre(cible)) {
+        if (typeof cible.erreurUtilisateur === 'function') {
+            return cible.erreurUtilisateur({ titre: title, cause, action, ephemere: ephemeral });
+        }
+        // Contexte réduit (autocomplétion) : il répond, mais ne porte pas la
+        // primitive. On rend l'embed nous-mêmes plutôt que d'échouer.
+        return replyWithEmbed(cible, construireEmbedErreur({ title, cause, action }), { ephemeral });
+    }
+
+    // TRANSITION : format historique, à retirer au lot de consolidation
+    return replyWithEmbed(cible, buildErrorEmbed({ title, cause, action }), { ephemeral });
 }
 
 /**
  * INCIDENT : une exception s'est produite. On journalise avec un code, et on
  * explique à l'utilisateur ce qu'on peut.
  *
+ * La ligne de journal est identique quel que soit le format : ce sont les mêmes
+ * trois informations, lues à des endroits différents. `commandName` et `customId`
+ * côté discord.js, `commande` et `panneau.prefixe` côté neutre — les noms que
+ * `creerContexteCommande` et `creerContextePanneau` posent sur le contexte.
+ *
+ * @param {object} cible — `ctx` neutre, interaction discord.js, ou null
  * @param {object} context — { command, guildId, userId } pour retrouver la trace
  * @returns {string} le code d'incident
  */
-function reportIncident(interaction, error, context = {}) {
+function reportIncident(cible, error, context = {}) {
     const code = newIncidentCode();
-    const where = context.command || interaction?.commandName || interaction?.customId || 'inconnu';
-    const guildId = context.guildId || interaction?.guild?.id || 'aucun';
-    const userId = context.userId || interaction?.user?.id || 'inconnu';
+    const neutre = estContexteNeutre(cible);
+
+    const where = context.command
+        || (neutre ? (cible.commande || cible.panneau?.prefixe) : (cible?.commandName || cible?.customId))
+        || 'inconnu';
+    const guildId = context.guildId || (neutre ? cible.guildeId : cible?.guild?.id) || 'aucun';
+    const userId = context.userId || (neutre ? cible.auteur?.id : cible?.user?.id) || 'inconnu';
 
     // Une seule ligne pour l'essentiel : c'est elle qu'on cherchera avec le code.
     // La stack suit, sur les lignes suivantes.
@@ -239,8 +424,12 @@ function reportIncident(interaction, error, context = {}) {
     if (error?.stack) console.error(error.stack);
 
     const explained = explain(error);
-    if (interaction) {
-        replyWithEmbed(interaction, buildErrorEmbed({ ...explained, code })).catch(() => {});
+    if (cible) {
+        const contenu = neutre
+            ? construireEmbedErreur({ ...explained, code })
+            // TRANSITION : format historique, à retirer au lot de consolidation
+            : buildErrorEmbed({ ...explained, code });
+        replyWithEmbed(cible, contenu).catch(() => {});
     }
     return code;
 }
@@ -249,9 +438,14 @@ module.exports = {
     newIncidentCode,
     explain,
     buildErrorEmbed,
+    construireEmbedErreur,
     userError,
     reportIncident,
     replyWithEmbed,
+    // Détection de format, partagée par logger.js et punishments.js.
+    estContexteNeutre,
+    resoudrePorteeNeutre,
+    versEmbedDiscord,
     DISCORD_ERRORS,
     SQLITE_ERRORS,
 };
