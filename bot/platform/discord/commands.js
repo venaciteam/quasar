@@ -145,6 +145,10 @@ function entreeDepuisDescripteur(descripteur, fichier, adaptateur) {
         fichier,
         neutre: true,
         descripteur,
+        // Noms des panneaux persistants déclarés par la commande. Enregistrés
+        // par `chargerCommandes`, pas ici : la détection des collisions entre
+        // commandes suppose de les avoir toutes vues.
+        panneaux: Object.keys(descripteur.panneaux || {}),
     };
 
     // Le pont vers le contexte neutre est différé : `context.js` dépend de
@@ -242,12 +246,47 @@ function chargerCommandes({ dossier, exclus = [], adaptateur = null } = {}) {
         }
     }
 
+    if (adaptateur) enregistrerPanneaux(entrees, adaptateur);
+
     return entrees;
+}
+
+/**
+ * Enregistre les panneaux persistants déclarés par les commandes.
+ *
+ * C'est ce qui tient la promesse du registre : un lot déclare `panneaux` dans
+ * son descripteur, ses clics sont routés, et aucun fichier partagé n'est
+ * touché. Sans cette étape, `surPanneau` existait sans appelant et un lot
+ * n'avait que deux issues, toutes deux interdites — appeler l'adaptateur
+ * au chargement, ou écrire son préfixe en dur dans `bot/index.js`.
+ *
+ * Les collisions sont détectées ICI, et pas seulement par `surPanneau`, pour
+ * que le message nomme LES DEUX commandes en cause : « déjà enregistré » ne dit
+ * pas laquelle, et six agents travaillent en parallèle sur des fichiers qu'ils
+ * ne se relisent pas.
+ */
+function enregistrerPanneaux(entrees, adaptateur) {
+    const proprietaires = new Map();
+
+    for (const entree of entrees) {
+        for (const [panneau, handler] of Object.entries(entree.descripteur?.panneaux || {})) {
+            const dejaPris = proprietaires.get(panneau);
+            if (dejaPris) {
+                throw new Error(
+                    `Panneau « ${panneau} » déclaré deux fois : par /${dejaPris} et par /${entree.nom}. `
+                    + 'Un panneau appartient à une seule commande — ses clics ne peuvent pas être routés deux fois.'
+                );
+            }
+            proprietaires.set(panneau, entree.nom);
+            adaptateur.surPanneau(panneau, handler);
+        }
+    }
 }
 
 module.exports = {
     construireSlashCommand,
     chargerCommandes,
+    enregistrerPanneaux,
     AJOUT_OPTION,
     NOM_PLATEFORME,
 };

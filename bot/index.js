@@ -165,6 +165,16 @@ function createBot({ plateforme = null } = {}) {
         console.log(`[Quasar] Commande chargée: /${entree.nom}`);
     }
 
+    // Panneaux persistants déclarés par les commandes. Ils sont enregistrés par
+    // le chargeur lui-même ; la ligne de journal est là pour le diagnostic le
+    // plus probable — « mon panneau n'est pas routé » se règle en regardant
+    // d'abord s'il a seulement été déclaré.
+    for (const entree of entrees) {
+        for (const panneau of entree.panneaux || []) {
+            console.log(`[Quasar] Panneau enregistré: ${panneau} (/${entree.nom})`);
+        }
+    }
+
     // Charger les events
     //
     // La promesse rendue par event.execute était flottante, et six fichiers

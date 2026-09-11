@@ -49,6 +49,7 @@ const CLES_COMMANDE = Object.freeze([
     'permissionsBot',   // string[], permissions dont le BOT a besoin (cf. ci-dessous)
     'plateformes',      // string[], omission = toutes
     'dansMessagePrive', // boolean, false = commande réservée aux serveurs
+    'panneaux',         // { [panneau]: handler } — panneaux persistants (cf. ci-dessous)
     'options',          // Option[], exclusif avec sousCommandes
     'sousCommandes',    // SousCommande[], exclusif avec options
     'executer',         // (ctx) => Promise<void>
@@ -74,8 +75,69 @@ const CLES_OPTION = Object.freeze([
     'typesCanal',     // string[], noms canoniques (cf. platform/channels.js), type 'canal' seulement
 ]);
 
+// ─── Panneaux persistants : un seul mot pour trois endroits ──────────────────
+//
+//  Un panneau persistant est un message durable dont les choix restent actifs
+//  entre deux redémarrages : panneau de tickets, panneau de rôles-réactions,
+//  panneau de salon vocal temporaire. Il se nomme, et ce NOM circule en trois
+//  points qui doivent employer le même mot — `panneau` :
+//
+//    1. DÉCLARATION, dans le descripteur de la commande qui le porte :
+//
+//         panneaux: {
+//             ticket: async (ctx, cle) => { … },
+//         }
+//
+//       Le chargeur enregistre le handler au démarrage. C'est la seule voie :
+//       `bot/index.js` est interdit aux lots parallèles, et sans cette clé un
+//       lot devrait y écrire son préfixe en dur pour router ses propres clics.
+//
+//    2. POSE du panneau, depuis la commande :
+//
+//         await ctx.choose(embed({ … }), choix, { persistant: true, panneau: 'ticket' });
+//
+//       Rend `{ persistant: true, canalId, messageId }`, à stocker dans la
+//       table `interaction_panels` pour retrouver le panneau plus tard.
+//
+//    3. ROUTAGE d'un clic, fait par l'adaptateur : il retrouve le handler
+//       déclaré en 1 et lui passe un contexte complet plus la clé du choix.
+//
+//  Le nom du panneau est une donnée MÉTIER, pas un détail de plateforme : côté
+//  Discord il devient le préfixe d'un `customId`, côté Fluxer il n'y a pas de
+//  `customId` du tout. D'où `panneau` et non « préfixe » ou « identifiant ».
+
+// Le nom d'un panneau ne peut pas contenir le séparateur que l'adaptateur
+// Discord place entre le panneau et la clé du choix : `ticket:ouvrir` ne serait
+// plus déchiffrable si le panneau s'appelait `a:b`.
+const SEPARATEUR_INTERDIT_PANNEAU = ':';
+
 function erreur(nomCommande, message) {
     return new Error(`Descripteur de commande « ${nomCommande || '?'} » invalide : ${message}`);
+}
+
+/**
+ * Valide la clé `panneaux` d'un descripteur.
+ * @returns {string[]} les noms de panneaux déclarés (éventuellement vide)
+ */
+function validerPanneaux(nomCommande, panneaux) {
+    if (panneaux === undefined) return [];
+    if (typeof panneaux !== 'object' || panneaux === null || Array.isArray(panneaux)) {
+        throw erreur(nomCommande, '« panneaux » doit être un objet { nomDuPanneau: handler }.');
+    }
+
+    for (const [panneau, handler] of Object.entries(panneaux)) {
+        if (!panneau || panneau.includes(SEPARATEUR_INTERDIT_PANNEAU)) {
+            throw erreur(
+                nomCommande,
+                `nom de panneau invalide « ${panneau} » : attendu une chaîne non vide `
+                + `et sans « ${SEPARATEUR_INTERDIT_PANNEAU} », qui sépare le panneau de la clé du choix.`,
+            );
+        }
+        if (typeof handler !== 'function') {
+            throw erreur(nomCommande, `panneau « ${panneau} » : le handler doit être une fonction (ctx, cle).`);
+        }
+    }
+    return Object.keys(panneaux);
 }
 
 function validerOptions(nomCommande, contexte, options) {
@@ -176,6 +238,8 @@ function validerOptions(nomCommande, contexte, options) {
  * @param {string}   [descripteur.permission]     nom canonique exigé du MEMBRE
  * @param {boolean}  [descripteur.accesParDefaut]  false = administrateurs, true = tout le monde
  * @param {string[]} [descripteur.permissionsBot]  permissions dont le BOT a besoin
+ * @param {Object<string, Function>} [descripteur.panneaux] panneaux persistants
+ *   portés par cette commande, `{ nomDuPanneau: async (ctx, cle) => {} }`
  * @param {string[]} [descripteur.plateformes]     omission = toutes
  * @param {Array}    [descripteur.options]
  * @param {Array}    [descripteur.sousCommandes]   chacune { nom, description, options?, executer }
@@ -262,6 +326,8 @@ function definirCommande(descripteur) {
             }
         }
     }
+
+    validerPanneaux(nom, descripteur.panneaux);
 
     const sousCommandes = descripteur.sousCommandes;
     if (sousCommandes !== undefined) {
@@ -355,6 +421,8 @@ function trouverSousCommande(descripteur, nomSousCommande) {
 module.exports = {
     TYPES_OPTION,
     PLATEFORMES_CONNUES,
+    SEPARATEUR_INTERDIT_PANNEAU,
+    validerPanneaux,
     CLES_COMMANDE,
     CLES_SOUS_COMMANDE,
     CLES_OPTION,

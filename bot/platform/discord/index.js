@@ -126,24 +126,29 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
         /**
          * Enregistre le handler des clics d'un panneau persistant.
          *
-         * @param {string} prefixe  le même que `ctx.choose({ identifiant })`
+         * Appelé par `chargerCommandes` pour chaque entrée de la clé `panneaux`
+         * d'un descripteur : une commande n'a pas à l'appeler elle-même. Le
+         * vocabulaire des panneaux — déclaration, pose, routage — est documenté
+         * en un seul endroit, `bot/platform/commands.js`.
+         *
+         * @param {string} panneau  le même nom que `ctx.choose({ panneau })`
          * @param {(ctx: object, cle: string) => Promise<void>} handler
          *   `ctx` est un contexte complet (repondre, prompt, choose, api, db) et
          *   l'interaction y arrive NON acquittée : le handler peut donc ouvrir
          *   un formulaire directement, et doit répondre dans les 3 secondes.
          */
-        surPanneau(prefixe, handler) {
-            if (typeof prefixe !== 'string' || !prefixe || prefixe.includes(SEPARATEUR_PANNEAU)) {
+        surPanneau(panneau, handler) {
+            if (typeof panneau !== 'string' || !panneau || panneau.includes(SEPARATEUR_PANNEAU)) {
                 throw new Error(
-                    `surPanneau : préfixe invalide « ${prefixe} ». Attendu une chaîne non vide `
-                    + `et sans « ${SEPARATEUR_PANNEAU} », qui sépare le préfixe de la clé du choix.`
+                    `surPanneau : nom de panneau invalide « ${panneau} ». Attendu une chaîne non vide `
+                    + `et sans « ${SEPARATEUR_PANNEAU} », qui sépare le panneau de la clé du choix.`
                 );
             }
-            if (panneaux.has(prefixe)) {
-                throw new Error(`surPanneau : le préfixe « ${prefixe} » est déjà enregistré.`);
+            if (panneaux.has(panneau)) {
+                throw new Error(`surPanneau : le panneau « ${panneau} » est déjà enregistré.`);
             }
-            panneaux.set(prefixe, handler);
-            return () => panneaux.delete(prefixe);
+            panneaux.set(panneau, handler);
+            return () => panneaux.delete(panneau);
         },
 
         /**
@@ -160,12 +165,12 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
             const separateur = customId.indexOf(SEPARATEUR_PANNEAU);
             if (separateur <= 0) return null;
 
-            const prefixe = customId.slice(0, separateur);
-            const handler = panneaux.get(prefixe);
+            const panneau = customId.slice(0, separateur);
+            const handler = panneaux.get(panneau);
             if (!handler) return null;
 
             const cle = customId.slice(separateur + 1);
-            return handler(creerContextePanneau(interaction, { adaptateur, prefixe, cle }), cle);
+            return handler(creerContextePanneau(interaction, { adaptateur, panneau, cle }), cle);
         },
 
         /** Exposé pour les tests et pour deploy-commands : descripteur -> builder. */
@@ -183,9 +188,57 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
         adaptateur.moi.nom = clientDiscord.user?.tag ?? null;
     });
 
+    brancherDeploiementAInvitation(clientDiscord);
+
     return adaptateur;
+}
+
+/**
+ * Redéploie les commandes slash sur un serveur qui vient d'inviter le bot.
+ *
+ * Correctif de la v4.10.0, et il n'a rien à faire dans un handler d'événement
+ * métier : la procédure d'installation documentée lance le bot AVANT de
+ * l'inviter, si bien que le cache est vide au démarrage et qu'aucune commande
+ * n'est déployée. La personne invite le bot, le voit en ligne, ouvre un
+ * dashboard qui fonctionne, et ne trouve AUCUNE commande sur son serveur.
+ *
+ * C'est du déploiement de slash commands, autrement dit une mécanique
+ * strictement Discord : l'événement neutre `guildeRejointe` n'a pas à la
+ * connaître, et un adaptateur Fluxer n'aura rien d'équivalent à faire. Elle vit
+ * donc dans l'adaptateur, sur l'événement NATIF.
+ *
+ * Branché à la création de l'adaptateur, donc AVANT tout handler métier :
+ * discord.js appelle ses écouteurs dans l'ordre d'inscription. Les deux restent
+ * indépendants — un déploiement en échec n'empêche ni l'enregistrement du
+ * serveur ni l'annulation d'une purge programmée, et réciproquement.
+ *
+ * Volontairement non fatal : le prochain démarrage rattrapera le déploiement,
+ * alors qu'une exception ici emporterait le reste de l'arrivée.
+ */
+function brancherDeploiementAInvitation(clientDiscord) {
+    // Un client réduit (doublure de test) n'a pas forcément d'émetteur
+    // d'événements. Le vrai `Client` de discord.js en est un par construction :
+    // ce garde ne masque donc rien en production, il évite seulement d'imposer
+    // un `on()` à toutes les doublures du dépôt. Le branchement réel est couvert
+    // par test/guild-create-deploy.test.js.
+    if (typeof clientDiscord?.on !== 'function') return;
+
+    clientDiscord.on('guildCreate', (guild) => {
+        // Require différé : `deploy.js` charge le chargeur de commandes, et le
+        // résoudre au sommet de ce fichier créerait un cycle. C'est aussi ce qui
+        // rend la fonction remplaçable par les tests.
+        Promise.resolve()
+            .then(() => require('./deploy').deployCommandsForGuild(guild))
+            .catch((err) => {
+                console.error(
+                    `[Quasar] Déploiement des commandes impossible sur ${guild?.name || guild?.id} :`,
+                    err?.message || err,
+                );
+            });
+    });
 }
 
 module.exports = creerAdaptateurDiscord;
 module.exports.CAPACITES_DISCORD = CAPACITES_DISCORD;
+module.exports.brancherDeploiementAInvitation = brancherDeploiementAInvitation;
 module.exports.SEPARATEUR_PANNEAU = SEPARATEUR_PANNEAU;

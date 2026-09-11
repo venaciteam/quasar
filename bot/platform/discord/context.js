@@ -154,6 +154,11 @@ function normaliserGuilde(guilde) {
         id: guilde.id,
         nom: guilde.name,
         proprietaireId: guilde.ownerId ?? guilde.owner_id ?? null,
+        // Une panne côté plateforme rend un serveur temporairement
+        // indisponible, et l'événement de départ est émis à l'identique. Sans
+        // ce drapeau, la purge des données se déclencherait sur une panne : on
+        // détruirait les données de serveurs parfaitement actifs.
+        disponible: guilde.available !== false && guilde.unavailable !== true,
     }, guilde);
 }
 
@@ -461,7 +466,9 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
          * @param {Array<{cle: string, libelle: string, emoji?: string, style?: string}>} choix
          * @param {object} [options]
          * @param {boolean} [options.persistant]  panneau durable (tickets, reaction roles)
-         * @param {string}  [options.identifiant] préfixe de customId d'un panneau persistant
+         * @param {string}  [options.panneau]    nom du panneau persistant — le
+         *        même que la clé déclarée dans `panneaux` du descripteur.
+         *        Vocabulaire complet : voir bot/platform/commands.js.
          * @param {string|Function} [options.autorise] 'auteur' (défaut), 'tous',
          *        'staff', un nom canonique de permission, ou un prédicat (membre) => boolean
          * @param {number}  [options.delai]      secondes, panneau éphémère seulement
@@ -495,11 +502,15 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
             validerSuite(options.suite);
 
             const persistant = Boolean(options.persistant);
-            const prefixe = persistant
-                ? (options.identifiant || etiquette)
+            // Préfixe du customId. Pour un panneau persistant c'est le NOM du
+            // panneau tel quel, afin qu'un clic reçu après un redémarrage
+            // retrouve son handler ; pour un panneau éphémère, un identifiant
+            // jetable propre à cet appel, pour ne collecter que ses clics.
+            const prefixeCustomId = persistant
+                ? (options.panneau || etiquette)
                 : `qchoose:${interaction.id}:${compteurInteractions++}`;
 
-            const payload = { ...rendreContenu(message), components: rendreChoix(choix, prefixe) };
+            const payload = { ...rendreContenu(message), components: rendreChoix(choix, prefixeCustomId) };
             if (options.ephemere) payload.ephemeral = true;
 
             // `reply` rend un InteractionResponse, `followUp` et `editReply` un
@@ -529,7 +540,7 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
             try {
                 clic = await msg.awaitMessageComponent({
                     time: (options.delai ?? DELAI_CHOOSE_DEFAUT) * 1000,
-                    filter: (i) => i.customId.startsWith(`${prefixe}:`)
+                    filter: (i) => i.customId.startsWith(`${prefixeCustomId}:`)
                         && autoriseClic(i, options.autorise, interaction.user.id),
                 });
             } catch {
@@ -546,7 +557,7 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
                 courante = clic;
                 mode = 'apresClic';
             }
-            return clic.customId.slice(prefixe.length + 1);
+            return clic.customId.slice(prefixeCustomId.length + 1);
         },
     };
 
@@ -598,14 +609,21 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
  * 3 secondes.
  *
  * @param {import('discord.js').MessageComponentInteraction} interaction
- * @param {{adaptateur: object, prefixe: string, cle: string}} liaison
+ * @param {{adaptateur: object, panneau: string, cle: string}} liaison
  */
-function creerContextePanneau(interaction, { adaptateur, prefixe, cle }) {
-    const ctx = creerNoyauContexte(interaction, { adaptateur, etiquette: prefixe });
+function creerContextePanneau(interaction, { adaptateur, panneau, cle }) {
+    const ctx = creerNoyauContexte(interaction, { adaptateur, etiquette: panneau });
     ctx.panneau = {
-        prefixe,
+        // Le NOM du panneau, celui déclaré dans `panneaux` et passé à
+        // `ctx.choose({ panneau })` : le même mot aux trois endroits.
+        nom: panneau,
         cle,
         messageId: interaction.message?.id ?? null,
+        // TRANSITION : `bot/utils/errors.js` lit encore `panneau.prefixe` pour
+        // nommer la source d'un incident. Alias conservé le temps que ce fichier
+        // passe à `nom` — le retirer maintenant ferait retomber la ligne de
+        // journal sur « inconnu », sans que rien ne le signale.
+        prefixe: panneau,
     };
     return ctx;
 }

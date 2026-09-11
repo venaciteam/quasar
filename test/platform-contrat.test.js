@@ -215,21 +215,22 @@ test('un panneau neutre est routé, un préfixe historique ne l\'est pas', async
 
     await adaptateur.routerPanneau({ customId: 'ticket:ouvrir', user: { id: '1' }, client: {} });
     assert.equal(vu.cle, 'ouvrir');
-    assert.equal(vu.ctx.panneau.prefixe, 'ticket');
+    assert.equal(vu.ctx.panneau.nom, 'ticket');
+    assert.equal(vu.ctx.panneau.cle, 'ouvrir');
     // Contexte complet : c'est ce qui permet au handler d'ouvrir un formulaire.
     for (const methode of ['repondre', 'prompt', 'choose', 'modifierPanneau']) {
         assert.equal(typeof vu.ctx[methode], 'function', `ctx.${methode} manquant`);
     }
 });
 
-test('surPanneau refuse un préfixe ambigu ou déjà pris', () => {
+test('surPanneau refuse un nom de panneau ambigu ou déjà pris', () => {
     const { client } = faireClient();
     const adaptateur = creerAdaptateurDiscord({ client });
     adaptateur.surPanneau('ticket', () => {});
     assert.throws(() => adaptateur.surPanneau('ticket', () => {}), /déjà enregistré/);
     // Un « : » dans le préfixe rendrait la clé du choix indéchiffrable.
-    assert.throws(() => adaptateur.surPanneau('a:b', () => {}), /préfixe invalide/);
-    assert.throws(() => adaptateur.surPanneau('', () => {}), /préfixe invalide/);
+    assert.throws(() => adaptateur.surPanneau('a:b', () => {}), /nom de panneau invalide/);
+    assert.throws(() => adaptateur.surPanneau('', () => {}), /nom de panneau invalide/);
 });
 
 // ── 3. Base de données ───────────────────────────────────────────────────────
@@ -412,4 +413,110 @@ test('« .brut » n\'est utilisé nulle part hors de bot/platform/', () => {
     assert.deepEqual(fautifs, [],
         `« .brut » est une échappatoire de transition réservée à bot/platform/. `
         + `Ces fichiers doivent passer par le contrat neutre : ${fautifs.join(', ')}`);
+});
+
+// ── Déclaration d'un panneau par une commande (lot 0.5) ──────────────────────
+
+test('une commande déclare son panneau, le chargeur l\'enregistre, un clic est routé', async () => {
+    // C'est la promesse du registre : un lot déclare `panneaux` dans son
+    // descripteur, ses clics sont routés, et aucun fichier partagé n'est touché.
+    // Sans cette voie, `surPanneau` existait sans appelant et un lot n'avait que
+    // deux issues, toutes deux interdites — appeler l'adaptateur au chargement,
+    // ou écrire son préfixe en dur dans `bot/index.js`.
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-panneaux-'));
+    const chemin = JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'commands'));
+    fs.writeFileSync(path.join(dossier, 'ticket.js'), `
+        const { definirCommande } = require(${chemin});
+        module.exports = definirCommande({
+            nom: 'ticket',
+            description: 'Tickets',
+            accesParDefaut: false,
+            panneaux: {
+                // Le NOM du panneau : le même qu'à la pose
+                // (ctx.choose({ panneau: 'ticket' })) et qu'au routage.
+                ticket: async (ctx, cle) => { global.__panneauVu = { cle, nom: ctx.panneau.nom }; },
+            },
+            async executer() {},
+        });
+    `);
+
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const entrees = adaptateur.chargerCommandes({ dossier });
+
+    assert.deepEqual(entrees.map(e => e.nom), ['ticket']);
+    assert.deepEqual(entrees[0].panneaux, ['ticket'], 'l\'entrée annonce les panneaux qu\'elle porte');
+
+    // Clic simulé : le routage doit retrouver le handler déclaré.
+    const routage = adaptateur.routerPanneau({ customId: 'ticket:ouvrir', user: { id: '1' }, client: {} });
+    assert.ok(routage, 'le clic doit être routé');
+    await routage;
+
+    assert.deepEqual(global.__panneauVu, { cle: 'ouvrir', nom: 'ticket' });
+    delete global.__panneauVu;
+    fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('un chargement sans adaptateur n\'enregistre rien', () => {
+    // `deploy.js` charge les commandes sans adaptateur, pour n'en lire que le
+    // JSON. Y enregistrer des panneaux les poserait deux fois — et la seconde
+    // échouerait sur un doublon.
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-panneaux-'));
+    const chemin = JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'commands'));
+    fs.writeFileSync(path.join(dossier, 'ticket.js'), `
+        const { definirCommande } = require(${chemin});
+        module.exports = definirCommande({
+            nom: 'ticket', description: 'Tickets', accesParDefaut: false,
+            panneaux: { ticket: async () => {} },
+            async executer() {},
+        });
+    `);
+
+    const { chargerCommandes } = require('../bot/platform/discord/commands');
+    assert.doesNotThrow(() => {
+        chargerCommandes({ dossier });
+        chargerCommandes({ dossier });
+    });
+    fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('deux commandes ne peuvent pas revendiquer le même panneau', () => {
+    // Le message doit nommer LES DEUX commandes : « déjà enregistré » ne dit pas
+    // laquelle, et six agents travaillent sur des fichiers qu'ils ne se
+    // relisent pas.
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-panneaux-'));
+    const chemin = JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'commands'));
+    for (const nom of ['ticket', 'support']) {
+        fs.writeFileSync(path.join(dossier, `${nom}.js`), `
+            const { definirCommande } = require(${chemin});
+            module.exports = definirCommande({
+                nom: '${nom}', description: 'd', accesParDefaut: false,
+                panneaux: { ticket: async () => {} },
+                async executer() {},
+            });
+        `);
+    }
+
+    const adaptateur = creerAdaptateurDiscord({ client: faireClient().client });
+    assert.throws(
+        () => adaptateur.chargerCommandes({ dossier }),
+        /Panneau « ticket » déclaré deux fois : par \/support et par \/ticket|par \/ticket et par \/support/,
+    );
+    fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('le nom du panneau est le même mot à la pose et au routage', () => {
+    // `ctx.choose({ persistant: true, panneau })` doit produire un customId que
+    // `routerPanneau` sait redécouper. Un désaccord de vocabulaire entre les
+    // deux ferait poser des panneaux que personne ne route.
+    const { rendreChoix } = require('../bot/platform/discord/render');
+    const rangee = rendreChoix([{ cle: 'ouvrir', libelle: 'Ouvrir' }], 'ticket');
+    const customId = rangee[0].toJSON().components[0].custom_id;
+    assert.equal(customId, 'ticket:ouvrir');
+
+    const adaptateur = creerAdaptateurDiscord({ client: faireClient().client });
+    let vu = null;
+    adaptateur.surPanneau('ticket', (ctx, cle) => { vu = cle; });
+    adaptateur.routerPanneau({ customId, user: { id: '1' }, client: {} });
+    assert.equal(vu, 'ouvrir');
 });
