@@ -34,6 +34,12 @@ function checkAssignableRole(guild, role) {
 /**
  * Motif de refus détaillé, au format attendu par `userError` (embeds du bot).
  * L'API sert le même texte à plat via `describeForApi`.
+ *
+ * @param {null|'missing'|'everyone'|'managed'|'hierarchy'} code
+ * @param {{nom?: string}} [role] rôle NORMALISÉ (cf. `normaliserRole` de la
+ *   couche plateforme). Un objet discord.js n'est plus accepté : il porterait
+ *   son nom sous `name`, et le message « trop haut dans la hiérarchie » ne
+ *   nommerait plus le rôle fautif — le seul renseignement qu'il apporte.
  */
 function describeRefusal(code, role) {
     switch (code) {
@@ -58,7 +64,7 @@ function describeRefusal(code, role) {
         case 'hierarchy':
             return {
                 title: 'Ce rôle est trop haut dans la hiérarchie',
-                cause: `« ${role?.name} » est au-dessus du rôle le plus haut de Quasar. Discord interdit à un bot d'attribuer un rôle situé au-dessus du sien.`,
+                cause: `« ${role?.nom} » est au-dessus du rôle le plus haut de Quasar. Discord interdit à un bot d'attribuer un rôle situé au-dessus du sien.`,
                 action: 'Remontez le rôle « Quasar » dans Paramètres du serveur → Rôles, ou choisissez un rôle plus bas.',
             };
         default:
@@ -70,9 +76,17 @@ function describeRefusal(code, role) {
     }
 }
 
-/** Même motif, en une phrase, pour un `res.status(400).json({ error })`. */
+/**
+ * Même motif, en une phrase, pour un `res.status(400).json({ error })`.
+ *
+ * TRANSITION : format historique, à retirer au lot de consolidation.
+ * `api/routes/reactionroles.js` résout encore ses rôles dans le cache
+ * discord.js et passe l'objet natif, qui porte `name` et non `nom`. Le pont est
+ * ici plutôt que dans `describeRefusal` pour que le cœur reste neutre : c'est
+ * l'API qui a un format à rattraper, et elle est migrée au lot 7.
+ */
 function describeForApi(code, role) {
-    const { cause, action } = describeRefusal(code, role);
+    const { cause, action } = describeRefusal(code, { nom: role?.nom ?? role?.name });
     return `${cause} ${action}`;
 }
 

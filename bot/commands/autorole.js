@@ -34,11 +34,9 @@ module.exports = definirCommande({
 
                 const refus = await ctx.api.verifierRoleAttribuable(ctx.guildeId, role.id);
                 if (refus) {
-                    // `describeRefusal` lit encore `role.name` : elle vit dans
-                    // bot/utils/assignableRole.js, hors périmètre du lot 0 et
-                    // migrée au lot 2. L'adaptation tient en une ligne, elle
-                    // disparaîtra avec elle.
-                    const { title, cause, action } = describeRefusal(refus, { name: role.nom });
+                    // `describeRefusal` lit le rôle NORMALISÉ depuis le lot 2 :
+                    // plus aucun objet discord.js ne traverse cet appel.
+                    const { title, cause, action } = describeRefusal(refus, role);
                     return ctx.erreurUtilisateur({ titre: title, cause, action });
                 }
 
