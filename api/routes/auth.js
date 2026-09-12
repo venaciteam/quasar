@@ -29,9 +29,44 @@
 //  autres répondent 403. Le dashboard ne lit donc JAMAIS les rôles d'un serveur
 //  avec le jeton de la personne : il passe par `adaptateur.api`, c'est-à-dire
 //  par le jeton du BOT (cf. api/routes/guilds.js).
+//
+//  ─── Le paramètre `state`, et pourquoi il n'est pas optionnel ───────────────
+//
+//  ⚠️ FAILLE RÉELLE, corrigée au lot 8a. Aucun des deux flux ne posait ni ne
+//  vérifiait de `state` : ni celui de Discord, hérité de la v4.10.0, ni celui de
+//  Fluxer écrit au lot 7.
+//
+//  Sans `state`, `/auth/callback` accepte n'importe quel code d'autorisation,
+//  d'où qu'il vienne. Une page tierce qui déclenche
+//  `GET /auth/callback?code=<code de l'attaquant>` dans le navigateur de la
+//  victime fait échanger CE code, et la réponse redirige vers
+//  `/dashboard/app.html?token=<jwt>` — jeton que `app.js` range aussitôt dans
+//  `localStorage`. La victime se retrouve connectée au COMPTE DE L'ATTAQUANT,
+//  sur son propre navigateur, sans l'avoir demandé : tout ce qu'elle configure
+//  ensuite part dans les serveurs de quelqu'un d'autre. C'est la forme
+//  « login CSRF » de la classe, et le dashboard y était entièrement exposé.
+//
+//  La correction tient en une phrase : `/auth/login` tire un nonce de 32 octets,
+//  le pose dans un cookie `HttpOnly` de dix minutes ET le passe en `state` ;
+//  `/auth/callback` EXIGE que les deux correspondent, en temps constant, avant
+//  de toucher au code. Le cookie est consommé dans tous les cas.
+//
+//  Aucune branche par plateforme : le `state` est ajouté aux paramètres communs,
+//  les deux entrées de `FOURNISSEURS` le transportent sans le savoir. OAuth2 le
+//  renvoie à l'identique sur la redirection de retour, des deux côtés — c'est
+//  dans la spécification, et la documentation de Fluxer le confirme
+//  explicitement (« The value is returned unchanged after normalisation, on both
+//  the success redirect and the error redirect »).
+//
+//  ⚠️ `SameSite=Lax` est bien le bon réglage, et c'est le point qu'il ne faut pas
+//  se tromper : le retour de `discord.com` / `fluxer.app` est une NAVIGATION de
+//  premier niveau en GET, cas que `Lax` autorise explicitement. `Strict`
+//  casserait le retour — le cookie ne serait pas envoyé et personne ne pourrait
+//  plus se connecter. `None` rouvrirait la porte aux requêtes tierces.
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const crypto = require('crypto');
 const { generateToken } = require('../middleware/auth');
 const { resolvePlatformName } = require('../../bot/platform');
 const router = express.Router();
@@ -89,6 +124,179 @@ function valeur(entree, env) {
     return typeof entree === 'function' ? entree(env) : entree;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Le nonce anti-CSRF du flux OAuth2
+//
+//  Forme de la valeur : `<nonce base64url>.<émission en base 36>`.
+//
+//  Le nonce seul suffirait à lier le retour à la navigatrice — c'est le cookie
+//  qui fait autorité, et lui seul est infalsifiable. L'horodatage est là pour
+//  que l'EXPIRATION soit tenue par le serveur et pas par le navigateur : un
+//  `Max-Age` est une consigne, pas une garantie, et un client qui garde son
+//  cookie plus longtemps que demandé ne doit pas allonger la fenêtre pendant
+//  laquelle un code volé reste rejouable. Le lire depuis la valeur ne présente
+//  aucun risque : on ne le lit qu'APRÈS avoir constaté qu'elle est identique à
+//  celle qu'on a nous-mêmes émise.
+// ═══════════════════════════════════════════════════════════════
+
+const COOKIE_ETAT = 'quasar_oauth_state';
+
+// Dix minutes. Assez pour lire un écran de consentement sans se presser, assez
+// court pour que la fenêtre de rejeu d'un code intercepté reste étroite. C'est
+// aussi la durée de vie d'un code d'autorisation côté Fluxer.
+const ETAT_DUREE_MS = 10 * 60 * 1000;
+
+const OCTETS_NONCE = 32;
+
+/** Valeur d'état neuve, à poser en cookie ET à passer en paramètre. */
+function creerEtat(maintenant = Date.now()) {
+    return `${crypto.randomBytes(OCTETS_NONCE).toString('base64url')}.${maintenant.toString(36)}`;
+}
+
+/**
+ * Pose le cookie d'état et rend sa valeur.
+ *
+ * `secure` suit `req.secure` plutôt qu'un `NODE_ENV` : c'est la même règle que
+ * l'en-tête HSTS d'`api/index.js`, et pour la même raison — une instance
+ * auto-hébergée joignable en HTTP sur un réseau local ne doit pas se retrouver
+ * avec un cookie que le navigateur refuse d'envoyer, donc avec une connexion
+ * impossible. Derrière Cloudflare et Traefik, `req.secure` lit
+ * `X-Forwarded-Proto` (cf. TRUST_PROXY), et vaut donc `true` en production.
+ *
+ * `path: '/'` et non `/auth` : le retour du fournisseur arrive parfois sur
+ * `/callback` à la racine, qui redirige ensuite vers `/auth/callback`. Un cookie
+ * limité à `/auth` ne serait pas envoyé au premier saut.
+ */
+function poserEtat(req, res) {
+    const etat = creerEtat();
+    res.cookie(COOKIE_ETAT, etat, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: req.secure,
+        maxAge: ETAT_DUREE_MS,
+        path: '/',
+    });
+    return etat;
+}
+
+/**
+ * Efface le cookie d'état. Appelé sur TOUS les chemins de retour, que l'état
+ * corresponde ou non : un nonce qui survit à un refus se rejoue, et un nonce qui
+ * survit à un succès rend un second code échangeable sur la même session.
+ *
+ * Les options répétées ne sont pas décoratives : un navigateur n'efface un
+ * cookie que si le nom, le domaine ET le chemin correspondent.
+ */
+function effacerEtat(req, res) {
+    res.clearCookie(COOKIE_ETAT, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: req.secure,
+        path: '/',
+    });
+}
+
+// ─── Usage unique, tenu par le SERVEUR ──────────────────────────────────────
+//
+// Effacer le cookie ne suffit pas à garantir l'usage unique : un `Set-Cookie`
+// est une consigne, et rien n'oblige un client à l'honorer. Sans registre côté
+// serveur, une navigatrice qui conserve son cookie laisse le même état valider
+// PLUSIEURS retours — donc plusieurs codes.
+//
+// D'où cette table, sur le modèle du limiteur de débit du relais de signalement
+// (api/index.js) : en mémoire, sans dépendance, bornée. Elle n'a pas besoin de
+// survivre à un redémarrage — celui-ci invalide de toute façon tous les états en
+// vol, puisque la fenêtre est de dix minutes — et Quasar tourne en un seul
+// processus.
+//
+// Ce qui est retenu est la valeur du COOKIE, pas celle de la requête : c'est
+// nous qui l'avons émise, elle est donc inforgeable, et personne ne peut « brûler »
+// l'état d'autrui en envoyant un `state` de son choix.
+
+/** @type {Map<string, number>} état -> instant d'expiration */
+const etatsConsommes = new Map();
+
+// Plafond dur, même motif que la table du limiteur de débit : une entrée par
+// connexion initiée, ça se remplit tout seul sous un flood de `/auth/login`.
+// Sans borne, le code qui protège le flux devient la fuite mémoire qui tue le
+// processus — et avec lui le bot, sur tous les serveurs à la fois.
+const MAX_ETATS_CONSOMMES = 10000;
+
+function purgerEtatsConsommes(maintenant) {
+    for (const [etat, expire] of etatsConsommes) {
+        if (expire <= maintenant) etatsConsommes.delete(etat);
+    }
+    // Si rien n'a expiré, on évince les plus anciennes entrées vues. Un état
+    // oublié redevient rejouable pendant sa fenêtre, ce qui est moins grave
+    // qu'une table sans fin — et il faut déjà dix mille connexions en dix
+    // minutes pour y arriver.
+    for (const etat of etatsConsommes.keys()) {
+        if (etatsConsommes.size <= MAX_ETATS_CONSOMMES) break;
+        etatsConsommes.delete(etat);
+    }
+}
+
+function dejaConsomme(etat, maintenant = Date.now()) {
+    const expire = etatsConsommes.get(etat);
+    if (expire === undefined) return false;
+    if (expire <= maintenant) { etatsConsommes.delete(etat); return false; }
+    return true;
+}
+
+function consommer(etat, maintenant = Date.now()) {
+    etatsConsommes.set(etat, maintenant + ETAT_DUREE_MS);
+    if (etatsConsommes.size > MAX_ETATS_CONSOMMES) purgerEtatsConsommes(maintenant);
+}
+
+/** Comparaison en temps constant de deux valeurs d'état. */
+function memeEtat(attendu, recu) {
+    if (typeof attendu !== 'string' || typeof recu !== 'string') return false;
+    const a = Buffer.from(attendu, 'utf8');
+    const b = Buffer.from(recu, 'utf8');
+    // `timingSafeEqual` LÈVE sur deux longueurs différentes : le contrôle est
+    // obligatoire, et il ne révèle rien — la longueur d'un état est constante
+    // par construction.
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
+
+/** L'état a-t-il été émis il y a moins de `ETAT_DUREE_MS` ? */
+function etatFrais(etat, maintenant = Date.now()) {
+    const emission = Number.parseInt(String(etat).split('.')[1] || '', 36);
+    if (!Number.isFinite(emission)) return false;
+    // Une émission dans le futur est aussi suspecte qu'une émission trop vieille
+    // (horloge reculée, valeur bricolée) : on refuse les deux.
+    const age = maintenant - emission;
+    return age >= 0 && age <= ETAT_DUREE_MS;
+}
+
+/**
+ * Vérifie le retour du fournisseur. Consomme le cookie dans tous les cas.
+ *
+ * @returns {null|string} `null` si le retour est légitime, sinon le MOTIF du
+ *   refus — destiné au journal, jamais à l'URL de redirection.
+ */
+function refuserEtat(req, res) {
+    const attendu = req.cookies?.[COOKIE_ETAT];
+    const recu = req.query?.state;
+
+    // Consommé AVANT toute comparaison : aucun chemin de sortie ne peut
+    // l'oublier, pas même une exception.
+    effacerEtat(req, res);
+
+    if (!attendu) return 'aucun cookie d\'état (flux non initié ici, ou expiré côté navigateur)';
+
+    // Usage unique, avant les comparaisons : un état déjà présenté ne vaut plus
+    // rien, même s'il correspond et qu'il est encore frais.
+    if (dejaConsomme(attendu)) return 'state déjà consommé (rejeu)';
+    consommer(attendu);
+
+    if (!recu) return 'paramètre state absent du retour';
+    if (!memeEtat(attendu, recu)) return 'state différent de celui posé à la connexion';
+    if (!etatFrais(attendu)) return 'state expiré (plus de 10 minutes)';
+    return null;
+}
+
 /**
  * Fournisseur de la plateforme active.
  *
@@ -114,16 +322,38 @@ router.get('/login', (req, res) => {
         redirect_uri: process.env.CALLBACK_URL,
         response_type: 'code',
         scope: f.scopes,
+        // Lié à CE navigateur par le cookie posé juste avant. Les deux
+        // fournisseurs le renvoient inchangé sur la redirection de retour.
+        state: poserEtat(req, res),
     });
     res.redirect(`${valeur(f.autorisation, process.env)}?${params}`);
 });
 
+// ⚠️ Aucune destination de retour n'est acceptée en paramètre de `/auth/login`.
+// Le flux redirige toujours vers `/dashboard/app.html`, et c'est volontaire : un
+// paramètre de redirection libre est une redirection ouverte, c'est-à-dire
+// exactement le vecteur qu'on vient de fermer. Si une page demandée avant
+// connexion devait être restituée un jour, elle passerait par un SECOND cookie
+// `HttpOnly` posé ici, jamais par la chaîne de requête.
+
 // Callback OAuth2
 router.get('/callback', async (req, res) => {
+    const f = fournisseur();
+
+    // ⚠️ AVANT TOUT LE RESTE, et avant de toucher au code : un retour dont
+    // l'état ne correspond pas n'est pas un retour, c'est une requête tierce.
+    const refus = refuserEtat(req, res);
+    if (refus) {
+        // Journalisé avec sa cause, et SANS le code d'autorisation ni l'état
+        // reçu. Un code recopié dans les journaux du serveur — donc chez
+        // l'hébergeur, donc dans les sauvegardes — reste échangeable jusqu'à son
+        // expiration : un refus ne doit pas transformer une tentative en fuite.
+        console.error(`[Quasar] Retour OAuth2 refusé (${f.libelle}) : ${refus}.`);
+        return res.redirect('/?error=state_invalid');
+    }
+
     const { code } = req.query;
     if (!code) return res.redirect('/?error=no_code');
-
-    const f = fournisseur();
 
     try {
         // Échanger le code contre un token
@@ -230,3 +460,12 @@ module.exports = router;
 module.exports.FOURNISSEURS = FOURNISSEURS;
 module.exports.fournisseur = fournisseur;
 module.exports.valeur = valeur;
+// Exposés pour être testés sans navigateur : la comparaison en temps constant et
+// la fenêtre de fraîcheur sont les deux moitiés du garde-fou.
+module.exports.COOKIE_ETAT = COOKIE_ETAT;
+module.exports.ETAT_DUREE_MS = ETAT_DUREE_MS;
+module.exports.creerEtat = creerEtat;
+module.exports.memeEtat = memeEtat;
+module.exports.etatFrais = etatFrais;
+module.exports.etatsConsommes = etatsConsommes;
+module.exports.MAX_ETATS_CONSOMMES = MAX_ETATS_CONSOMMES;
