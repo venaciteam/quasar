@@ -1,6 +1,6 @@
-# 🌌 Quasar — Bot Discord Self-Hosted
+# 🌌 Quasar — Bot Discord et Fluxer, auto-hébergé
 
-> Toutes les fonctionnalités premium d'un bot Discord — modération, tickets, reaction roles, embeds, TempVoice et dashboard web. 100% self-hosted, open source, 0 abonnement.
+> Toutes les fonctionnalités premium d'un bot de communauté — modération, tickets, reaction roles, embeds, TempVoice et dashboard web. Une seule base de code, qui tourne sur **Discord** ou sur **Fluxer**. 100% self-hosted, open source, 0 abonnement.
 
 ![Quasar Dashboard Preview](dashboard/img/preview.png)
 
@@ -26,11 +26,39 @@
 
 ---
 
+## 🛰️ Une base de code, deux plateformes
+
+Quasar est **un seul programme** et **un déploiement par plateforme**. La variable `QUASAR_PLATFORM` vaut `discord` (par défaut) ou `fluxer` : elle décide de la plateforme à laquelle ce processus se connecte, des secrets qu'il exige et de la forme que prennent les commandes. Aucune fonctionnalité n'est écrite deux fois — la logique de modération, de tickets ou de conservation des données ne sait même pas sur quelle plateforme elle s'exécute, c'est une couche d'adaptation (`bot/platform/`) qui traduit. Tenir les deux plateformes demande donc **deux installations** : deux dossiers, deux bases de données, aucune donnée partagée. Ce cloisonnement est une exigence de conformité, pas une commodité technique. Sur une même machine, la seconde installation doit changer le nom du conteneur, le volume et le port dans son `docker-compose.yml`, sinon elle prend la place de la première.
+
+Une installation qui existait avant la v5.0.0 n'a **rien** à changer : sans `QUASAR_PLATFORM`, Quasar est un bot Discord, exactement comme avant.
+
+### Ce qui change pour la personne qui administre
+
+| | Discord | Fluxer |
+|---|---|---|
+| **Commandes** | `/warn @membre raison` | `!warn @membre raison`, préfixe réglable par `COMMAND_PREFIX` |
+| **Panneaux et menus** | Boutons et menus déroulants | L'embed liste ses actions, une réaction par action — le bot pose les réactions lui-même |
+| **Formulaires** (ouvrir un ticket, écrire un embed) | Une fenêtre de saisie | Un dialogue : une question, une réponse, `annuler` pour interrompre |
+| **Réponse visible de vous seul** | Oui, réponse éphémère | Non : ce qui est sensible part en message privé, le reste s'auto-supprime au bout de 15 s |
+| **Modération automatique (AutoMod)** | Oui, les règles natives de Discord pilotées depuis le dashboard | **Absente** : Fluxer n'a aucun automod, et l'onglet disparaît du dashboard |
+| **Mode panique anti-raid** | Met les invitations en pause avec une échéance qui se lève seule | **Indisponible** : Fluxer sait fermer ses invitations, mais rien ne les rouvre à échéance |
+| **Fils de discussion** | Oui | **Non** exposés par l'API à ce jour |
+| **Exclusion temporaire** (`mute`) | Timeout natif | Timeout natif également, plafonné à 365,25 jours |
+| **Suppression de messages en lot** (`clear`) | Les messages de plus de 14 jours sont écartés | Aucune borne d'âge |
+| **Musique** | Coupée depuis la v3.2.0 | Coupée, et non portable : la voix de Fluxer passe par LiveKit, sans protocole de signalisation publié |
+
+Tout le reste est identique : modération, tickets, reaction roles, autoroles, rôles vocaux, salons vocaux temporaires, embeds, commandes personnalisées, anti-raid, salon piège, arbitrage des sanctions, dashboard, et l'intégralité des parcours de droits des personnes.
+
+> ⚠️ **Statut de la plateforme Fluxer, dit franchement.** L'adaptateur Fluxer est **livré et testé en doublures** — sa passerelle, son client REST, ses commandes préfixées et ses panneaux à réactions sont couverts par la suite de tests. Il **n'a pas encore été éprouvé contre une instance réelle** : la connexion à la passerelle publique a été vérifiée, pas l'exécution des commandes sur un vrai serveur. Si vous montez un bot Fluxer aujourd'hui, vous êtes en avance sur la recette. Côté Discord, en revanche, ce chantier est à comportement constant : c'est un critère de sortie, pas un souhait.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prérequis
 - [Docker](https://docs.docker.com/get-docker/) installé
-- Une application bot Discord ([Developer Portal](https://discord.com/developers/applications))
+- **Sur Discord** : une application bot ([Developer Portal](https://discord.com/developers/applications))
+- **Sur Fluxer** : une application, créée depuis les réglages de votre compte Fluxer, catégorie « Developer » → « Applications »
 
 ### Installation en une commande
 
@@ -46,7 +74,27 @@ cd quasar
 ./setup.sh
 ```
 
-Le script vous guide de bout en bout : il contrôle les prérequis, vous demande vos identifiants Discord en expliquant où les trouver, **vérifie votre jeton auprès de Discord avant de construire quoi que ce soit** (inutile d'attendre plusieurs minutes de compilation pour découvrir une faute de frappe), écrit le `.env`, détecte le groupe Docker de votre machine, vous donne le lien d'invitation du bot, démarre, puis contrôle que le dashboard répond et que le bot est bien connecté.
+Le script vous guide de bout en bout. **Sa première question est la plateforme** — Discord ou Fluxer —, et tout ce qui suit en découle : il ne vous demandera jamais un jeton Discord pour un bot Fluxer, ni l'inverse. Ensuite, il vous demande les identifiants de l'application en expliquant où les trouver, **vérifie votre jeton auprès de la plateforme avant de construire quoi que ce soit** (inutile d'attendre plusieurs minutes de compilation pour découvrir une faute de frappe), écrit le `.env`, détecte le groupe Docker de votre machine, vous donne le lien d'invitation du bot — celui de la bonne plateforme —, démarre, puis contrôle que le dashboard répond et que le bot est bien connecté.
+
+<details>
+<summary>Le parcours, question par question</summary>
+
+| Question | Discord | Fluxer |
+|---|---|---|
+| Plateforme | — | — |
+| Instance | *(non posée)* | `fluxer.app`, ou une instance auto-hébergée (et alors : base REST, passerelle, proxy média) |
+| Jeton du bot | Developer Portal → votre application → Bot | Réglages du compte → « Applications » → votre application → « Secrets & tokens » → « Bot token » |
+| Identifiant de l'application | OAuth2 → Client ID | « Application ID », proposé par défaut car le jeton le contient |
+| Secret de l'application | OAuth2 → Client Secret | « Secrets & tokens » → « Client secret » |
+| Préfixe des commandes | *(non posée)* | `!` par défaut |
+| Port du dashboard | `3000` par défaut | idem |
+| Accès réseau au dashboard | posée seulement si vous installez par SSH | idem |
+| Adresse de retour OAuth2 | `http://localhost:3000/callback` | même chemin, même valeur par défaut |
+| Votre identifiant de propriétaire | facultatif | facultatif |
+
+Le **mode** de fonctionnement (`QUASAR_MODE` : `bot`, `site`, `public`) n'est pas demandé et reste réglable dans le `.env` : c'est une décision indépendante de la plateforme, et `bot` est le bon choix pour toute installation auto-hébergée.
+
+</details>
 
 Il installe la **dernière version publiée**, pas l'état courant du dépôt : deux personnes qui installent le même jour obtiennent le même code.
 
@@ -66,7 +114,12 @@ Installation sans aucune question, pour un déploiement automatisé :
 DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… ./setup.sh --non-interactive
 ```
 
-Toute variable déjà présente dans votre environnement n'est pas redemandée.
+```bash
+QUASAR_PLATFORM=fluxer FLUXER_TOKEN=… FLUXER_CLIENT_ID=… FLUXER_CLIENT_SECRET=… \
+  ./setup.sh --non-interactive
+```
+
+Toute variable déjà présente dans votre environnement n'est pas redemandée. Les variables de l'autre plateforme, elles, sont **écartées et annoncées** : un `.env` ne porte jamais les secrets des deux à la fois.
 
 </details>
 
@@ -94,15 +147,23 @@ cp .env.example .env
 
 | Variable | Description |
 |----------|-------------|
-| `DISCORD_TOKEN` | Token du bot (onglet Bot du Developer Portal) |
-| `DISCORD_CLIENT_ID` | Client ID (onglet OAuth2) |
-| `DISCORD_CLIENT_SECRET` | Client Secret (onglet OAuth2) |
-| `CALLBACK_URL` | URL de callback OAuth2 — `http://localhost:3000/callback` par défaut. Si tu ouvres le dashboard au réseau, mets l'IP du serveur (ex: `http://192.168.1.100:3000/callback`) |
+| `QUASAR_PLATFORM` | `discord` (défaut) ou `fluxer`. Décide de la plateforme de ce déploiement, et donc des trois variables obligatoires ci-dessous. Une valeur inconnue **fait échouer le démarrage** : Quasar ne devine jamais sa plateforme |
+| `DISCORD_TOKEN` | *Sur Discord* — Token du bot (onglet Bot du Developer Portal) |
+| `DISCORD_CLIENT_ID` | *Sur Discord* — Client ID (onglet OAuth2) |
+| `DISCORD_CLIENT_SECRET` | *Sur Discord* — Client Secret (onglet OAuth2) |
+| `FLUXER_TOKEN` | *Sur Fluxer* — Jeton du bot (« Secrets & tokens » → « Bot token »). Sa forme est `<identifiant de l'application>.<secret>` ; une régénération met fin à toutes les sessions en cours |
+| `FLUXER_CLIENT_ID` | *Sur Fluxer* — « Application ID » de votre application |
+| `FLUXER_CLIENT_SECRET` | *Sur Fluxer* — « Client secret » de la même fiche |
+| `FLUXER_API_BASE` | *Sur Fluxer, optionnel* — Base REST **versionnée**. Vide : `https://api.fluxer.app/v1`. À renseigner pour viser une instance Fluxer auto-hébergée |
+| `FLUXER_GATEWAY_URL` | *Sur Fluxer, optionnel* — Passerelle. Vide : `wss://gateway.fluxer.app/?v=1`. Le paramètre `v` doit valoir `1`, toute autre valeur ferme la connexion avant le premier message |
+| `FLUXER_MEDIA_BASE` | *Sur Fluxer, optionnel* — Proxy média, d'où viennent les avatars des embeds. Vide : `https://media.fluxer.app`. Une valeur fausse ne casse rien, elle rend seulement les avatars introuvables |
+| `COMMAND_PREFIX` | *Sur Fluxer, optionnel* — Préfixe des commandes texte. Vide : `!`. Sans objet sur Discord, où les commandes sont des `/` |
+| `CALLBACK_URL` | URL de callback OAuth2 — `http://localhost:3000/callback` par défaut. Le chemin `/callback` est le même sur les deux plateformes. Si tu ouvres le dashboard au réseau, mets l'IP du serveur (ex: `http://192.168.1.100:3000/callback`) |
 | `JWT_SECRET` | Clé de signature des sessions du dashboard. **Vide dans `.env.example`**, à générer avec `openssl rand -hex 32` — Quasar refuse de démarrer tant qu'elle est absente, laissée sur une valeur d'exemple ou plus courte que 32 caractères |
 | `PORT` | Port du dashboard (défaut: `3000`) |
 | `BIND_ADDRESS` | **Exposition du dashboard en Docker** — `127.0.0.1` (défaut) = accessible seulement depuis la machine hôte, `0.0.0.0` = ouvert au réseau |
 | `DASHBOARD_HOST` | Équivalent hors Docker (lancement direct par `node index.js`). Ne pas y toucher en conteneur : le Dockerfile le force à `0.0.0.0` |
-| `BOT_OWNER_ID` | Ton ID Discord — active les fonctions admin dans le dashboard (gestion du statut du bot). Pour le trouver : active le mode développeur dans Discord → clic droit sur ton profil → Copier l'identifiant |
+| `BOT_OWNER_ID` | Ton identifiant sur la plateforme active — active les fonctions admin dans le dashboard (gestion du statut du bot). Sur Discord : active le mode développeur → clic droit sur ton profil → Copier l'identifiant. Sur Fluxer : Réglages → « Advanced » → « Enable developer mode », puis clic droit sur ton profil → « Copy user ID » |
 | `INSTANCE_OPERATOR_NAME` | Qui héberge cette instance — affiché dans le badge de version, sur toutes les pages du dashboard (optionnel) |
 | `INSTANCE_LEGAL_URL` | Lien vers tes mentions légales (optionnel) — affiché au même endroit |
 | `CONTRACT_PUBLIC_URL` | Lien vers ton contrat de sous-traitance, **utilisé uniquement en `QUASAR_MODE=public`**. Vide : le contrat de l'instance Venacity |
@@ -116,7 +177,7 @@ cp .env.example .env
 | `STRIPE_LINK_ONCE_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_CUSTOM` | Liens de paiement ponctuels de la page `/soutenir`. Chacun est optionnel : un lien absent masque son bouton |
 | `STRIPE_LINK_MONTHLY_2` &nbsp;·&nbsp; `_5` &nbsp;·&nbsp; `_10` | Idem pour les soutiens mensuels. Si **aucun** lien n'est défini, `/soutenir` bascule d'elle-même en mode « bientôt » |
 
-> **Quasar contrôle sa configuration au démarrage** — Les cinq variables ci-dessus (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `CALLBACK_URL`, `JWT_SECRET`) sont vérifiées avant toute connexion à Discord : présence, valeur d'exemple laissée en place, et longueur minimale pour le secret de signature. Toutes celles qui manquent sont annoncées **d'un seul coup**, avec ce que chacune rend possible — une seule relance suffit à corriger le fichier `.env`. En `QUASAR_MODE=site` (vitrine seule), aucune n'est exigée : ce mode ne démarre ni bot, ni API métier, ni base.
+> **Quasar contrôle sa configuration au démarrage** — Cinq variables sont vérifiées avant toute connexion : les trois de la plateforme active (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` — ou `FLUXER_TOKEN`, `FLUXER_CLIENT_ID`, `FLUXER_CLIENT_SECRET`), plus `CALLBACK_URL` et `JWT_SECRET`. Présence, valeur d'exemple laissée en place, et longueur minimale pour le secret de signature. **Les deux jeux de secrets ne se mélangent pas** : en `QUASAR_PLATFORM=fluxer`, l'absence de `DISCORD_TOKEN` n'est pas une erreur, et réciproquement — un déploiement n'a aucune raison de porter les secrets de la plateforme qu'il ne sert pas. Toutes celles qui manquent sont annoncées **d'un seul coup**, avec ce que chacune rend possible — une seule relance suffit à corriger le fichier `.env`. En `QUASAR_MODE=site` (vitrine seule), aucune n'est exigée : ce mode ne démarre ni bot, ni API métier, ni base.
 >
 > Le refus de démarrer est délibéré. Sans `JWT_SECRET`, les sessions du dashboard étaient signées avec une valeur écrite dans ce dépôt public, et n'importe qui pouvait forger un jeton d'administration.
 
@@ -125,13 +186,13 @@ cp .env.example .env
 > **Pour l'ouvrir au réseau local**, en connaissance de cause :
 > 1. `BIND_ADDRESS=0.0.0.0` dans le `.env` (ou `DASHBOARD_HOST=0.0.0.0` si tu lances sans Docker)
 > 2. `CALLBACK_URL=http://<ip-de-ton-serveur>:3000/callback` — l'IP est affichée dans les logs au démarrage
-> 3. Ajoute cette même URL dans le Developer Portal (OAuth2 → Redirects)
+> 3. Ajoute cette même URL dans ton application — Developer Portal (OAuth2 → Redirects) sur Discord, « Application information » → « Redirect URIs » sur Fluxer
 >
 > **Pour un accès depuis Internet**, ne publie jamais le port directement : passe par un reverse proxy HTTPS (Cloudflare Tunnel, Nginx, Caddy…) et laisse `BIND_ADDRESS=127.0.0.1` — le proxy tourne sur la même machine et atteint le dashboard en local.
 
-#### 3. Configurer le bot Discord
+#### 3. Configurer l'application
 
-Voir [Configurer le bot Discord](#configurer-le-bot-discord) juste après ce bloc — intents à activer, réglages à laisser tranquilles.
+Voir [Configurer le bot Discord](#configurer-le-bot-discord) ou [Configurer le bot Fluxer](#configurer-le-bot-fluxer) juste après ce bloc — intents à activer côté Discord, réglages à laisser tranquilles des deux côtés.
 
 #### 4. Créer le volume et lancer
 
@@ -168,6 +229,23 @@ Sur le [Developer Portal](https://discord.com/developers/applications) :
 
 > [!warning]
 > **Ne remplis jamais « Interactions Endpoint URL »** (onglet General Information). Ce champ bascule Discord en mode HTTP : il cesse d'envoyer les interactions par la passerelle, et **plus aucune commande slash ne répond** — alors que le bot semble connecté et que rien n'apparaît dans les logs. Quasar écoute la passerelle, ce champ doit rester vide.
+
+### Configurer le bot Fluxer
+
+Dans Fluxer, ouvrez les **réglages de votre compte** → catégorie « Developer » → **« Applications »**, puis votre application. Tout se règle depuis cette fiche.
+
+**« Secrets & tokens » — ce que Quasar demande.** « Bot token » va dans `FLUXER_TOKEN`, « Client secret » dans `FLUXER_CLIENT_SECRET`, et l'« Application ID » affiché en tête de fiche dans `FLUXER_CLIENT_ID`. Les deux valeurs secrètes ne s'affichent qu'une fois : « Regenerate » en fabrique une nouvelle, et invalide l'ancienne — un jeton régénéré met fin à toutes les sessions du bot en cours.
+
+**« Application information » → « Redirect URIs ».** Ajoutez votre `CALLBACK_URL`, identique au caractère près. Sans cette déclaration, la connexion au dashboard est refusée par Fluxer, et le refus n'apparaît pas dans les journaux de Quasar. Une application accepte jusqu'à dix adresses.
+
+**À désactiver :**
+- ❌ **« Public bot »** — sauf si vous voulez que n'importe qui puisse inviter votre bot sur son serveur
+- ❌ **« Require OAuth2 code grant »** — activée, elle fait refuser le lien d'invitation, qui ne demande que le scope `bot` et ne présente donc aucun code d'autorisation
+
+**Rien à activer côté passerelle.** Fluxer n'a pas d'intents : sa demande d'identification n'accepte que le jeton et les propriétés du client. Il n'y a donc aucun réglage privilégié à faire approuver, contrairement à Discord — et rien qui puisse manquer au démarrage.
+
+> [!warning]
+> **Fluxer n'a pas de commandes d'application.** Toutes les commandes de Quasar y sont des messages préfixés, dérivées du même registre que les `/` de Discord : `!help` répond, `/help` non. Le préfixe se règle par `COMMAND_PREFIX`. Le bot a donc besoin de **lire les messages** de vos salons pour reconnaître ses commandes — c'est le prix de l'absence d'interactions, et il disparaîtra le jour où Fluxer les livrera.
 
 ### Inviter le bot
 
@@ -209,6 +287,44 @@ Vous n'avez normalement pas à faire ça vous-même : **le script d'installation
 >
 > Les deux dernières de la liste par module sont les plus faciles à oublier, et ce sont celles qui rendent la modération automatique inopérante. Sans **Gérer le serveur**, l'onglet AutoMod du dashboard refuse d'afficher quoi que ce soit — il vous dit au moins laquelle activer —, et le mode panique de l'anti-raid échoue sans rien dire ailleurs que dans les journaux du bot. Sans **Modérer les membres**, aucune exclusion temporaire n'est possible : ni `/mute`, ni un palier d'escalade, ni une règle AutoMod qui exclut.
 
+#### Sur Fluxer
+
+Le lien est composé et affiché par le script d'installation, comme sur Discord, et le dashboard le génère aussi. Il ne demande que le scope **`bot`** : `applications.commands` n'existe pas au registre des scopes de Fluxer, et un scope inconnu fait rejeter toute la demande d'autorisation.
+
+```
+https://api.fluxer.app/v1/oauth2/authorize?client_id=VOTRE_APPLICATION_ID&permissions=8&scope=bot
+```
+
+`permissions=8`, c'est **Administrateur** : le même raccourci que côté Discord, et pour la même raison — ne pas avoir à revenir ajuster les permissions à chaque module activé.
+
+Si vous préférez le moindre privilège, voici le jeu minimal, avec les **noms canoniques de Fluxer** tels que sa documentation les publie :
+
+| Permission Fluxer | À quoi elle sert dans Quasar |
+|---|---|
+| `VIEW_CHANNEL` | voir les salons où répondre, et y reconnaître les commandes préfixées |
+| `SEND_MESSAGES` | répondre, poser les panneaux et les messages de bienvenue |
+| `ADD_REACTIONS` | poser les réactions des panneaux — c'est l'interface, ici, pas un ornement |
+| `MANAGE_MESSAGES` | `!clear`, et retirer la réaction d'une autre personne sur un panneau |
+| `EMBED_LINKS` | la quasi-totalité des réponses de Quasar sont des embeds |
+| `ATTACH_FILES` | remettre le transcript d'un ticket à sa fermeture |
+| `READ_MESSAGE_HISTORY` | `!clear` et la constitution des transcripts |
+| `MANAGE_CHANNELS` | tickets et salons vocaux temporaires |
+| `MOVE_MEMBERS` | déplacer la personne dans le salon vocal qui vient d'être créé pour elle |
+| `MANAGE_ROLES` | autoroles, panneaux de rôles, rôles vocaux |
+| `KICK_MEMBERS` | `!kick` et les expulsions automatiques |
+| `BAN_MEMBERS` | `!ban`, et la levée d'un bannissement temporaire à son échéance |
+| `MODERATE_MEMBERS` | toutes les exclusions temporaires : `!mute`, l'escalade par avertissements, l'anti-raid |
+
+`MANAGE_GUILD` ne figure pas dans cette liste, alors qu'elle est nécessaire sur Discord : elle n'y sert qu'à l'AutoMod et au mode panique à échéance, dont aucun n'existe sur Fluxer.
+
+**Lien d'invitation avec exactement ces permissions**, en remplaçant l'identifiant par le vôtre :
+
+```
+https://api.fluxer.app/v1/oauth2/authorize?client_id=VOTRE_APPLICATION_ID&permissions=1099796966486&scope=bot
+```
+
+> **`ADD_REACTIONS` est la permission à ne pas oublier sur Fluxer.** Sans elle, un panneau de tickets ou de rôles s'affiche mais reste sans réaction : rien n'est cliquable, et il n'y a aucun message d'erreur à lire. C'est l'équivalent exact d'un bouton qui n'apparaîtrait pas.
+
 ---
 
 ## 🍓 Raspberry Pi
@@ -224,7 +340,7 @@ curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | 
 Deux choses valent d'être sues avant de se lancer sur un Pi :
 
 - **Vous installez presque toujours en SSH.** Le dashboard écoute par défaut sur la seule machine qui l'héberge, donc `http://localhost:3000` depuis votre ordinateur ne donnera rien. Le script détecte la session distante et vous propose d'ouvrir l'accès au réseau local ; si vous refusez, il vous affiche la commande de tunnel `ssh -L` à utiliser.
-- **Le jeton est vérifié avant la compilation.** Sur un Pi, construire l'image prend plusieurs minutes : découvrir une faute de frappe dans le jeton à la fin de ce délai était particulièrement décourageant. Le script interroge Discord d'abord et vous confirme le nom du bot.
+- **Le jeton est vérifié avant la compilation.** Sur un Pi, construire l'image prend plusieurs minutes : découvrir une faute de frappe dans le jeton à la fin de ce délai était particulièrement décourageant. Le script interroge d'abord la plateforme choisie — Discord ou Fluxer — et vous confirme le nom du bot.
 
 ---
 
@@ -232,6 +348,8 @@ Deux choses valent d'être sues avant de se lancer sur un Pi :
 
 <details>
 <summary>Voir toutes les commandes (26 déployées)</summary>
+
+> **Sur Fluxer, les mêmes commandes s'écrivent avec un préfixe** : `!warn @membre raison` au lieu de `/warn`, `!ticket close` au lieu de `/ticket close`. Les sous-commandes et les options sont identiques, et se remplissent dans l'ordre où elles sont listées ici ; la forme `option:valeur` est acceptée aussi. `!help` dérive sa liste du même registre que les commandes `/`, il n'y a donc rien à tenir à jour de ce côté. Le préfixe se règle par `COMMAND_PREFIX`.
 
 ### Modération
 | Commande | Description |
@@ -326,7 +444,7 @@ Le comptage des avertissements reste borné par la durée de conservation du ser
 
 ## 🏷️ Versionner une release
 
-Une seule chose à changer : le champ `version` de `package.json`.
+Une seule commande : `npm version <x.y.z> --no-git-tag-version`. Elle écrit le champ `version` de `package.json` **et** celui de `package-lock.json` — les deux doivent coïncider, sinon `npm ci` refuse de s'exécuter au déploiement. Éditer `package.json` à la main est le piège à éviter.
 
 Les pages du dashboard portent un marqueur `__VERSION__` au lieu d'un numéro figé. Il est remplacé au moment où le fichier est servi ([`api/services/assetVersion.js`](api/services/assetVersion.js)), ce qui couvre d'un coup :
 
@@ -335,6 +453,22 @@ Les pages du dashboard portent un marqueur `__VERSION__` au lieu d'un numéro fi
 - le nom du cache du service worker.
 
 Avant, il fallait tenir 24 références à la main à chaque release. Un oubli ne cassait rien de visible au déploiement : Cloudflare continuait simplement à servir l'ancien CSS aux utilisateurs, ce qui se diagnostique mal.
+
+---
+
+## 🚚 Passer en v5.0.0
+
+La v5.0.0 fait passer Quasar au bot multiplateforme. Côté Discord, le comportement observable est inchangé — c'était le critère de sortie du chantier. Trois points demandent quand même votre attention à la mise à jour, parce que les panneaux à boutons passent désormais par un routage unifié et que **les identifiants des anciens panneaux ne sont plus reconnus**.
+
+| | Ce qu'il faut faire |
+|---|---|
+| **Tickets — action requise** | Relancez `/ticket setup` sur chaque serveur : le panneau public déjà posé ne répond plus. Dans les tickets déjà ouverts, le bouton « Fermer le ticket » est inerte — `/ticket close` fait exactement la même chose |
+| **Salons vocaux temporaires — rien à faire** | Un panneau vit dans son salon et meurt avec lui. Seuls les salons occupés à l'instant de la mise à jour sont concernés : `/voice`, ou quitter et recréer le salon |
+| **Arbitrage des sanctions — à traiter à la main** | Les cas en attente au moment de la mise à jour ne sont plus cliquables. **Aucune sanction n'a été appliquée**, mais ces cas restent ouverts : tranchez-les depuis le dashboard ou à la main |
+
+Trois améliorations visibles, au passage : l'ouverture d'un ticket ne produit plus deux messages, trancher un cas d'arbitrage n'affiche plus de message éphémère parasite, et le panneau des salons vocaux temporaires retrouve sa disposition 4+3.
+
+Un détail pour qui écrivait des embeds à la main : les **noms de couleurs** héritées de discord.js (`Red`, `Gold`…) ne sont plus acceptés. Un entier ou un `#rrggbb`, comme l'annonce déjà l'option « Couleur hex » de `/embed`.
 
 ---
 
@@ -365,7 +499,9 @@ Le système supporte les deux modes de déploiement :
 
 ## 🏗️ Stack
 
-- **Node.js 22** + **discord.js v14**
+- **Node.js 22**
+- **discord.js v14** — mais uniquement dans l'adaptateur Discord : plus aucun fichier de logique métier ne l'importe
+- **Client Fluxer maison** — passerelle et REST écrits sur les `WebSocket` et `fetch` natifs de Node, **aucune dépendance ajoutée**
 - **Express** (API + dashboard)
 - **SQLite** via better-sqlite3 (données persistées en volume Docker)
 - HTML/CSS/JS vanilla (dashboard — pas de framework)
@@ -379,9 +515,13 @@ quasar/
 ├── index.js              # Point d'entrée
 ├── setup.sh              # Script d'installation
 ├── bot/
-│   ├── commands/         # Commandes slash (26 déployées)
-│   ├── events/           # Event handlers Discord
-│   ├── interactions/     # Button/select handlers
+│   ├── platform/         # LA couche d'adaptation : contrat neutre, registre de
+│   │   ├── discord/      #   commandes, puis un dossier par plateforme. Rien
+│   │   └── fluxer/       #   au-dessus ne sait sur laquelle il tourne
+│   ├── commands/         # 26 descripteurs de commandes, aucun import de plateforme
+│   ├── events/           # Handlers d'événements, au vocabulaire neutre
+│   ├── interactions/     # Panneaux attachés à une commande
+│   ├── panneaux/         # Panneaux sans commande (arbitrage des sanctions)
 │   ├── modules/          # Modules à part entière : antiraid, defer (arbitrage),
 │   │                     #   breach (violation de données), erasure (effacement),
 │   │                     #   retention (conservation et purge), scheduler
@@ -410,11 +550,11 @@ quasar/
 
 Le dépôt contient à la fois le bot avec son dashboard, et la vitrine publique du projet (`public/`) — les deux vivaient auparavant dans deux dépôts séparés. Ce qu'un déploiement sert dépend de la variable `QUASAR_MODE` :
 
-- `bot` (défaut) — bot Discord + dashboard, le cas de l'auto-hébergement ;
+- `bot` (défaut) — bot + dashboard, le cas de l'auto-hébergement ;
 - `site` — vitrine seule, sans bot ni base de données ;
 - `public` — instance publique : bot, dashboard et vitrine.
 
-Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. L'affichage de la carte « Sans rien installer » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même : quand elle est fermée, la carte est retirée du HTML servi et l'accueil n'affiche que l'autohébergement.
+Le mode décide de ce qui démarre et de ce qui est servi, rien de plus. Il est **indépendant de `QUASAR_PLATFORM`** : le mode dit quoi démarrer, la plateforme dit à quoi se connecter. Les deux se combinent librement. L'affichage de la carte « Sans rien installer » sur la vitrine relève d'une variable distincte, `PUBLIC_INSTANCE_OPEN` (défaut : `false`), qui ne change pas l'accessibilité du dashboard lui-même : quand elle est fermée, la carte est retirée du HTML servi et l'accueil n'affiche que l'autohébergement.
 
 Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre en mode `bot`, et la vitrine n'est pas servie du tout.
 
@@ -518,7 +658,9 @@ Le transcript est donc **remis dans Discord** — dans le salon de logs, ou en m
 
 Autrement dit : **le canal de signalement peut être coupé par la personne même qu'on voudrait pouvoir signaler.** C'est une limite de la plateforme, pas quelque chose que le bot peut empêcher.
 
-Le contournement tient en une ligne, à mettre dans la **description de ton application** sur le Developer Portal (onglet General Information). Elle s'affiche sur le profil du bot depuis n'importe quel serveur, et aucun administrateur ne peut la masquer :
+Sur Fluxer, la coupure prend une autre forme : `!signaler` est un message ordinaire, il n'existe donc aucune permission dédiée à retirer — mais un salon où le bot ne voit pas les messages, ou un membre à qui l'écriture est refusée, produit le même résultat. Le contournement ci-dessous vaut pour les deux plateformes.
+
+Le contournement tient en une ligne, à mettre dans la **description de ton application** — sur le Developer Portal côté Discord (onglet General Information), dans la biographie du compte du bot côté Fluxer, qui tient lieu de description d'application. Elle s'affiche sur le profil du bot depuis n'importe quel serveur, et aucun administrateur ne peut la masquer :
 
 ```
 Un problème avec ce bot, ou avec l'usage qui en est fait sur un serveur ?
