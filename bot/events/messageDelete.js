@@ -1,3 +1,10 @@
+// ⚠️ NON MIGRÉ AU LOT 1 — il manque un champ au payload neutre.
+//
+// Le journal liste les pièces jointes du message supprimé, et c'est souvent la
+// seule trace qu'il en reste. `normaliserMessage` (bot/platform/discord/events.js)
+// ne les porte pas : sans un `piecesJointes` au payload `messageSupprime`, la
+// migration ferait disparaître ce champ de l'embed. Tout le reste de ce fichier
+// est déjà couvert par le contrat. Voir le compte-rendu du lot 1.
 const { EmbedBuilder } = require('discord.js');
 const { sendLog } = require('../utils/logger');
 

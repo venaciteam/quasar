@@ -1,3 +1,11 @@
+// ⚠️ NON MIGRÉE AU LOT 1 — il manque une pièce au contrat neutre.
+//
+// L'embed de confirmation affiche l'étiquette de la personne débannie
+// (`ban.user.tag`), lue par `guild.bans.fetch()`. Le client REST normalisé
+// (DA §4.3) ne sait pas lire un bannissement : il sait seulement en poser un et
+// le lever. Sans `api.obtenirBannissement(guildeId, utilisateurId)`, la
+// migration perdrait ce champ — donc l'information qui permet de vérifier qu'on
+// a bien débanni la bonne personne. Voir le compte-rendu du lot 1.
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { reportIncident, userError } = require('../utils/errors');
 

@@ -1,3 +1,14 @@
+// ⚠️ NON MIGRÉ AU LOT 1 — il manque trois choses au contrat neutre.
+//
+//   1. Le SERVEUR. `membreModifie` rend `[normaliserMembre(avant),
+//      normaliserMembre(apres)]`, et un membre normalisé ne porte pas son
+//      `guildeId` : impossible de savoir où journaliser. C'est le manque
+//      bloquant — les deux autres ne coûteraient qu'un champ d'embed.
+//   2. L'ÉTIQUETTE de la personne (`user.tag`), présente sur l'utilisateur
+//      normalisé mais pas sur le membre.
+//   3. L'AVATAR (`displayAvatarURL`), qui alimente la vignette des trois embeds.
+//
+// Voir le compte-rendu du lot 1.
 const { EmbedBuilder } = require('discord.js');
 const { sendLog } = require('../utils/logger');
 

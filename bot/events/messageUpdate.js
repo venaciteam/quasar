@@ -1,3 +1,11 @@
+// ⚠️ NON MIGRÉ AU LOT 1 — il manque deux pièces au contrat neutre.
+//
+// L'embed pointe sur le message modifié (`setURL(newMessage.url)`), ce qui est
+// tout l'intérêt du journal : sans le lien, on lit un avant/après sans pouvoir
+// aller voir. Or ni `embed()` (bot/platform/embed.js) ni `normaliserMessage`
+// (bot/platform/discord/events.js) ne portent cette information — le champ `url`
+// est même classé parmi les marqueurs d'un embed au FORMAT DISCORD. Voir le
+// compte-rendu du lot 1.
 const { EmbedBuilder } = require('discord.js');
 const { sendLog } = require('../utils/logger');
 

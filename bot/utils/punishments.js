@@ -48,6 +48,7 @@
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { embed } = require('../platform/embed');
+const { CODES_NEUTRES, codeNeutre } = require('../platform/erreurs');
 const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
 const { sendModLog } = require('./modlog');
 const { sendLog } = require('./logger');
@@ -335,20 +336,48 @@ function logEmbedPour(portee, spec) {
 
 // ─── Application ───────────────────────────────────────────────────────────
 
+// Phrase associée à chaque code neutre. Le vocabulaire neutre est délibérément
+// plus grossier que les numéros de Discord — `permission` couvre 50013 comme
+// 50001, `introuvable` couvre le membre parti comme le message effacé : ce sont
+// des DÉCISIONS possibles pour l'appelant, pas des catégories d'erreur. Une
+// phrase par décision, donc, et pas une par numéro.
+const PHRASES_NEUTRES = Object.freeze({
+    [CODES_NEUTRES.permission]: 'Permission manquante côté bot.',
+    [CODES_NEUTRES.introuvable]: 'La cible n\'existe plus : membre parti, message ou salon supprimé.',
+    [CODES_NEUTRES.deja_fait]: 'Aucun bannissement en cours pour ce membre.',
+    [CODES_NEUTRES.guilde_inconnue]: 'Je ne suis plus sur ce serveur.',
+});
+
+// TRANSITION : format historique, à retirer au lot de consolidation
+// Une erreur n'est marquée d'un `codeNeutre` que si elle a traversé `api.*`. La
+// voie historique de ce fichier (`member.kick`, `guild.members.ban`,
+// `message.delete`) lève des erreurs BRUTES : sans cette table, tous ses échecs
+// ressortiraient en anglais, dans la langue de discord.js.
+const PHRASES_DISCORD = Object.freeze({
+    50013: 'Permission manquante côté bot.',
+    50001: 'Accès refusé au salon ou au membre.',
+    10007: 'Ce membre n\'est plus sur le serveur.',
+    10008: 'Le message n\'existe plus.',
+    10026: 'Aucun bannissement en cours pour ce membre.',
+});
+
 /**
- * Traduit une erreur d'API Discord en phrase exploitable. Sans ça, un résultat
- * dit « DiscordAPIError[50013] » à une personne qui cherche pourquoi son
- * anti-raid ne fait rien.
+ * Traduit une erreur d'API en phrase exploitable. Sans ça, un résultat dit
+ * « DiscordAPIError[50013] » à une personne qui cherche pourquoi son anti-raid
+ * ne fait rien.
  */
 function describeError(err) {
-    const code = err?.code;
-    if (code === 50013) return 'Permission manquante côté bot.';
-    if (code === 50001) return 'Accès refusé au salon ou au membre.';
-    if (code === 10007) return 'Ce membre n\'est plus sur le serveur.';
-    if (code === 10008) return 'Le message n\'existe plus.';
-    if (code === 10026) return 'Aucun bannissement en cours pour ce membre.';
-    if (code === 30035) return 'Limite de bannissements atteinte pour ce serveur.';
-    return err?.message || 'Erreur inconnue.';
+    // 30035 n'a aucun équivalent dans le vocabulaire neutre : la limite de
+    // bannissements d'un serveur est une contrainte propre à Discord, et son
+    // numéro reste le seul moyen de la nommer. Testé en premier, parce que
+    // l'adaptateur la classe en `inconnu` — ce qu'elle est, pour une décision.
+    if (err?.code === 30035) return 'Limite de bannissements atteinte pour ce serveur.';
+
+    const phrase = PHRASES_NEUTRES[codeNeutre(err)];
+    if (phrase) return phrase;
+
+    // TRANSITION : format historique, à retirer au lot de consolidation
+    return PHRASES_DISCORD[err?.code] || err?.message || 'Erreur inconnue.';
 }
 
 /**
@@ -798,16 +827,26 @@ async function leverBanNeutre(portee, row) {
         await portee.api.debannirMembre(row.guild_id, row.user_id, 'Fin du bannissement temporaire');
         return 'fait';
     } catch (err) {
-        // 10026 = plus aucun bannissement : quelqu'un a déjà levé la sanction à
-        // la main. C'est un succès, pas un échec.
-        if (err?.code === 10026) return 'fait';
-        // 10004 = serveur inconnu : équivalent neutre du « absent du cache » de
-        // la voie historique, qui oublie l'échéance sans rien journaliser.
-        if (err?.code === 10004) return 'abandon';
+        // L'erreur vient de `api.debannirMembre` : elle est donc marquée d'un
+        // code neutre, et on raisonne dessus plutôt que sur un numéro Discord
+        // qui ne voudra rien dire sur Fluxer.
+        switch (codeNeutre(err)) {
+            // Plus aucun bannissement : quelqu'un a déjà levé la sanction à la
+            // main. C'est un succès, pas un échec.
+            case CODES_NEUTRES.deja_fait:
+                return 'fait';
+            // Le bot n'est plus sur ce serveur : équivalent neutre du « absent
+            // du cache » de la voie historique, qui oublie l'échéance sans rien
+            // journaliser.
+            case CODES_NEUTRES.guilde_inconnue:
+                return 'abandon';
+            default:
+                break;
+        }
         console.error(`[Quasar AutoMod] Levée du ban de ${row.user_id} en échec :`, describeError(err));
         // Permission manquante : on garde l'échéance pour retenter au prochain
         // passage, une fois les droits rétablis.
-        if (err?.code === 50013) return 'reessayer';
+        if (codeNeutre(err) === CODES_NEUTRES.permission) return 'reessayer';
         return 'fait';
     }
 }

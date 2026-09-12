@@ -1,3 +1,15 @@
+// ⚠️ NON MIGRÉE AU LOT 1 — il manque une primitive au contrat neutre.
+//
+// La commande ACQUITTE l'interaction avant de travailler (`deferReply`), et ce
+// n'est pas un détail : lire cent messages puis les supprimer en lot dépasse
+// régulièrement les trois secondes que Discord laisse pour répondre. Le contexte
+// neutre n'a pas d'équivalent — ni `ctx.differer()`, ni rien qui acquitte sans
+// contenu. Migrer sans lui rendrait la commande muette sous limitation de débit,
+// alors que les messages, eux, auraient bien été supprimés.
+//
+// Le reste est prêt : `api.listerMessages` et `api.supprimerMessagesEnLot`
+// couvrent exactement ce que fait ce fichier, écart des plus de 14 jours compris.
+// Voir le compte-rendu du lot 1.
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { reportIncident, userError } = require('../utils/errors');
 

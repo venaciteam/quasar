@@ -1,3 +1,9 @@
+// ⚠️ NON MIGRÉE AU LOT 1 — il manque un champ au contrat neutre.
+//
+// Le garde « ce membre n'est pas exclu » lit `communicationDisabledUntilTimestamp`,
+// que `normaliserMembre` (bot/platform/discord/context.js) n'expose pas. Sans un
+// `timeoutJusqua` au membre normalisé, la commande annoncerait une levée
+// d'exclusion là où il n'y en avait aucune. Voir le compte-rendu du lot 1.
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { userError } = require('../utils/errors');
 
