@@ -38,6 +38,17 @@
 
 const { effectiveAccessMode } = require('../../api/services/database');
 
+// Les deux plateformes plafonnent `allowed_mentions.users` et `.roles` à 100
+// entrées : au-delà, l'API rejette le MESSAGE ENTIER. On tronque à la
+// construction plutôt que de laisser un envoi échouer au moment du ping.
+const MAX_MENTIONS = 100;
+
+// Mentions telles qu'un client les écrit. `<@!id>` est la forme héritée d'une
+// mention de membre avec pseudonyme : certains clients la produisent encore, et
+// l'ignorer ferait cesser de notifier une mention parfaitement légitime.
+const MENTION_UTILISATEUR = /<@!?(\d{5,})>/g;
+const MENTION_ROLE = /<@&(\d{5,})>/g;
+
 /**
  * La personne peut-elle lancer cette commande personnalisée ?
  *
@@ -127,4 +138,166 @@ function roleConnu(roles, roleId) {
     return Object.prototype.hasOwnProperty.call(roles, cle);
 }
 
-module.exports = { verifierAccesCommandePersonnalisee, roleConnu };
+// ═══════════════════════════════════════════════════════════════
+//  Verrou de mentions d'une commande personnalisée
+//
+//  Le contrôle d'accès ci-dessus décide QUI peut déclencher la commande. Il ne
+//  décide pas ce que la commande a le droit de NOTIFIER, et ces deux questions
+//  ont longtemps été confondues : le chemin texte partait sans aucun verrou, au
+//  motif que « ce qui est écrit dans la réponse doit pinger normalement » et que
+//  le contrôle d'accès suffisait.
+//
+//  Il ne suffit pas. Sur une instance publique, il suffit d'un détenteur de
+//  MANAGE_GUILD — le droit de créer une commande personnalisée — pour fabriquer
+//  un `!faq` en mode `everyone` dont le texte contient `@everyone`. N'importe
+//  quel membre le déclenche ensuite, autant de fois qu'il veut. Le contrôle
+//  d'accès a fait son travail : la commande EST ouverte à tous, volontairement.
+//  C'est le verrou de mentions qui manquait.
+//
+//  ─── La règle ───────────────────────────────────────────────────────────────
+//
+//  Les mentions qu'une commande personnalisée peut déclencher sont celles que
+//  LA PERSONNE QUI LA DÉCLENCHE pourrait faire elle-même.
+//
+//  Trois candidats étaient possibles, et les deux autres sont faux :
+//
+//   • La permission du CRÉATEUR. Elle n'est pas lisible au moment du
+//     déclenchement — il n'est plus là, il a peut-être quitté le serveur ou
+//     perdu son rôle — et une commande créée par un administrateur deviendrait
+//     un canon à `@everyone` transmissible.
+//   • Un blocage TOTAL. Il casserait les commandes légitimes : un `!raid` qui
+//     ping le rôle « Événement » est exactement l'usage pour lequel les
+//     commandes personnalisées existent.
+//   • La permission du DÉCLENCHEUR. Elle est lisible, elle est à jour, et elle
+//     ne donne à personne un pouvoir qu'il n'avait pas déjà. C'est celle-là.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Le déclencheur peut-il notifier tout le monde ?
+ *
+ * `MENTION_EVERYONE` couvre `@everyone`, `@here` ET les rôles non mentionnables
+ * sur les deux plateformes — « Whether a member without MENTION_EVERYONE can
+ * mention the role » (http-api/permissions.mdx, champ `mentionable`).
+ *
+ * Un membre illisible répond « non ». Transformer un « je ne sais pas » en
+ * droit de notifier tout le serveur serait le pire des replis, et c'est
+ * exactement le cas d'un déclenchement hors serveur.
+ */
+function peutMentionnerTous(membre) {
+    return Boolean(membre?.aPermission?.('MENTION_EVERYONE'));
+}
+
+/** Identifiants d'un motif, dédoublonnés et plafonnés. */
+function extraireIdentifiants(contenu, motif) {
+    const trouves = new Set();
+    for (const correspondance of String(contenu).matchAll(motif)) trouves.add(correspondance[1]);
+    return [...trouves].slice(0, MAX_MENTIONS);
+}
+
+/**
+ * Verrou de mentions pour le texte libre d'une commande personnalisée.
+ *
+ * @param {object|null} membre  membre NORMALISÉ qui déclenche la commande
+ * @param {object} [contexte]
+ * @param {string}  [contexte.contenu]  le texte qui va être envoyé
+ * @param {Map|Set|object|Array} [contexte.roles]  rôles du serveur, pour
+ *   distinguer un rôle mentionnable d'un rôle qui ne l'est pas
+ * @returns {{parse: string[], users?: string[], roles?: string[]}} verrou au
+ *   vocabulaire neutre de `rendreContenu` (clé `mentionsAutorisees`)
+ *
+ * Deux formes sont rendues, et le choix n'est pas cosmétique — les deux
+ * plateformes REFUSENT un `parse` non vide combiné à une liste `users` ou
+ * `roles` non vide (Fluxer le nomme `PARSE_AND_USERS_OR_ROLES_CANNOT_BE_USED_TOGETHER`,
+ * Discord les déclare mutuellement exclusifs). On ne peut donc pas mélanger
+ * « tous les rôles sauf ceux-là » : il faut choisir un mode.
+ *
+ *   • Le déclencheur a MENTION_EVERYONE — il peut déjà tout notifier à la main.
+ *     On ouvre par catégories : `{ parse: ['users', 'roles', 'everyone'] }`.
+ *     Rien n'est restreint parce que rien ne le serait s'il tapait le message
+ *     lui-même.
+ *
+ *   • Il ne l'a pas. On ferme les catégories et on n'ouvre QUE les
+ *     identifiants qu'il pourrait mentionner : `{ parse: [], users: [...],
+ *     roles: [...mentionnables] }`. `@everyone` et `@here` restent écrits dans
+ *     le message, en clair, sans notifier personne — ce qui est exactement ce
+ *     que produirait sa propre saisie.
+ *
+ * ⚠️ Sans `contenu`, on ne peut pas énumérer : on retombe sur
+ * `{ parse: ['users', 'roles'] }`. La protection sur `@everyone` est intacte,
+ * mais un rôle NON mentionnable notifierait alors. Les deux dispatchs passent
+ * le contenu ; ce repli n'existe que pour un appelant qui ne l'aurait pas.
+ */
+function mentionsAutoriseesPour(membre, { contenu = null, roles = null } = {}) {
+    if (peutMentionnerTous(membre)) return { parse: ['users', 'roles', 'everyone'] };
+    if (contenu === null || contenu === undefined) return { parse: ['users', 'roles'] };
+
+    const utilisateurs = extraireIdentifiants(contenu, MENTION_UTILISATEUR);
+    const rolesCites = extraireIdentifiants(contenu, MENTION_ROLE);
+
+    // Sans la liste des rôles du serveur, on ne sait pas lesquels sont
+    // mentionnables. On les laisse passer : c'était le comportement d'avant, et
+    // le refuser ferait taire un ping de rôle légitime sur un simple manque
+    // d'information. Le verrou sur `@everyone`, lui, ne dépend d'aucun cache.
+    const autorises = roles === null
+        ? rolesCites
+        : rolesCites.filter(id => estRoleMentionnable(roles, id));
+
+    return { parse: [], users: utilisateurs, roles: autorises };
+}
+
+/**
+ * Restreint un verrou DÉJÀ CONSTRUIT à ce que le déclencheur pourrait faire.
+ *
+ * Sert au chemin embed, où les mentions sont celles cochées SUR L'EMBED et
+ * rejouées dans un `content` — `buildMentionPayload`. Les mentions d'un embed
+ * ne notifient pas ; cette ligne de rejeu, elle, si. Un embed configuré avec
+ * `@everyone` par un administrateur deviendrait sinon le même canon, déclenché
+ * par n'importe qui.
+ *
+ * On RETIRE, on n'ajoute jamais : une configuration qui ne demande pas
+ * `@everyone` ne doit pas se le voir accorder parce que le déclencheur en a le
+ * droit.
+ */
+function restreindreMentionsAuDeclencheur(mentions, membre, { roles = null } = {}) {
+    const verrou = {
+        parse: [...(mentions?.parse || [])],
+        users: [...(mentions?.users || [])],
+        roles: [...(mentions?.roles || [])],
+    };
+    if (peutMentionnerTous(membre)) return verrou;
+
+    verrou.parse = verrou.parse.filter(categorie => categorie !== 'everyone');
+    if (roles !== null) verrou.roles = verrou.roles.filter(id => estRoleMentionnable(roles, id));
+    return verrou;
+}
+
+/**
+ * Le rôle est-il mentionnable par un membre ordinaire ?
+ *
+ * Accepte les formes que les deux adaptateurs ont sous la main : une `Map` ou
+ * une `Collection` (cache discord.js, état local Fluxer), un tableau de rôles,
+ * ou un objet indexé.
+ *
+ * ⚠️ Un rôle INCONNU est traité comme mentionnable. C'est délibéré : un cache
+ * froid ou un rôle créé à l'instant ne doit pas faire taire un ping légitime.
+ * Le cas dangereux — `@everyone` — ne passe jamais par ici.
+ */
+function estRoleMentionnable(roles, roleId) {
+    const cle = String(roleId);
+    let role;
+    if (Array.isArray(roles)) role = roles.find(r => String(r?.id) === cle);
+    else if (typeof roles?.get === 'function') role = roles.get(cle);
+    else role = roles?.[cle];
+    if (!role) return true;
+    return Boolean(role.mentionable ?? role.mentionnable);
+}
+
+module.exports = {
+    verifierAccesCommandePersonnalisee,
+    roleConnu,
+    peutMentionnerTous,
+    mentionsAutoriseesPour,
+    restreindreMentionsAuDeclencheur,
+    estRoleMentionnable,
+    MAX_MENTIONS,
+};

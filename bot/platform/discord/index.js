@@ -20,7 +20,9 @@ const { surEvenement, chargerEvenements, EVENEMENTS, NOMS_EVENEMENTS } = require
 const { chargerPanneaux } = require('../panneaux');
 const { creerContextePanneau, poserPanneau } = require('./context');
 const { BITS } = require('./permissions');
-const { verifierAccesCommandePersonnalisee } = require('../accesCommandePersonnalisee');
+const {
+    verifierAccesCommandePersonnalisee, mentionsAutoriseesPour, restreindreMentionsAuDeclencheur,
+} = require('../accesCommandePersonnalisee');
 
 // Séparateur entre le préfixe d'un panneau neutre et la clé du choix. C'est
 // aussi lui qui distingue un `customId` de panneau d'un identifiant jetable de
@@ -241,6 +243,26 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
          */
         poserPanneau(canalId, contenuOuEmbed, choix, options) {
             return poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, options);
+        },
+
+        /**
+         * Verrou de mentions d'une commande PERSONNALISÉE.
+         *
+         * Même raison d'être que `verifierAccesCommandePersonnalisee` juste
+         * au-dessus : la règle est neutre — elle ne lit qu'un membre normalisé
+         * et les rôles du serveur — mais son appelant est le dispatch NATIF, qui
+         * n'a pas de contexte neutre sous la main. Il a en revanche
+         * l'adaptateur.
+         *
+         * @see bot/platform/accesCommandePersonnalisee.js
+         */
+        mentionsAutoriseesPour(membre, contexte) {
+            return mentionsAutoriseesPour(membre, contexte);
+        },
+
+        /** @see bot/platform/accesCommandePersonnalisee.js */
+        restreindreMentionsAuDeclencheur(mentions, membre, contexte) {
+            return restreindreMentionsAuDeclencheur(mentions, membre, contexte);
         },
 
         /** @see bot/platform/discord/events.js pour la table et les payloads. */

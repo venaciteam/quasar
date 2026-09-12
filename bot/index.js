@@ -25,6 +25,15 @@ const { isSuspended } = require('./utils/suspension');
 //  commande restreinte répond à quelqu'un qui n'aurait pas dû pouvoir la lancer.
 //  Le bootstrap se contente donc de fournir ce que la règle demande — le membre
 //  NORMALISÉ et les rôles du serveur — et de traduire son refus en éphémère.
+//
+//  ⚠️ Le contrôle d'accès décide QUI peut déclencher la commande, pas ce qu'elle
+//  a le droit de NOTIFIER. Les deux questions ont longtemps été confondues ici :
+//  le chemin texte partait SANS verrou de mentions, au motif que le contrôle
+//  d'accès suffisait. Il ne suffit pas — un détenteur de MANAGE_GUILD fabrique
+//  une commande en mode `everyone` dont le texte contient `@everyone`, et
+//  n'importe quel membre la déclenche. Le verrou vit lui aussi dans
+//  `bot/platform/accesCommandePersonnalisee.js`, sous
+//  `mentionsAutoriseesPour` / `restreindreMentionsAuDeclencheur`.
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -249,8 +258,14 @@ function createBot({ plateforme = null } = {}) {
                     // rôles du serveur ne servent qu'à distinguer « rôle
                     // supprimé » de « rôle que vous n'avez pas » : omis, le
                     // contrôle d'existence est simplement sauté.
+                    // Lus UNE fois : le contrôle d'accès s'en sert pour
+                    // distinguer « rôle supprimé » de « rôle que vous n'avez
+                    // pas », et le verrou de mentions pour distinguer un rôle
+                    // mentionnable d'un rôle qui ne l'est pas.
+                    const rolesDuServeur = interaction.guild?.roles?.cache || null;
+
                     const refus = platform.verifierAccesCommandePersonnalisee(customCmd, ctx.membre, {
-                        roles: interaction.guild?.roles?.cache || null,
+                        roles: rolesDuServeur,
                     });
                     if (refus) return userError(interaction, refus);
 
@@ -260,10 +275,13 @@ function createBot({ plateforme = null } = {}) {
                         ).get(customCmd.embed_id);
                         if (embedRow) {
                             const { construireEmbedEnregistre } = require('./commands/embed');
-                            // Mentions de l'embed appliquées à l'identique de
-                            // `/embed send` et des rappels programmés : même helper,
-                            // même payload à configuration égale. C'est le contrôle
-                            // d'accès ci-dessus qui protège de l'abus.
+                            // Mentions de l'embed construites par le même helper
+                            // que `/embed send` et les rappels programmés, puis
+                            // RESTREINTES à ce que le déclencheur pourrait faire
+                            // lui-même. Les mentions d'un embed ne notifient
+                            // pas ; la ligne de rejeu ci-dessous, elle, si — un
+                            // embed configuré avec `@everyone` serait sinon un
+                            // canon déclenchable par n'importe qui.
                             const { content, allowedMentions } = buildMentionPayload(embedRow);
                             return ctx.repondre({
                                 // `undefined` et non `''` : une clé `contenu`
@@ -271,22 +289,36 @@ function createBot({ plateforme = null } = {}) {
                                 // d'origine n'envoyait pas.
                                 contenu: content || undefined,
                                 embeds: [construireEmbedEnregistre(JSON.parse(embedRow.data))],
-                                mentionsAutorisees: allowedMentions,
+                                mentionsAutorisees: platform.restreindreMentionsAuDeclencheur(
+                                    allowedMentions, ctx.membre, { roles: rolesDuServeur },
+                                ),
                             });
                         }
                     }
                     if (customCmd.response) {
-                        // Réponse texte : volontairement SANS mentions autorisées, à
-                        // l'inverse du chemin embed juste au-dessus. Ce qui est
-                        // écrit dans la réponse doit pinger normalement (@everyone,
-                        // rôles, membres) — c'est le comportement d'origine, et le
-                        // contrôle d'accès ci-dessus limite déjà qui peut déclencher
-                        // la commande.
-                        // Les deux chemins divergent délibérément : l'embed rejoue
-                        // strictement les mentions cochées sur lui (parse: [] + listes
-                        // explicites), le texte laisse Discord analyser son contenu.
-                        // Ne pas les « harmoniser ».
-                        return ctx.repondre(customCmd.response);
+                        // Réponse texte, AVEC son verrou de mentions.
+                        //
+                        // Ce chemin partait nu jusqu'ici, et le commentaire qui
+                        // l'expliquait affirmait que « ce qui est écrit dans la
+                        // réponse doit pinger normalement » parce que le contrôle
+                        // d'accès limitait déjà qui pouvait déclencher la
+                        // commande. C'était faux dès qu'une commande est en mode
+                        // `everyone` — c'est-à-dire par défaut : le contrôle
+                        // d'accès a alors fait son travail en laissant passer
+                        // tout le monde, et plus rien ne protégeait le serveur.
+                        //
+                        // La règle est celle de
+                        // `bot/platform/accesCommandePersonnalisee.js` : les
+                        // mentions que la commande déclenche sont celles que la
+                        // personne qui la déclenche pourrait faire elle-même.
+                        // Les deux chemins ne divergent plus.
+                        return ctx.repondre({
+                            contenu: customCmd.response,
+                            mentionsAutorisees: platform.mentionsAutoriseesPour(ctx.membre, {
+                                contenu: customCmd.response,
+                                roles: rolesDuServeur,
+                            }),
+                        });
                     }
                 } catch (err) {
                     reportIncident(interaction, err, { command: `commande personnalisée /${interaction.commandName}` });

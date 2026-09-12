@@ -36,7 +36,9 @@ const {
     enregistrerPanneaux,
     refuserModuleHistorique,
 } = require('../chargeur-commandes');
-const { verifierAccesCommandePersonnalisee } = require('../accesCommandePersonnalisee');
+const {
+    verifierAccesCommandePersonnalisee, mentionsAutoriseesPour, restreindreMentionsAuDeclencheur,
+} = require('../accesCommandePersonnalisee');
 
 const NOM_PLATEFORME = 'fluxer';
 const PREFIXE_PAR_DEFAUT = '!';
@@ -426,7 +428,7 @@ function verifierAcces(descripteur, membre, { enPrive = false } = {}) {
  * @returns {object|null} corps neutre prêt pour `api.envoyerMessage`, ou `null`
  *   si la ligne ne porte ni embed ni réponse.
  */
-function rendreCommandePersonnalisee(ligne, db) {
+function rendreCommandePersonnalisee(ligne, db, { membre = null, roles = null } = {}) {
     if (ligne.embed_id) {
         const embedRow = db.prepare(
             'SELECT data, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE id = ?'
@@ -437,13 +439,24 @@ function rendreCommandePersonnalisee(ligne, db) {
             const { content, allowedMentions } = buildMentionPayload(embedRow);
             const corps = {
                 embeds: [construireEmbedEnregistre(JSON.parse(embedRow.data))],
-                mentionsAutorisees: allowedMentions,
+                // Les mentions COCHÉES sur l'embed, restreintes à ce que le
+                // déclencheur pourrait faire lui-même. Celles de l'embed ne
+                // notifient pas ; la ligne de rejeu ci-dessous, elle, si.
+                mentionsAutorisees: restreindreMentionsAuDeclencheur(allowedMentions, membre, { roles }),
             };
             if (content) corps.contenu = content;
             return corps;
         }
     }
-    if (ligne.response) return { contenu: ligne.response };
+    if (ligne.response) {
+        return {
+            contenu: ligne.response,
+            // ⚠️ JAMAIS sans verrou. Ce chemin partait nu, au motif que le
+            // contrôle d'accès suffisait : il ne suffit pas, et la règle est
+            // écrite dans `bot/platform/accesCommandePersonnalisee.js`.
+            mentionsAutorisees: mentionsAutoriseesPour(membre, { contenu: ligne.response, roles }),
+        };
+    }
     return null;
 }
 

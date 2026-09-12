@@ -37,6 +37,7 @@ const {
 } = require('./commands');
 const { surEvenement, chargerEvenements, creerContexteEvenement, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
 const { chargerPanneaux } = require('../panneaux');
+const { mentionsAutoriseesPour, restreindreMentionsAuDeclencheur } = require('../accesCommandePersonnalisee');
 const {
     creerContextePanneau, poserPanneau,
     normaliserUtilisateur, normaliserMembre, normaliserCanal, normaliserRole,
@@ -301,6 +302,26 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
          */
         poserPanneau(canalId, contenuOuEmbed, choix, options) {
             return poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, options);
+        },
+
+        /**
+         * Verrou de mentions d'une commande PERSONNALISÉE.
+         *
+         * Même raison d'être que `verifierAccesCommandePersonnalisee` juste
+         * au-dessus : la règle est neutre — elle ne lit qu'un membre normalisé
+         * et les rôles du serveur — mais son appelant est le dispatch NATIF, qui
+         * n'a pas de contexte neutre sous la main. Il a en revanche
+         * l'adaptateur.
+         *
+         * @see bot/platform/accesCommandePersonnalisee.js
+         */
+        mentionsAutoriseesPour(membre, contexte) {
+            return mentionsAutoriseesPour(membre, contexte);
+        },
+
+        /** @see bot/platform/accesCommandePersonnalisee.js */
+        restreindreMentionsAuDeclencheur(mentions, membre, contexte) {
+            return restreindreMentionsAuDeclencheur(mentions, membre, contexte);
         },
 
         /** @see bot/platform/fluxer/events.js pour la table et les payloads. */
@@ -762,7 +783,12 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
         });
         if (refus) return repondreErreur(source, refus);
 
-        const corps = rendreCommandePersonnalisee(ligne, db);
+        // Le membre normalisé porte les permissions calculées : c'est lui qui
+        // décide de ce que la commande a le droit de notifier.
+        const corps = rendreCommandePersonnalisee(ligne, db, {
+            membre,
+            roles: source.guildeId ? clientFluxer.etat.roles(source.guildeId) : null,
+        });
         if (!corps) return;
         return adaptateur.api.envoyerMessage(source.canalId, corps);
     }
