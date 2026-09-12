@@ -27,6 +27,12 @@ const evenementsFluxer = require('../bot/platform/fluxer/events');
 const { EVENEMENTS_NEUTRES } = require('../bot/platform/events');
 const { PERMISSIONS } = require('../bot/platform/permissions');
 const { NOMS_CAPACITES } = require('../bot/platform/capabilities');
+const commandesDiscord = require('../bot/platform/discord/commands');
+const commandesFluxer = require('../bot/platform/fluxer/commands');
+const renderDiscord = require('../bot/platform/discord/render');
+const renderFluxer = require('../bot/platform/fluxer/render');
+const snowflakeDiscord = require('../bot/platform/discord/snowflake');
+const snowflakeFluxer = require('../bot/platform/fluxer/snowflake');
 
 // Doublures minimales : aucun réseau, aucun jeton, aucune base.
 const clientDiscord = () => ({ on() {}, once() {}, off() {}, rest: {}, guilds: { cache: new Map() } });
@@ -328,6 +334,172 @@ test('aucun fichier de l\'adaptateur Fluxer ne charge discord.js', () => {
         assert.ok(
             !/require\(['"]\.\.\/discord\//.test(source),
             `${fichier} charge un fichier de l'adaptateur Discord`,
+        );
+    }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+//  Les modules remontés au contrat : la MÊME fonction, pas une copie
+//
+//  L'identité de référence (`===`) est le seul contrôle qui prouve ce qu'on
+//  cherche. Comparer les COMPORTEMENTS laisserait passer deux implémentations
+//  jumelles — et c'est exactement l'état qu'on vient de défaire : elles étaient
+//  identiques, jusqu'au jour où un correctif n'en aurait touché qu'une.
+// ═══════════════════════════════════════════════════════════════
+
+test('le contrôle d\'accès des commandes personnalisées est UNE seule fonction', () => {
+    const neutre = require('../bot/platform/accesCommandePersonnalisee').verifierAccesCommandePersonnalisee;
+    assert.equal(commandesDiscord.verifierAccesCommandePersonnalisee, neutre);
+    assert.equal(commandesFluxer.verifierAccesCommandePersonnalisee, neutre);
+
+    // Et les deux adaptateurs l'exposent, pour que leur dispatch NATIF puisse
+    // l'appeler sans contexte neutre sous la main.
+    const [discord, fluxer] = adaptateurs();
+    const membre = { roles: ['77'], aPermission: () => false };
+    const ligne = { name: 'faq', access_mode: 'role', access_role_id: '77' };
+    const roles = new Map([['77', {}]]);
+    assert.equal(discord.verifierAccesCommandePersonnalisee(ligne, membre, { roles }), null);
+    assert.equal(fluxer.verifierAccesCommandePersonnalisee(ligne, membre, { roles }), null);
+});
+
+test('le chargeur de commandes est UNE seule mécanique, deux dérivations', () => {
+    const neutre = require('../bot/platform/chargeur-commandes');
+    assert.equal(commandesDiscord.enregistrerPanneaux, neutre.enregistrerPanneaux);
+    assert.equal(commandesFluxer.enregistrerPanneaux, neutre.enregistrerPanneaux);
+    assert.equal(commandesDiscord.refuserModuleHistorique, neutre.refuserModuleHistorique);
+    assert.equal(commandesFluxer.refuserModuleHistorique, neutre.refuserModuleHistorique);
+
+    // Le refus du format historique est donc EXACTEMENT le même message des
+    // deux côtés — c'était l'endroit le plus probable d'une divergence.
+    const historique = { data: { name: 'vieux' }, execute() {} };
+    const messageDiscord = (() => {
+        try { commandesDiscord.entreeDepuisExport(historique, 'vieux.js', null); } catch (e) { return e.message; }
+    })();
+    const messageFluxer = (() => {
+        try { commandesFluxer.entreeDepuisExport(historique, 'vieux.js', null); } catch (e) { return e.message; }
+    })();
+    assert.equal(messageFluxer, messageDiscord);
+    assert.match(messageDiscord, /vieux\.js/);
+});
+
+test('le chargeur de panneaux est UNE seule fonction', () => {
+    const neutre = require('../bot/platform/panneaux').chargerPanneaux;
+    assert.equal(typeof neutre, 'function');
+
+    // Les deux adaptateurs délèguent à ce même chargeur : on le prouve en
+    // enregistrant un panneau depuis un dossier temporaire, des deux côtés.
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-panneaux-'));
+    const chemin = JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'panneaux'));
+    fs.writeFileSync(path.join(dossier, 'temoin.js'), `
+        const { definirPanneau } = require(${chemin});
+        module.exports = definirPanneau({ nom: 'temoin-miroir', executer: async () => {} });
+    `);
+
+    for (const adaptateur of adaptateurs()) {
+        const charges = adaptateur.chargerPanneaux({ dossier });
+        assert.deepEqual(
+            charges.map(c => [c.nom, c.enregistre]), [['temoin-miroir', true]],
+            `${adaptateur.nom} : le panneau autonome doit être enregistré`,
+        );
+    }
+    fs.rmSync(dossier, { recursive: true, force: true });
+});
+
+test('l\'arithmétique des snowflakes est UNE seule fonction, une époque par plateforme', () => {
+    const neutre = require('../bot/platform/snowflake');
+    assert.equal(snowflakeDiscord.dateDuSnowflake, neutre.dateDuSnowflake);
+    assert.equal(snowflakeFluxer.dateDuSnowflake, neutre.dateDuSnowflake);
+    // Les deux plateformes partagent l'époque, chacune la déclare avec sa source.
+    assert.equal(snowflakeDiscord.EPOQUE_SNOWFLAKE, snowflakeFluxer.EPOQUE_SNOWFLAKE);
+    assert.equal(snowflakeFluxer.EPOQUE_SNOWFLAKE, 1420070400000n);
+    // Un identifiant illisible rend « je ne sais pas », jamais une date inventée.
+    assert.equal(neutre.dateDuSnowflake('pas-un-identifiant'), null);
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  Les quatre ajouts au contrat, réalisés des deux côtés
+// ═══════════════════════════════════════════════════════════════
+
+test('poserPanneau accepte un corps composé des deux côtés', async () => {
+    // Les mentions d'un embed ne notifient personne : un panneau de ticket doit
+    // pouvoir porter `contenu` ET `embeds` dans LE MÊME message que ses choix.
+    const envoyes = [];
+    const faireAdaptateurFactice = (adaptateur) => {
+        adaptateur.api.envoyerMessage = async (canalId, contenu) => {
+            envoyes.push({ plateforme: adaptateur.nom, canalId, contenu });
+            return { id: 'm1', canalId };
+        };
+        adaptateur.api.ajouterReaction = async () => null;
+        adaptateur.enregistrerPanneauPersistant = () => {};
+        return adaptateur;
+    };
+
+    const corps = { contenu: '<@&77>', embeds: [{ titre: 'Nouveau ticket', description: 'Bonjour' }] };
+    const choix = [{ cle: 'fermer', libelle: 'Fermer', emoji: '🔒' }];
+
+    for (const [adaptateur, poser] of [
+        [faireAdaptateurFactice(creerAdaptateurDiscord({ client: clientDiscord(), env: {} })), contexteDiscord.poserPanneau],
+        [faireAdaptateurFactice(creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } })), contexteFluxer.poserPanneau],
+    ]) {
+        await poser(adaptateur, '3', corps, choix, { panneau: 'ticket-miroir' });
+    }
+
+    assert.equal(envoyes.length, 2);
+    for (const envoi of envoyes) {
+        assert.equal(envoi.contenu.contenu, '<@&77>', `${envoi.plateforme} : la mention doit rester dans le message`);
+        assert.equal(envoi.contenu.embeds.length, 1, `${envoi.plateforme} : l'embed doit être conservé`);
+    }
+});
+
+test('rendreChoix accepte rangées et « nouvelleRangee » des deux côtés', () => {
+    const parRangees = [
+        [{ cle: 'a', libelle: 'A', emoji: '1️⃣' }],
+        [{ cle: 'b', libelle: 'B', emoji: '2️⃣' }, { cle: 'c', libelle: 'C', emoji: '3️⃣' }],
+    ];
+    const parMarqueur = [
+        { cle: 'a', libelle: 'A', emoji: '1️⃣' },
+        { cle: 'b', libelle: 'B', emoji: '2️⃣', nouvelleRangee: true },
+        { cle: 'c', libelle: 'C', emoji: '3️⃣' },
+    ];
+
+    // Côté Discord, la mise en page se voit dans les rangées de boutons.
+    assert.equal(renderDiscord.rendreChoix(parRangees, 'p').length, 2);
+    assert.equal(renderDiscord.rendreChoix(parMarqueur, 'p').length, 2);
+
+    // Côté Fluxer, elle n'a pas de rendu — mais la forme d'entrée passe, et
+    // l'ORDRE déclaré est conservé : c'est lui qui décide de l'ordre des
+    // réactions apposées.
+    for (const forme of [parRangees, parMarqueur]) {
+        const { reactions } = renderFluxer.rendreChoix(forme, 'p');
+        assert.deepEqual(reactions.map(r => r.cle), ['a', 'b', 'c']);
+    }
+
+    // Et le découpage est calculé à l'identique des deux côtés : un descripteur
+    // valide sur une plateforme doit l'être sur l'autre.
+    for (const forme of [parRangees, parMarqueur]) {
+        assert.deepEqual(renderFluxer.decouperRangees(forme), renderDiscord.decouperRangees(forme));
+    }
+    for (const rendre of [renderDiscord.decouperRangees, renderFluxer.decouperRangees]) {
+        assert.throws(() => rendre([[{ cle: 'a' }], { cle: 'b' }]), /mélange de choix et de rangées/);
+    }
+});
+
+test('api.modifierPanneau exige les mêmes arguments des deux côtés', async () => {
+    const [discord, fluxer] = adaptateurs();
+    for (const adaptateur of [discord, fluxer]) {
+        await assert.rejects(
+            () => adaptateur.api.modifierPanneau('3', '5', 'contenu', [], { panneau: 'a:b' }),
+            /nom de panneau invalide/,
+            `${adaptateur.nom} : un nom de panneau ambigu doit être refusé`,
+        );
+        await assert.rejects(
+            () => adaptateur.api.modifierPanneau(null, null, 'contenu', [], { panneau: 'ok' }),
+            /obligatoires/,
+            `${adaptateur.nom} : le salon et le message sont obligatoires`,
         );
     }
 });

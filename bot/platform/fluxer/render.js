@@ -325,7 +325,7 @@ function avecLegende(embedNeutre, legende) {
  * @param {string} [panneau]
  * @returns {string|object} corps NEUTRE, légende incluse
  */
-function corpsPanneau(contenuOuEmbed, choix, panneau = null) {
+function corpsPanneau(contenuOuEmbed, choix, panneau) {
     if (contenuOuEmbed && typeof contenuOuEmbed === 'object'
         && !Array.isArray(contenuOuEmbed) && contenuOuEmbed.composants !== undefined) {
         throw new Error(
@@ -338,25 +338,66 @@ function corpsPanneau(contenuOuEmbed, choix, panneau = null) {
 }
 
 /**
- * Ramène une déclaration de choix à une liste plate.
+ * Découpe une liste de choix en rangées.
  *
- * Le contrat accepte deux marqueurs de RANGÉE, pour que l'appelant puisse
- * décider de la disposition des boutons côté Discord :
- *   - un tableau de tableaux, une entrée par rangée ;
- *   - un `nouvelleRangee: true` posé sur le choix qui ouvre une rangée.
+ * ⚠️ SANS OBJET ICI, et volontairement présent quand même.
  *
- * Les deux sont SANS OBJET ici : une réaction n'a pas de rangée, les emojis
- * s'alignent comme le client les affiche. La forme d'entrée doit néanmoins être
- * acceptée sans erreur — un descripteur unique sert les deux plateformes, et
- * refuser la mise en page de l'une rendrait ce descripteur non portable.
+ * Le découpage est une donnée de MISE EN PAGE : « ces trois boutons vont
+ * ensemble » se dit de la même façon partout. Fluxer, lui, n'a pas de rangées —
+ * un choix y est une réaction, et les emojis s'alignent comme le client les
+ * affiche. Mais un descripteur unique sert les DEUX plateformes : refuser ici
+ * une mise en page valide là-bas rendrait ce descripteur non portable, et
+ * l'accepter sans la VALIDER laisserait passer un mélange que Discord refuse —
+ * qui ne se découvrirait qu'à la bascule.
  *
- * L'ordre déclaré est conservé de bout en bout : c'est lui qui décide de l'ordre
+ * Les trois écritures, identiques à celles de `discord/render.js` :
+ *   • un tableau PLAT — rempli par rangées de cinq, le défaut ;
+ *   • un tableau de RANGÉES, `[[a, b, c], [d, e]]` ;
+ *   • un tableau plat dont un choix porte `nouvelleRangee: true`.
+ *
+ * @param {Array} choix
+ * @returns {Array<Array>} les rangées, vides écartées
+ */
+function decouperRangees(choix) {
+    const rangeesExplicites = choix.filter(entree => Array.isArray(entree));
+    if (rangeesExplicites.length > 0) {
+        if (rangeesExplicites.length !== choix.length) {
+            throw new Error(
+                'ctx.choose : mélange de choix et de rangées. Passez un tableau PLAT de choix, '
+                + 'ou un tableau de rangées — jamais les deux dans la même liste.'
+            );
+        }
+        return choix.filter(rangee => rangee.length > 0);
+    }
+
+    if (!choix.some(option => option?.nouvelleRangee)) {
+        const rangees = [];
+        for (let debut = 0; debut < choix.length; debut += BOUTONS_PAR_RANGEE) {
+            rangees.push(choix.slice(debut, debut + BOUTONS_PAR_RANGEE));
+        }
+        return rangees;
+    }
+
+    const rangees = [[]];
+    for (const option of choix) {
+        if (option?.nouvelleRangee && rangees[rangees.length - 1].length > 0) rangees.push([]);
+        rangees[rangees.length - 1].push(option);
+    }
+    return rangees.filter(rangee => rangee.length > 0);
+}
+
+/**
+ * Ramène une déclaration de choix à une liste plate, quelle que soit sa mise en
+ * page.
+ *
+ * L'ORDRE déclaré est conservé de bout en bout : c'est lui qui décide de l'ordre
  * dans lequel les réactions sont apposées, donc de l'ordre que les gens voient.
+ * Les rangées, elles, disparaissent — elles n'ont pas de rendu ici.
  */
 function aplatirChoix(choix) {
     if (!Array.isArray(choix)) return [];
-    // `nouvelleRangee` est lu puis ignoré : il ne descend pas dans la sortie.
-    return choix.flatMap(entree => (Array.isArray(entree) ? entree : [entree]))
+    return decouperRangees(choix)
+        .flat()
         .filter(entree => entree && typeof entree === 'object');
 }
 
@@ -504,6 +545,7 @@ function rendreSelecteurMembre(identifiant = null, { perimetre, membres = [], ex
 }
 
 module.exports = {
+    decouperRangees,
     aplatirChoix,
     corpsPanneau,
     composerPanneau,

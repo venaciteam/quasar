@@ -17,16 +17,17 @@
 //  jamais déployée — ou l'inverse — est un symptôme qui ne désigne pas sa cause.
 // ═══════════════════════════════════════════════════════════════
 
-const fs = require('fs');
-const path = require('path');
 const { SlashCommandBuilder } = require('discord.js');
 const { bitfield } = require('./permissions');
 const { versTypesDiscord } = require('./channels');
+const { trouverSousCommande } = require('../commands');
 const {
-    estDescripteurNeutre,
-    commandeDisponible,
-    trouverSousCommande,
-} = require('../commands');
+    chargerCommandes: chargerCommandesNeutre,
+    entreeDepuisExport: entreeDepuisExportNeutre,
+    enregistrerPanneaux,
+    refuserModuleHistorique,
+} = require('../chargeur-commandes');
+const { verifierAccesCommandePersonnalisee } = require('../accesCommandePersonnalisee');
 
 const NOM_PLATEFORME = 'discord';
 
@@ -190,112 +191,48 @@ function entreeDepuisDescripteur(descripteur, fichier, adaptateur) {
 }
 
 /**
- * Refus d'un module resté au format historique.
+ * Charge toutes les commandes de `bot/commands/`.
  *
- * Nomme le fichier ET la correction : un « commande ignorée » anonyme
- * enverrait chercher le défaut dans le chargeur, et un simple `continue`
- * silencieux ferait disparaître une commande du bot sans un mot.
- */
-function refuserModuleHistorique(nom, fichier) {
-    return new Error(
-        `bot/commands/${fichier} : la commande « ${nom} » est au format historique `
-        + '`{ data: SlashCommandBuilder, execute(interaction) }`, que le chargeur n\'accepte plus. '
-        + 'Décrivez-la avec `definirCommande({ nom, description, permission | accesParDefaut, options, executer(ctx) })` '
-        + '(bot/platform/commands.js) : c\'est le descripteur que les deux plateformes dérivent.'
-    );
-}
-
-/**
- * Convertit un objet exporté par un fichier de bot/commands/ en entrée, ou rend
- * `null` si ce n'en est pas une.
- *
- * @throws {Error} si la valeur est une commande au format historique.
- */
-function entreeDepuisExport(valeur, fichier, adaptateur) {
-    if (estDescripteurNeutre(valeur)) {
-        // Une commande non disponible sur la plateforme active (`plateformes:
-        // ['discord']` pour la famille musique) est écartée AVANT le
-        // déploiement : la déployer puis refuser de l'exécuter afficherait une
-        // commande morte dans le sélecteur.
-        if (!commandeDisponible(valeur, NOM_PLATEFORME)) return null;
-        return entreeDepuisDescripteur(valeur, fichier, adaptateur);
-    }
-    // Le format historique se reconnaît à son builder. On LÈVE plutôt que de
-    // rendre `null` : rendre `null` ici, c'est une commande qui disparaît du
-    // bot et du déploiement sans erreur ni journal.
-    if (typeof valeur?.data?.name === 'string' && typeof valeur?.execute === 'function') {
-        throw refuserModuleHistorique(valeur.data.name, fichier);
-    }
-    return null;
-}
-
-/**
- * Charge toutes les commandes d'un dossier.
+ * Le parcours, le refus du format historique et l'enregistrement des panneaux
+ * vivent dans `bot/platform/chargeur-commandes.js`, partagés avec Fluxer : seule
+ * la DÉRIVATION est propre à Discord, et c'est elle qu'on passe ici.
  *
  * @param {object} options
- * @param {string}   options.dossier      chemin de bot/commands/
- * @param {string[]} [options.exclus]     fichiers à ignorer (DISABLED_COMMAND_FILES)
+ * @param {string}   options.dossier
+ * @param {string[]} [options.exclus]
  * @param {object}   [options.adaptateur] requis pour EXÉCUTER, inutile pour déployer
- * @returns {EntreeCommande[]}
+ * @returns {import('../chargeur-commandes').EntreeCommande[]}
  */
 function chargerCommandes({ dossier, exclus = [], adaptateur = null } = {}) {
-    const fichiers = fs.readdirSync(dossier)
-        .filter(fichier => fichier.endsWith('.js') && !exclus.includes(fichier));
-
-    const entrees = [];
-    for (const fichier of fichiers) {
-        const mod = require(path.join(dossier, fichier));
-
-        // Un fichier peut exporter une commande unique ou plusieurs (ex :
-        // musiccontrols.js). L'export direct est essayé d'abord ; s'il n'en est
-        // pas un, on parcourt ses valeurs.
-        const directe = entreeDepuisExport(mod, fichier, adaptateur);
-        if (directe) {
-            entrees.push(directe);
-            continue;
-        }
-        if (mod && typeof mod === 'object') {
-            for (const valeur of Object.values(mod)) {
-                const entree = entreeDepuisExport(valeur, fichier, adaptateur);
-                if (entree) entrees.push(entree);
-            }
-        }
-    }
-
-    if (adaptateur) enregistrerPanneaux(entrees, adaptateur);
-
-    return entrees;
+    return chargerCommandesNeutre({
+        dossier,
+        exclus,
+        adaptateur,
+        nomPlateforme: NOM_PLATEFORME,
+        fabriquerEntree: (descripteur, fichier) => entreeDepuisDescripteur(descripteur, fichier, adaptateur),
+    });
 }
 
-/**
- * Enregistre les panneaux persistants déclarés par les commandes.
- *
- * C'est ce qui tient la promesse du registre : un lot déclare `panneaux` dans
- * son descripteur, ses clics sont routés, et aucun fichier partagé n'est
- * touché. Sans cette étape, `surPanneau` existait sans appelant et un lot
- * n'avait que deux issues, toutes deux interdites — appeler l'adaptateur
- * au chargement, ou écrire son préfixe en dur dans `bot/index.js`.
- *
- * Les collisions sont détectées ICI, et pas seulement par `surPanneau`, pour
- * que le message nomme LES DEUX commandes en cause : « déjà enregistré » ne dit
- * pas laquelle, et six agents travaillent en parallèle sur des fichiers qu'ils
- * ne se relisent pas.
- */
-function enregistrerPanneaux(entrees, adaptateur) {
-    for (const entree of entrees) {
-        for (const [panneau, handler] of Object.entries(entree.descripteur?.panneaux || {})) {
-            // La collision est détectée par `surPanneau`, qui connaît AUSSI les
-            // panneaux déclarés hors commande (modules de `bot/panneaux/`) : la
-            // détecter ici ne verrait que la moitié des déclarations.
-            adaptateur.surPanneau(panneau, handler, `/${entree.nom}`);
-        }
-    }
+/** @see bot/platform/chargeur-commandes.js */
+function entreeDepuisExport(valeur, fichier, adaptateur) {
+    return entreeDepuisExportNeutre(valeur, fichier, {
+        nomPlateforme: NOM_PLATEFORME,
+        fabriquerEntree: (descripteur, nomFichier) => entreeDepuisDescripteur(descripteur, nomFichier, adaptateur),
+    });
 }
 
 module.exports = {
     construireSlashCommand,
     chargerCommandes,
+    entreeDepuisExport,
+    // Réexportés depuis la couche neutre : les deux adaptateurs partagent la
+    // MÊME fonction, pas une copie. `test/platform-fluxer-miroir.test.js` le
+    // vérifie par identité de référence — un `===`, pas une comparaison de
+    // comportement, parce que c'est la seule façon de prouver qu'un correctif
+    // appliqué d'un côté profite à l'autre.
     enregistrerPanneaux,
+    refuserModuleHistorique,
+    verifierAccesCommandePersonnalisee,
     AJOUT_OPTION,
     NOM_PLATEFORME,
 };

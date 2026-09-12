@@ -36,7 +36,7 @@ const {
     PREFIXE_PAR_DEFAUT,
 } = require('./commands');
 const { surEvenement, chargerEvenements, creerContexteEvenement, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
-const { chargerPanneaux } = require('./panneaux');
+const { chargerPanneaux } = require('../panneaux');
 const {
     creerContextePanneau, normaliserUtilisateur, normaliserMembre, normaliserCanal, normaliserRole,
 } = require('./context');
@@ -255,6 +255,27 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
             });
         },
 
+        /**
+         * Contrôle d'accès d'une commande PERSONNALISÉE.
+         *
+         * La règle vit dans `bot/platform/accesCommandePersonnalisee.js`,
+         * partagée par les deux adaptateurs : trois modes en base, un membre,
+         * ses rôles. Rien n'y connaît de plateforme.
+         *
+         * Elle est exposée ICI parce que son appelant est le dispatch NATIF —
+         * `bot/index.js` côté Discord, le parseur de cet adaptateur côté
+         * Fluxer — et qu'un appelant natif n'a pas de contexte neutre sous la
+         * main. Il a en revanche l'adaptateur.
+         *
+         * @param {object} ligne   ligne `custom_commands`
+         * @param {object|null} membre  membre NORMALISÉ par cet adaptateur
+         * @param {{roles?: Map|Set|object}} [options] rôles du serveur
+         * @returns {null|{titre, cause, action}} `null` = accès accordé
+         */
+        verifierAccesCommandePersonnalisee(ligne, membre, options) {
+            return verifierAccesCommandePersonnalisee(ligne, membre, options);
+        },
+
         /** @see bot/platform/fluxer/events.js pour la table et les payloads. */
         surEvenement(nomNeutre, handler, options) {
             return surEvenement(clientFluxer, adaptateur, nomNeutre, handler, options);
@@ -383,8 +404,8 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
     // deux côtés.
     //
     // Elles sont donc posées en non énumérable — la convention déjà employée
-    // pour `descripteur.data`, `entite.brut` et `err.codeNeutre` : accessibles à
-    // qui les nomme, invisibles à qui énumère.
+    // pour `err.codeNeutre` : accessibles à qui les nomme, invisibles à qui
+    // énumère.
     const interne = {
         /** Préfixe actif, lu par la dérivation des lignes d'usage. */
         prefixe,

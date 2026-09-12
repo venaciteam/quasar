@@ -1077,8 +1077,8 @@ function creerApi(client) {
     // deux adaptateurs, que le test de miroir compare clé pour clé — et cette
     // comparaison est le seul filet qui garantisse qu'une commande migrée trouve
     // bien la même chose des deux côtés. Elle est donc posée en NON ÉNUMÉRABLE,
-    // la même convention que `descripteur.data`, `entite.brut` et
-    // `err.codeNeutre` : accessible à qui la nomme, invisible à qui énumère.
+    // la même convention que `err.codeNeutre` : accessible à qui la nomme,
+    // invisible à qui énumère.
     Object.defineProperty(api, 'indiquerSaisie', {
         value: async (canalId) => rest().post(`/channels/${canalId}/typing`),
         enumerable: false,

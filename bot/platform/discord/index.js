@@ -17,9 +17,10 @@ const { creerCapacites } = require('../capabilities');
 const { creerApi } = require('./api');
 const { chargerCommandes, construireSlashCommand } = require('./commands');
 const { surEvenement, chargerEvenements, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
-const { chargerPanneaux } = require('./panneaux');
+const { chargerPanneaux } = require('../panneaux');
 const { creerContextePanneau } = require('./context');
 const { BITS } = require('./permissions');
+const { verifierAccesCommandePersonnalisee } = require('../accesCommandePersonnalisee');
 
 // Séparateur entre le préfixe d'un panneau neutre et la clé du choix. C'est
 // aussi lui qui distingue un `customId` de panneau d'un identifiant jetable de
@@ -193,6 +194,27 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
                 // aucune option, et n'a donc rien à lire dans l'interaction.
                 descripteur: { nom, description: nom, options: [] },
             });
+        },
+
+        /**
+         * Contrôle d'accès d'une commande PERSONNALISÉE.
+         *
+         * La règle vit dans `bot/platform/accesCommandePersonnalisee.js`,
+         * partagée par les deux adaptateurs : trois modes en base, un membre,
+         * ses rôles. Rien n'y connaît de plateforme.
+         *
+         * Elle est exposée ICI parce que son appelant est le dispatch NATIF —
+         * `bot/index.js` côté Discord, le parseur de cet adaptateur côté
+         * Fluxer — et qu'un appelant natif n'a pas de contexte neutre sous la
+         * main. Il a en revanche l'adaptateur.
+         *
+         * @param {object} ligne   ligne `custom_commands`
+         * @param {object|null} membre  membre NORMALISÉ par cet adaptateur
+         * @param {{roles?: Map|Set|object}} [options] rôles du serveur
+         * @returns {null|{titre, cause, action}} `null` = accès accordé
+         */
+        verifierAccesCommandePersonnalisee(ligne, membre, options) {
+            return verifierAccesCommandePersonnalisee(ligne, membre, options);
         },
 
         /** @see bot/platform/discord/events.js pour la table et les payloads. */

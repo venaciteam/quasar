@@ -80,17 +80,6 @@ const TRANSITIONS_RETENUES_PAR_API = Object.freeze({
     'bot/modules/antiraid/panic.js': 'api/routes/antiraid.js',
 });
 
-/**
- * `.brut` — l'objet discord.js attaché aux entités normalisées — a été retiré
- * des normaliseurs de l'adaptateur Discord à la consolidation.
- *
- * ⚠️ `bot/platform/fluxer/` est en cours d'écriture (lot 6) et en a repris le
- * motif. L'exception est temporaire et doit disparaître à la remise du lot : un
- * adaptateur n'a pas besoin d'exposer l'objet natif de sa plateforme, puisque
- * personne au-dessus n'a le droit de le lire.
- */
-const BRUT_TOLERE = Object.freeze(['bot/platform/fluxer/']);
-
 // ─── Balayage ───────────────────────────────────────────────────────────────
 
 /** Tous les `.js` d'un dossier, récursivement, en chemins relatifs à la racine. */
@@ -195,8 +184,9 @@ test('aucun accès à « .brut » : l\'échappatoire n\'existe plus', () => {
     // sans que rien ne l'indique. Les normaliseurs ne l'exposent plus ; ce test
     // empêche qu'on la remette, adaptateur compris.
     const fautifs = [];
+    // Plus AUCUNE exception : les deux adaptateurs l'ont retiré, et il n'y a
+    // pas de raison qu'un troisième le réintroduise.
     for (const [relatif, code] of CODE) {
-        if (BRUT_TOLERE.some(d => relatif.startsWith(d))) continue;
         if (/\w\.brut\b/.test(code) || /['"`]brut['"`]\s*,/.test(code)) fautifs.push(relatif);
     }
     assert.deepEqual(

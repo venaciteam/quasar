@@ -29,13 +29,14 @@
 //  fonctionnement normal.
 // ═══════════════════════════════════════════════════════════════
 
-const fs = require('fs');
-const path = require('path');
+const { trouverSousCommande } = require('../commands');
 const {
-    estDescripteurNeutre,
-    commandeDisponible,
-    trouverSousCommande,
-} = require('../commands');
+    chargerCommandes: chargerCommandesNeutre,
+    entreeDepuisExport: entreeDepuisExportNeutre,
+    enregistrerPanneaux,
+    refuserModuleHistorique,
+} = require('../chargeur-commandes');
+const { verifierAccesCommandePersonnalisee } = require('../accesCommandePersonnalisee');
 
 const NOM_PLATEFORME = 'fluxer';
 const PREFIXE_PAR_DEFAUT = '!';
@@ -415,76 +416,6 @@ function verifierAcces(descripteur, membre, { enPrive = false } = {}) {
 // ─── Commandes personnalisées ────────────────────────────────────────────────
 
 /**
- * Contrôle d'accès d'une commande personnalisée.
- *
- * Reproduit à l'identique `checkCustomCommandAccess` de `bot/index.js`, y
- * compris son contournement administrateur et sa raison d'être : on ne s'enferme
- * pas dehors de sa propre commande, et une configuration cassée (rôle supprimé,
- * mode inconnu en base) resterait sinon bloquée pour les seules personnes
- * capables de la corriger.
- *
- * Le code est réécrit plutôt que réutilisé parce que l'original lit une
- * interaction discord.js (`interaction.memberPermissions`,
- * `interaction.guild.roles.cache`). C'est un doublon SIGNALÉ : la règle
- * appartient au domaine, pas à la plateforme, et devrait vivre dans un module
- * neutre que les deux adaptateurs appelleraient (cf. compte-rendu du lot 6).
- */
-function verifierAccesCommandePersonnalisee(ligne, membre, { roles } = {}) {
-    const { effectiveAccessMode } = require('../../../api/services/database');
-    const mode = effectiveAccessMode(ligne.access_mode);
-    if (ligne.access_mode && mode !== ligne.access_mode) {
-        console.warn(
-            `[Quasar] Commande custom ${ligne.name} : mode d'accès inconnu "${ligne.access_mode}" `
-            + `— repli sur "${mode}".`
-        );
-    }
-
-    if (mode === 'everyone') return null;
-
-    if (!membre) {
-        return {
-            titre: 'Commande réservée au serveur',
-            cause: 'L\'accès à cette commande dépend de vos rôles ou de vos permissions, et je n\'arrive pas à les consulter ici.',
-            action: 'Relancez-la depuis un salon du serveur concerné. Si vous y êtes déjà, réessayez dans un instant.',
-        };
-    }
-
-    // Contournement administrateur, appliqué à TOUS les modes et AVANT leur
-    // évaluation. Un administrateur peut de toute façon s'attribuer n'importe
-    // quel rôle : la restriction ne lui interdisait rien, elle ne faisait que
-    // le gêner — et l'empêcher de réparer sa propre configuration.
-    if (membre.aPermission?.('ADMINISTRATOR')) return null;
-
-    if (mode === 'admins') {
-        return {
-            titre: 'Commande réservée aux administrateurs',
-            cause: 'Cette commande personnalisée est configurée pour les membres ayant la permission « Administrateur » sur ce serveur.',
-            action: 'Demandez à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    const roleId = ligne.access_role_id;
-    // Rôle configuré puis supprimé : plus personne ne peut le porter. On refuse
-    // — retomber sur « tout le monde » ouvrirait en grand une commande
-    // volontairement restreinte — et on le dit clairement.
-    if (!roleId || (roles && !roles.has(String(roleId)))) {
-        return {
-            titre: 'Commande momentanément indisponible',
-            cause: 'Cette commande est réservée à un rôle qui n\'existe plus sur le serveur : en dehors des administrateurs, personne ne peut donc l\'utiliser pour l\'instant.',
-            action: 'Signalez-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    if ((membre.roles || []).includes(String(roleId))) return null;
-
-    return {
-        titre: 'Commande réservée à un rôle',
-        cause: `Cette commande personnalisée est réservée aux membres ayant le rôle <@&${roleId}>, ainsi qu'aux administrateurs du serveur.`,
-        action: 'Si vous pensez que ce rôle devrait vous être attribué, demandez-le à un administrateur.',
-    };
-}
-
-/**
  * Corps du message d'une commande personnalisée.
  *
  * Les deux chemins divergent DÉLIBÉRÉMENT, exactement comme dans
@@ -573,87 +504,28 @@ function entreeDepuisDescripteur(descripteur, fichier, adaptateur) {
 }
 
 /**
- * Refus d'un module resté au format historique.
+ * Charge toutes les commandes de `bot/commands/` — descripteurs neutres seuls.
  *
- * Même message et même sévérité que côté Discord : on LÈVE, on ne rend pas
- * `null`. Rendre `null`, c'est une commande qui disparaît du bot sans erreur ni
- * journal — et sur Fluxer le symptôme serait pire encore, puisque son `execute`
- * attend une `ChatInputCommandInteraction` qui n'existe pas ici.
- */
-function refuserModuleHistorique(nom, fichier) {
-    return new Error(
-        `bot/commands/${fichier} : la commande « ${nom} » est au format historique `
-        + '`{ data: SlashCommandBuilder, execute(interaction) }`, que le chargeur n\'accepte plus. '
-        + 'Décrivez-la avec `definirCommande({ nom, description, permission | accesParDefaut, options, executer(ctx) })` '
-        + '(bot/platform/commands.js) : c\'est le descripteur que les deux plateformes dérivent.'
-    );
-}
-
-/**
- * Convertit un objet exporté par un fichier de bot/commands/ en entrée, ou rend
- * `null` si ce n'en est pas une.
- *
- * @throws {Error} si la valeur est une commande au format historique.
- */
-function entreeDepuisExport(valeur, fichier, adaptateur) {
-    if (estDescripteurNeutre(valeur)) {
-        // Une commande non disponible sur la plateforme active (`plateformes:
-        // ['discord']` pour la famille musique) est écartée AU CHARGEMENT : la
-        // charger puis refuser de l'exécuter la ferait apparaître dans l'aide
-        // dérivée du registre, donc proposer une commande morte.
-        if (!commandeDisponible(valeur, NOM_PLATEFORME)) return null;
-        return entreeDepuisDescripteur(valeur, fichier, adaptateur);
-    }
-    if (typeof valeur?.data?.name === 'string' && typeof valeur?.execute === 'function') {
-        throw refuserModuleHistorique(valeur.data.name, fichier);
-    }
-    return null;
-}
-
-/**
- * Charge toutes les commandes d'un dossier — descripteurs neutres exclusivement.
- *
- * La structure est celle du chargeur Discord, à la dérivation près — c'est un
- * doublon SIGNALÉ, et il désigne la bonne place de ce code : un chargeur neutre
- * dans `bot/platform/commands.js`, paramétré par la fabrique d'entrée de chaque
- * adaptateur. Le contrat étant figé pour ce lot, il n'est pas déplacé.
+ * Le parcours, le refus du format historique et l'enregistrement des panneaux
+ * vivent dans `bot/platform/chargeur-commandes.js`, partagés avec Discord :
+ * seule la DÉRIVATION est propre à Fluxer, et c'est elle qu'on passe ici.
  */
 function chargerCommandes({ dossier, exclus = [], adaptateur = null } = {}) {
-    const fichiers = fs.readdirSync(dossier)
-        .filter(fichier => fichier.endsWith('.js') && !exclus.includes(fichier));
-
-    const entrees = [];
-    for (const fichier of fichiers) {
-        const mod = require(path.join(dossier, fichier));
-
-        const directe = entreeDepuisExport(mod, fichier, adaptateur);
-        if (directe) { entrees.push(directe); continue; }
-        if (mod && typeof mod === 'object') {
-            for (const valeur of Object.values(mod)) {
-                const entree = entreeDepuisExport(valeur, fichier, adaptateur);
-                if (entree) entrees.push(entree);
-            }
-        }
-    }
-
-    if (adaptateur) enregistrerPanneaux(entrees, adaptateur);
-
-    return entrees;
+    return chargerCommandesNeutre({
+        dossier,
+        exclus,
+        adaptateur,
+        nomPlateforme: NOM_PLATEFORME,
+        fabriquerEntree: (descripteur, fichier) => entreeDepuisDescripteur(descripteur, fichier, adaptateur),
+    });
 }
 
-/**
- * Enregistre les panneaux persistants déclarés par les commandes.
- *
- * Les collisions sont détectées par `surPanneau`, qui connaît AUSSI les panneaux
- * déclarés hors commande : les détecter ici ne verrait que la moitié des
- * déclarations.
- */
-function enregistrerPanneaux(entrees, adaptateur) {
-    for (const entree of entrees) {
-        for (const [panneau, handler] of Object.entries(entree.descripteur?.panneaux || {})) {
-            adaptateur.surPanneau(panneau, handler, `/${entree.nom}`);
-        }
-    }
+/** @see bot/platform/chargeur-commandes.js */
+function entreeDepuisExport(valeur, fichier, adaptateur) {
+    return entreeDepuisExportNeutre(valeur, fichier, {
+        nomPlateforme: NOM_PLATEFORME,
+        fabriquerEntree: (descripteur, nomFichier) => entreeDepuisDescripteur(descripteur, nomFichier, adaptateur),
+    });
 }
 
 /**
@@ -742,12 +614,15 @@ module.exports = {
     decrireOption,
     construireSlashCommand,
     verifierAcces,
-    verifierAccesCommandePersonnalisee,
     rendreCommandePersonnalisee,
     chargerCommandes,
     entreeDepuisExport,
+    // Réexportés depuis la couche neutre : les deux adaptateurs partagent la
+    // MÊME fonction, pas une copie, et le test de miroir le vérifie par
+    // identité de référence.
     refuserModuleHistorique,
     enregistrerPanneaux,
+    verifierAccesCommandePersonnalisee,
     VRAI,
     FAUX,
 };
