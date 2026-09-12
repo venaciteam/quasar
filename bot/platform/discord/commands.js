@@ -266,19 +266,12 @@ function chargerCommandes({ dossier, exclus = [], adaptateur = null } = {}) {
  * ne se relisent pas.
  */
 function enregistrerPanneaux(entrees, adaptateur) {
-    const proprietaires = new Map();
-
     for (const entree of entrees) {
         for (const [panneau, handler] of Object.entries(entree.descripteur?.panneaux || {})) {
-            const dejaPris = proprietaires.get(panneau);
-            if (dejaPris) {
-                throw new Error(
-                    `Panneau « ${panneau} » déclaré deux fois : par /${dejaPris} et par /${entree.nom}. `
-                    + 'Un panneau appartient à une seule commande — ses clics ne peuvent pas être routés deux fois.'
-                );
-            }
-            proprietaires.set(panneau, entree.nom);
-            adaptateur.surPanneau(panneau, handler);
+            // La collision est détectée par `surPanneau`, qui connaît AUSSI les
+            // panneaux déclarés hors commande (modules de `bot/panneaux/`) : la
+            // détecter ici ne verrait que la moitié des déclarations.
+            adaptateur.surPanneau(panneau, handler, `/${entree.nom}`);
         }
     }
 }

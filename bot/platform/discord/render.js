@@ -18,6 +18,8 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
+    UserSelectMenuBuilder,
+    StringSelectMenuBuilder,
 } = require('discord.js');
 const { estEmbed, ressembleAEmbedDiscord } = require('../embed');
 
@@ -121,6 +123,8 @@ function rendreEmbed(neutre) {
     }
     if (neutre.image) builder.setImage(neutre.image);
     if (neutre.vignette) builder.setThumbnail(neutre.vignette);
+    // Rendu sur le TITRE : Discord n'affiche le lien d'un embed que là.
+    if (neutre.lien) builder.setURL(neutre.lien);
 
     const date = horodatageVersDate(neutre.horodatage);
     if (date) builder.setTimestamp(date);
@@ -273,8 +277,41 @@ function rendrePrompt(questions, options = {}, identifiant) {
     return modal;
 }
 
+/**
+ * Sélecteur de membre -> rangée de composants.
+ *
+ * Deux rendus selon le périmètre :
+ *   'serveur'    -> sélecteur natif d'utilisateur, qui laisse Discord faire la
+ *                   recherche et la pagination ;
+ *   'salonVocal' -> menu de choix construit sur une LISTE fournie, le sélecteur
+ *                   natif ne sachant pas se restreindre à un salon vocal.
+ *
+ * @param {string} identifiant customId du composant
+ * @param {{perimetre: string, membres?: Array<{id, nom}>, exemple?: string}} options
+ */
+function rendreSelecteurMembre(identifiant, { perimetre, membres = [], exemple } = {}) {
+    if (perimetre === 'salonVocal') {
+        const menu = new StringSelectMenuBuilder()
+            .setCustomId(identifiant)
+            .setPlaceholder(exemple || 'Choisissez une personne')
+            // 25 est le plafond d'un menu Discord. Au-delà, on tronque plutôt
+            // que de faire refuser le message entier : un salon vocal de plus de
+            // 25 personnes est déjà hors de l'usage de TempVoice.
+            .addOptions(membres.slice(0, 25).map(m => ({ label: m.nom ?? m.id, value: m.id })));
+        return new ActionRowBuilder().addComponents(menu);
+    }
+
+    const selecteur = new UserSelectMenuBuilder()
+        .setCustomId(identifiant)
+        .setPlaceholder(exemple || 'Choisissez une personne')
+        .setMinValues(1)
+        .setMaxValues(1);
+    return new ActionRowBuilder().addComponents(selecteur);
+}
+
 module.exports = {
     rendreEmbed,
+    rendreSelecteurMembre,
     rendreContenu,
     rendreFichier,
     CLES_CORPS,

@@ -25,6 +25,7 @@ const CAPACITES_PAR_DEFAUT = Object.freeze({
     timeout: false,        // timeout de communication natif
     bulkDelete: false,     // suppression de messages en lot
     fils: false,           // threads
+    pauseInvitations: false, // suspension temporaire des invitations du serveur
 });
 
 const NOMS_CAPACITES = Object.freeze(Object.keys(CAPACITES_PAR_DEFAUT));

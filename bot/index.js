@@ -214,6 +214,22 @@ function createBot({ plateforme = null } = {}) {
         surErreur: signalerIncidentEvent,
     });
 
+    // Panneaux persistants sans commande — ceux des modules configurés depuis le
+    // dashboard, comme l'arbitrage des sanctions. Chargés APRÈS les commandes :
+    // une collision de nom doit désigner la déclaration qui arrive, pas celle
+    // qui était déjà là.
+    const panneauxAutonomes = platform.chargerPanneaux({
+        dossier: path.join(__dirname, 'panneaux'),
+        surErreur: (err, { panneau }) => signalerIncidentEvent(err, { evenement: `panneau ${panneau}` }),
+    });
+    for (const panneau of panneauxAutonomes) {
+        console.log(
+            panneau.enregistre
+                ? `[Quasar] Panneau enregistré: ${panneau.nom} (module)`
+                : `[Quasar] Panneau ignoré: ${panneau.nom} — capacité absente sur ${platform.nom}.`
+        );
+    }
+
     for (const evenement of evenements) {
         // Un handler écarté faute de capacité doit se VOIR : c'est normal côté
         // Fluxer (pas d'AutoMod), et ce serait un défaut côté Discord.

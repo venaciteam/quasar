@@ -227,7 +227,9 @@ test('surPanneau refuse un nom de panneau ambigu ou déjà pris', () => {
     const { client } = faireClient();
     const adaptateur = creerAdaptateurDiscord({ client });
     adaptateur.surPanneau('ticket', () => {});
-    assert.throws(() => adaptateur.surPanneau('ticket', () => {}), /déjà enregistré/);
+    // Sans source déclarée, le message dit seulement qu'il y a doublon ; avec
+    // deux sources, il les nomme (cf. platform-contrat-07).
+    assert.throws(() => adaptateur.surPanneau('ticket', () => {}), /déclaré deux fois/);
     // Un « : » dans le préfixe rendrait la clé du choix indéchiffrable.
     assert.throws(() => adaptateur.surPanneau('a:b', () => {}), /nom de panneau invalide/);
     assert.throws(() => adaptateur.surPanneau('', () => {}), /nom de panneau invalide/);

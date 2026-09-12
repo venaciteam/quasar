@@ -114,6 +114,8 @@ test('Discord déclare les sept capacités de la table §4.2', () => {
     assert.deepEqual({ ...capacites }, {
         interactions: true, ephemere: true, automod: true,
         audioBot: true, timeout: true, bulkDelete: true, fils: true,
+        // Action d'incident « pause des invitations » : Discord l'a, Fluxer non.
+        pauseInvitations: true,
     });
 });
 

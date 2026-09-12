@@ -11,11 +11,13 @@
 //  ce qui laisse `bot/index.js` maître du cycle de vie.
 // ═══════════════════════════════════════════════════════════════
 
+const { Routes } = require('discord.js');
 const { creerClient } = require('./client');
 const { creerCapacites } = require('../capabilities');
 const { creerApi } = require('./api');
 const { chargerCommandes, construireSlashCommand } = require('./commands');
 const { surEvenement, chargerEvenements, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
+const { chargerPanneaux } = require('./panneaux');
 const { creerContextePanneau } = require('./context');
 const { BITS } = require('./permissions');
 
@@ -24,6 +26,9 @@ const { BITS } = require('./permissions');
 // ne peuvent donc pas se confondre, et le routage neutre peut passer en premier
 // sans risquer d'intercepter un bouton pas encore migré.
 const SEPARATEUR_PANNEAU = ':';
+
+// Type CHAT_INPUT dans l'API Discord — la forme d'une commande personnalisée.
+const TYPE_COMMANDE_TEXTE = 1;
 
 // Discord sait tout faire de ce que Quasar demande. La table §4.2 de la DA est
 // reprise ici colonne par colonne — c'est le seul endroit où elle est écrite
@@ -36,6 +41,9 @@ const CAPACITES_DISCORD = creerCapacites({
     timeout: true,
     bulkDelete: true,
     fils: true,
+    // Action d'incident « pause des invitations », sur laquelle repose le mode
+    // panique de l'anti-raid. Fluxer n'a pas d'équivalent.
+    pauseInvitations: true,
 });
 
 /**
@@ -47,10 +55,15 @@ const CAPACITES_DISCORD = creerCapacites({
 function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
     const clientDiscord = client || creerClient();
 
-    // Préfixe -> handler de panneau persistant. Vit sur l'adaptateur, donc pour
-    // la durée du processus : un panneau posté avant un redémarrage redevient
-    // routable dès que son lot s'est réenregistré au démarrage suivant.
+    // Nom de panneau -> handler. Vit sur l'adaptateur, donc pour la durée du
+    // processus : un panneau posté avant un redémarrage redevient routable dès
+    // que sa déclaration s'est réenregistrée au démarrage suivant.
     const panneaux = new Map();
+    // Nom de panneau -> d'où vient la déclaration (« /ticket », « module
+    // defer »). Sert uniquement au message de collision : « déjà enregistré »
+    // ne dit pas PAR QUI, et les deux déclarations peuvent venir de deux lots
+    // qui ne se relisent pas.
+    const sourcesPanneaux = new Map();
 
     const adaptateur = {
         nom: 'discord',
@@ -100,6 +113,59 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
             return deployCommands(clientDiscord, entrees);
         },
 
+        // ─── Commandes personnalisées, serveur par serveur ───────────────────
+        //
+        // Sur l'ADAPTATEUR et non sur `api`, comme `enregistrerCommandes` : ce
+        // n'est pas un appel REST générique, c'est l'enregistrement d'une
+        // commande auprès de la plateforme, et chacune le fait à sa façon.
+        //
+        // Les deux méthodes sont INERTES quand `capacites.interactions` est
+        // faux : sur Fluxer, une commande personnalisée sera une commande
+        // préfixée résolue en base par le parseur, il n'y a rien à déployer.
+        // Elles rendent alors `true` — « il n'y a rien à faire » est un succès,
+        // pas un échec, et le code métier n'a pas à tester la plateforme.
+
+        /**
+         * @param {string} guildeId
+         * @param {{nom: string, description: string}} commande
+         * @returns {Promise<boolean>} true si la commande est enregistrée
+         */
+        async deployerCommandeServeur(guildeId, { nom, description } = {}) {
+            if (!adaptateur.capacites.interactions) return true;
+            try {
+                await clientDiscord.rest.post(
+                    Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, guildeId),
+                    { body: { name: nom, description, type: TYPE_COMMANDE_TEXTE } },
+                );
+                return true;
+            } catch (err) {
+                console.error('[Quasar] Erreur déploiement commande personnalisée :', err?.message || err);
+                return false;
+            }
+        },
+
+        /**
+         * @returns {Promise<boolean>} true si la commande n'est plus
+         *   enregistrée — y compris quand elle ne l'était déjà pas.
+         */
+        async retirerCommandeServeur(guildeId, nom) {
+            if (!adaptateur.capacites.interactions) return true;
+            try {
+                const route = Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, guildeId);
+                const commandes = await clientDiscord.rest.get(route);
+                const cible = commandes.find(c => c.name === nom);
+                if (cible) {
+                    await clientDiscord.rest.delete(
+                        Routes.applicationGuildCommand(env.DISCORD_CLIENT_ID, guildeId, cible.id),
+                    );
+                }
+                return true;
+            } catch (err) {
+                console.error('[Quasar] Erreur retrait commande personnalisée :', err?.message || err);
+                return false;
+            }
+        },
+
         /** @see bot/platform/discord/events.js pour la table et les payloads. */
         surEvenement(nomNeutre, handler, options) {
             return surEvenement(clientDiscord, adaptateur, nomNeutre, handler, options);
@@ -113,6 +179,11 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
         /** Charge bot/events/ dans les deux formats et branche les handlers. */
         chargerEvenements(options) {
             return chargerEvenements({ ...options, adaptateur });
+        },
+
+        /** Charge bot/panneaux/ — les panneaux qui n'ont pas de commande. */
+        chargerPanneaux(options) {
+            return chargerPanneaux({ ...options, adaptateur });
         },
 
         // ─── Panneaux persistants ────────────────────────────────────────────
@@ -136,8 +207,10 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
          *   `ctx` est un contexte complet (repondre, prompt, choose, api, db) et
          *   l'interaction y arrive NON acquittée : le handler peut donc ouvrir
          *   un formulaire directement, et doit répondre dans les 3 secondes.
+         * @param {string} [source]  d'où vient la déclaration, pour le message
+         *   de collision. Facultatif : un appel direct n'a rien à déclarer.
          */
-        surPanneau(panneau, handler) {
+        surPanneau(panneau, handler, source = null) {
             if (typeof panneau !== 'string' || !panneau || panneau.includes(SEPARATEUR_PANNEAU)) {
                 throw new Error(
                     `surPanneau : nom de panneau invalide « ${panneau} ». Attendu une chaîne non vide `
@@ -145,10 +218,17 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
                 );
             }
             if (panneaux.has(panneau)) {
-                throw new Error(`surPanneau : le panneau « ${panneau} » est déjà enregistré.`);
+                const dejaPris = sourcesPanneaux.get(panneau);
+                throw new Error(
+                    `Panneau « ${panneau} » déclaré deux fois`
+                    + `${dejaPris && source ? ` : par ${dejaPris} et par ${source}` : ''}`
+                    + '. Un panneau n\'appartient qu\'à une déclaration — ses clics ne peuvent pas '
+                    + 'être routés deux fois.'
+                );
             }
             panneaux.set(panneau, handler);
-            return () => panneaux.delete(panneau);
+            if (source) sourcesPanneaux.set(panneau, source);
+            return () => { panneaux.delete(panneau); sourcesPanneaux.delete(panneau); };
         },
 
         /**

@@ -27,8 +27,9 @@ const { marquerErreur, marquerErreursApi } = require('./erreurs');
 const { exigerTypeCanalCanonique } = require('../channels');
 const { TYPES: TYPES_CANAL_DISCORD } = require('./channels');
 const { rendreContenu } = require('./render');
-const { normaliserMembre, normaliserRole, normaliserCanal, normaliserGuilde } = require('./context');
+const { normaliserMembre, normaliserUtilisateur, normaliserRole, normaliserCanal, normaliserGuilde } = require('./context');
 const { normaliserMessage } = require('./events');
+const { dateDuSnowflake } = require('./snowflake');
 
 // Discord refuse la suppression groupée des messages de plus de 14 jours, et
 // rejette le LOT ENTIER si un seul dépasse (erreur 50034). On filtre donc en
@@ -36,9 +37,8 @@ const { normaliserMessage } = require('./events');
 const AGE_MAX_SUPPRESSION_LOT_MS = 14 * 24 * 60 * 60 * 1000;
 const TAILLE_LOT_SUPPRESSION = 100;
 
-// Époque des snowflakes Discord (2015-01-01). Fluxer utilise le même format :
-// l'âge d'un message se lit dans son identifiant, sans aucun appel réseau.
-const EPOQUE_SNOWFLAKE = 1420070400000n;
+// L'âge d'un message se lit dans son identifiant, sans aucun appel réseau.
+// La convention vit dans `./snowflake.js`, partagée avec `context.js`.
 
 // Permission exigée du BOT pour chaque action de sanction. C'est la moitié
 // « permission » de `verifierMembreSanctionnable` ; l'autre moitié est la
@@ -67,25 +67,97 @@ function absenceOuLeve(err, absences = ABSENCES) {
     throw err;
 }
 
-/** Horodatage d'émission porté par un snowflake. */
-function dateDuSnowflake(id) {
-    return Number((BigInt(id) >> 22n) + EPOQUE_SNOWFLAKE);
+// ─── Corps d'un message : discord.js -> REST ────────────────────────────────
+//
+// ⚠️ L'API REST attend du snake_case, et elle IGNORE EN SILENCE une clé qu'elle
+// ne connaît pas — elle ne la rejette pas. Un `allowedMentions` laissé en
+// camelCase ne produit donc aucune erreur : le verrou de mentions disparaît
+// simplement, et un contenu non maîtrisé posté par `api.envoyerMessage` peut
+// pinger @everyone. C'est exactement ce qui se passait.
+//
+// La table ci-dessous couvre TOUT ce que `rendreContenu` peut émettre, et
+// `corpsMessage` lève sur une clé absente : la prochaine clé ajoutée au rendu
+// ne pourra pas retraverser en silence.
+
+/** Clé produite par `rendreContenu` -> clé du corps REST. */
+const CLES_CORPS_REST = Object.freeze({
+    content: 'content',
+    embeds: 'embeds',
+    components: 'components',
+    allowedMentions: 'allowed_mentions',
+    // `files` ne fait PAS partie du corps : @discordjs/rest l'attend à côté de
+    // `body`, pas dedans. Cf. `requeteMessage`.
+    files: null,
+});
+
+/** Verrou de mentions : discord.js -> REST. */
+const CLES_MENTIONS_REST = Object.freeze({
+    parse: 'parse',
+    roles: 'roles',
+    users: 'users',
+    repliedUser: 'replied_user',
+});
+
+function mentionsRest(mentions) {
+    if (!mentions || typeof mentions !== 'object') return mentions;
+    const converti = {};
+    for (const [cle, valeur] of Object.entries(mentions)) {
+        const cleRest = CLES_MENTIONS_REST[cle];
+        if (!cleRest) {
+            throw new Error(
+                `Verrou de mentions : clé « ${cle} » inconnue du corps REST. `
+                + `Clés acceptées : ${Object.keys(CLES_MENTIONS_REST).join(', ')}.`
+            );
+        }
+        converti[cleRest] = valeur;
+    }
+    return converti;
 }
 
 /**
  * Corps REST d'un message, à partir d'un contenu ou d'un embed neutre.
  *
  * `rendreContenu` produit des structures discord.js (EmbedBuilder,
- * `files: [{ attachment, name }]`). L'API REST brute attend du JSON et
- * `files: [{ name, data }]` : la conversion est ici, et seulement ici.
+ * `allowedMentions`). La conversion vers le JSON de l'API est ici, et seulement
+ * ici. Les pièces jointes n'y figurent pas : voir `requeteMessage`.
  */
 function corpsMessage(contenu) {
     const rendu = rendreContenu(contenu);
-    if (rendu.embeds) rendu.embeds = rendu.embeds.map(e => (typeof e?.toJSON === 'function' ? e.toJSON() : e));
-    if (rendu.files) {
-        rendu.files = rendu.files.map(f => ({ name: f.name, data: f.attachment, contentType: f.contentType }));
+    const corps = {};
+
+    for (const [cle, valeur] of Object.entries(rendu)) {
+        if (!(cle in CLES_CORPS_REST)) {
+            throw new Error(
+                `Corps de message : clé « ${cle} » sans correspondance REST. `
+                + 'Ajoutez-la à CLES_CORPS_REST — une clé non convertie est ignorée en silence par Discord.'
+            );
+        }
+        const cleRest = CLES_CORPS_REST[cle];
+        if (cleRest === null) continue; // porté hors du corps (files)
+
+        if (cle === 'embeds') corps.embeds = valeur.map(e => (typeof e?.toJSON === 'function' ? e.toJSON() : e));
+        else if (cle === 'allowedMentions') corps.allowed_mentions = mentionsRest(valeur);
+        else corps[cleRest] = valeur;
     }
-    return rendu;
+
+    return corps;
+}
+
+/**
+ * Requête REST complète d'un message : le corps ET les pièces jointes.
+ *
+ * `@discordjs/rest` attend `files` À CÔTÉ de `body`, jamais dedans. Les y
+ * laisser produisait un champ JSON `files` que Discord ignore — la pièce jointe
+ * partait dans le vide, sans erreur. C'est le même défaut que le verrou de
+ * mentions, au même endroit.
+ */
+function requeteMessage(contenu) {
+    const rendu = rendreContenu(contenu);
+    const requete = { body: corpsMessage(contenu) };
+    if (rendu.files) {
+        requete.files = rendu.files.map(f => ({ name: f.name, data: f.attachment, contentType: f.contentType }));
+    }
+    return requete;
 }
 
 /**
@@ -203,11 +275,11 @@ function creerApi(client) {
             // Normalisé, et pas rendu brut : l'appelant s'en sert pour stocker
             // un identifiant de panneau en base, et une réponse REST en
             // snake_case l'obligerait à connaître la forme de l'API Discord.
-            return normaliserMessage(await rest().post(Routes.channelMessages(canalId), { body: corpsMessage(contenu) }));
+            return normaliserMessage(await rest().post(Routes.channelMessages(canalId), requeteMessage(contenu)));
         },
 
         async modifierMessage(canalId, messageId, contenu) {
-            return normaliserMessage(await rest().patch(Routes.channelMessage(canalId, messageId), { body: corpsMessage(contenu) }));
+            return normaliserMessage(await rest().patch(Routes.channelMessage(canalId, messageId), requeteMessage(contenu)));
         },
 
         /**
@@ -586,6 +658,80 @@ function creerApi(client) {
         },
 
         /** @returns {Promise<object|null>} `null` si le rôle n'existe plus ; lève sur une panne. */
+        /**
+         * Bannissement en cours d'une personne sur un serveur.
+         *
+         * @returns {Promise<{utilisateur: object, raison: string|null}|null>}
+         *   `null` s'il n'y a pas de bannissement. ⚠️ Un bannissement inconnu
+         *   remonte en 'deja_fait' et non en 'introuvable' — c'est le code d'une
+         *   LEVÉE déjà faite. Pour une lecture, les deux signifient « rien à
+         *   lire », d'où les trois absences acceptées ici.
+         */
+        async obtenirBannissement(guildeId, utilisateurId) {
+            try {
+                const guilde = await guildeDiscord(guildeId);
+                const ban = await guilde.bans.fetch(utilisateurId);
+                return { utilisateur: normaliserUtilisateur(ban.user), raison: ban.reason ?? null };
+            } catch (err) {
+                return absenceOuLeve(err, [...ABSENCES, CODES_NEUTRES.deja_fait]);
+            }
+        },
+
+        /**
+         * Permissions effectives d'un membre DANS UN SALON donné — overwrites
+         * appliqués, ce que `obtenirMembre().aPermission` ne fait pas.
+         *
+         * Sans elle, rien ne dit si le bot peut écrire dans un salon précis :
+         * l'envoi est tenté, et le motif de repli se déduit d'une erreur.
+         *
+         * @returns {Promise<{aPermission: (nom: string) => boolean}|null>}
+         *   `null` si le salon ou le membre est introuvable, ou si le salon n'a
+         *   pas de permissions propres (message privé).
+         */
+        async permissionsSurCanal(canalId, membreId) {
+            let canal;
+            try {
+                canal = client.channels.cache.get(canalId) || await client.channels.fetch(canalId);
+            } catch (err) {
+                return absenceOuLeve(err);
+            }
+            if (!canal || typeof canal.permissionsFor !== 'function') return null;
+
+            // Le membre est résolu d'abord : `permissionsFor` rend `null` sur un
+            // simple identifiant si le membre n'est pas en cache, ce qui ferait
+            // conclure « aucune permission » là où on ne sait rien.
+            let cible = membreId;
+            const guildeId = canal.guildId ?? canal.guild?.id;
+            if (guildeId) {
+                try {
+                    cible = await membreDiscord(guildeId, membreId);
+                } catch (err) {
+                    return absenceOuLeve(err);
+                }
+            }
+
+            const permissions = canal.permissionsFor(cible);
+            if (!permissions) return null;
+            return { aPermission: (nom) => aPermission(permissions, nom) };
+        },
+
+        /**
+         * Membres actuellement connectés à un salon vocal.
+         *
+         * @returns {Promise<object[]|null>} membres normalisés, `[]` si le salon
+         *   est vide, `null` si le salon n'existe plus ou n'est pas vocal.
+         */
+        async listerMembresVocal(canalId) {
+            let canal;
+            try {
+                canal = client.channels.cache.get(canalId) || await client.channels.fetch(canalId);
+            } catch (err) {
+                return absenceOuLeve(err);
+            }
+            if (!canal?.members || typeof canal.members.values !== 'function') return null;
+            return [...canal.members.values()].map(normaliserMembre);
+        },
+
         async obtenirRole(guildeId, roleId) {
             try {
                 const guilde = await guildeDiscord(guildeId);
@@ -594,6 +740,85 @@ function creerApi(client) {
             } catch (err) {
                 return absenceOuLeve(err);
             }
+        },
+
+        // ─── Serveur : suspension des invitations ────────────────────────────
+        //
+        // Le mode panique de l'anti-raid ferme la porte d'entrée d'un serveur.
+        // Discord l'expose par une « action d'incident » à durée, avec un repli
+        // permanent si elle est refusée. Fluxer n'a rien de tel : la capacité
+        // `pauseInvitations` le déclare, et le code métier la teste plutôt que
+        // de tester le nom de la plateforme.
+
+        /**
+         * Suspend les invitations du serveur.
+         *
+         * @param {string} guildeId
+         * @param {Date|number|null} jusquA  `null` LÈVE la pause
+         * @param {string} [raison]
+         * @returns {Promise<'incident'|'permanent'|'levee'>} la voie empruntée :
+         *   l'action d'incident à durée, le repli permanent, ou la levée. Le
+         *   repli n'est pas équivalent — il n'expire pas tout seul — et
+         *   l'appelant doit pouvoir le dire dans son journal.
+         */
+        async mettreInvitationsEnPause(guildeId, jusquA, raison) {
+            const guilde = await guildeDiscord(guildeId);
+
+            if (jusquA === null) {
+                await guilde.setIncidentActions({ invitesDisabledUntil: null });
+                if (guilde.features?.includes('INVITES_DISABLED')) {
+                    await guilde.disableInvites(false, raison);
+                }
+                return 'levee';
+            }
+
+            try {
+                await guilde.setIncidentActions({ invitesDisabledUntil: new Date(jusquA) });
+                return 'incident';
+            } catch {
+                // L'action d'incident est refusée (serveur non éligible, droits
+                // manquants) : on ferme quand même, mais SANS échéance. C'est le
+                // balayage du mode panique qui rouvrira.
+                await guilde.disableInvites(true, raison);
+                return 'permanent';
+            }
+        },
+
+        /**
+         * @returns {Promise<{enPauseJusqua: number|null, desactiveesEnDur: boolean}|null>}
+         *   `null` si le serveur est introuvable. `desactiveesEnDur` distingue
+         *   le repli permanent de la pause à échéance : les confondre laisserait
+         *   un serveur fermé indéfiniment.
+         */
+        async obtenirEtatInvitations(guildeId) {
+            let guilde;
+            try {
+                guilde = await guildeDiscord(guildeId);
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue]);
+            }
+            const brut = guilde.incidentsData?.invitesDisabledUntil ?? null;
+            return {
+                enPauseJusqua: brut ? new Date(brut).getTime() : null,
+                desactiveesEnDur: Boolean(guilde.features?.includes('INVITES_DISABLED')),
+            };
+        },
+
+        /**
+         * Identifiants des serveurs où le bot est présent.
+         *
+         * ⚠️ `null` signifie « INDÉTERMINABLE », pas « aucun ». C'est le
+         * garde-fou du balayage du mode panique : au démarrage, la passerelle
+         * n'a pas encore livré la liste des serveurs, et conclure « aucun
+         * serveur » ferait supprimer des échéances — un serveur resterait fermé
+         * indéfiniment. `[]` veut dire « connecté, et réellement aucun serveur ».
+         *
+         * @returns {Promise<string[]|null>}
+         */
+        async listerGuildes() {
+            const pret = typeof client.isReady === 'function' ? client.isReady() : Boolean(client.user);
+            if (!pret) return null;
+            return [...client.guilds.cache.keys()];
         },
     });
 }
@@ -608,6 +833,9 @@ module.exports = {
     resoudreBits,
     encoderEmoji,
     corpsMessage,
+    requeteMessage,
+    CLES_CORPS_REST,
+    CLES_MENTIONS_REST,
     dateDuSnowflake,
     AGE_MAX_SUPPRESSION_LOT_MS,
 };

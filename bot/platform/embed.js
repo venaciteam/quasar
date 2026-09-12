@@ -22,6 +22,9 @@ const MARQUEUR_EMBED = Symbol.for('quasar.platform.embed');
 // traverse pas la couche.
 const CHAMPS_EMBED = Object.freeze([
     'titre', 'description', 'couleur', 'champs', 'pied', 'horodatage', 'auteur', 'image', 'vignette',
+    // Lien porté par le TITRE de l'embed. Le journal de modification s'en sert
+    // pour pointer sur le message modifié.
+    'lien',
 ]);
 
 // Champs qui n'existent QUE dans le vocabulaire neutre.
@@ -54,10 +57,11 @@ const CHAMPS_DISCORD = Object.freeze([
  * @param {{nom: string, icone?: string, url?: string}} [spec.auteur]
  * @param {string}  [spec.image]              URL
  * @param {string}  [spec.vignette]           URL
+ * @param {string}  [spec.lien]               URL rendue sur le titre
  * @returns {object} structure inerte
  */
-function embed({ titre, description, couleur, champs = [], pied, horodatage, auteur, image, vignette } = {}) {
-    const structure = { titre, description, couleur, champs, pied, horodatage, auteur, image, vignette };
+function embed({ titre, description, couleur, champs = [], pied, horodatage, auteur, image, vignette, lien } = {}) {
+    const structure = { titre, description, couleur, champs, pied, horodatage, auteur, image, vignette, lien };
     Object.defineProperty(structure, MARQUEUR_EMBED, { value: true, enumerable: false });
     return structure;
 }

@@ -26,12 +26,26 @@ const {
     normaliserRole,
     normaliserCanal,
     normaliserGuilde,
+    poserPanneau,
 } = require('./context');
 const { EVENEMENTS_NEUTRES, estDescripteurEvenement } = require('../events');
+const { dateDuSnowflake } = require('./snowflake');
+
+// Types de message écrits par un humain. Tout le reste est un message SYSTÈME —
+// arrivée, épinglage, boost — que personne n'a tapé. Sans cette distinction, un
+// salon piège qui se trouve être le salon système sanctionne chaque arrivée.
+// 0 = Default, 19 = Reply : les deux seules valeurs de `MessageType` que Quasar
+// considère comme humaines.
+const TYPES_MESSAGE_HUMAINS = new Set([0, 19]);
+
+// Base des liens de message. Propre à Discord : c'est justement pour ne pas la
+// voir apparaître dans du code métier qu'elle est ici.
+const BASE_LIEN_MESSAGE = 'https://discord.com/channels';
 
 /**
  * message : { id, canalId, guildeId, auteur, contenu, embeds, reactions,
- *             estBot, partiel }
+ *             piecesJointes, lien, creeLe, estBot, estSysteme, estWebhook,
+ *             estFil, canalParentId, partiel }
  *
  * `partiel` signale un message hors cache : seuls `id`, `canalId` et `guildeId`
  * sont alors fiables. C'est le cas courant d'une suppression ou d'une réaction
@@ -50,9 +64,75 @@ function normaliserMessage(message) {
         contenu: message.content ?? null,
         embeds: message.embeds ?? [],
         reactions: normaliserReactions(message),
+        piecesJointes: normaliserPiecesJointes(message),
+        lien: lienMessage(message),
+        // Date d'émission. Le transcript d'un ticket écrit « [ISO] auteur :
+        // contenu » et c'est souvent la seule copie d'une conversation, avec la
+        // portée juridique que ça implique : une ligne sans date est une pièce
+        // dégradée. Déduite du snowflake en dernier recours — la convention
+        // appartient à la plateforme.
+        creeLe: message.createdTimestamp
+            ?? (message.timestamp ? Date.parse(message.timestamp) : dateDuSnowflake(message.id)),
         estBot: Boolean(message.author?.bot),
+        // Message SYSTÈME : arrivée, épinglage, boost. Personne ne l'a écrit,
+        // et le sanctionner comme un message humain est le piège du salon piège
+        // posé sur le salon système.
+        estSysteme: !TYPES_MESSAGE_HUMAINS.has(message.type ?? 0),
+        estWebhook: Boolean(message.webhookId ?? message.webhook_id),
+        // Fil et salon parent portés PAR LE MESSAGE, et non derrière un appel à
+        // `api.obtenirCanal` : le chemin rapide du salon piège s'exécute pour
+        // chaque message de chaque serveur et ne peut pas payer un aller-retour.
+        // La nuance compte : le parent d'un salon ordinaire est sa CATÉGORIE,
+        // celui d'un fil est le salon qui le porte — sans savoir les
+        // distinguer, la règle du piège change de sens et redevient
+        // contournable en répondant dans un fil.
+        estFil: estFil(message),
+        canalParentId: message.channel?.parentId ?? message.channel?.parent_id ?? null,
         partiel: Boolean(message.partial),
     };
+}
+
+/**
+ * piecesJointes : [{ id, nom, url, taille }]
+ *
+ * Le journal de suppression n'a souvent que cette liste de noms comme trace :
+ * le fichier, lui, disparaît avec le message.
+ */
+function normaliserPiecesJointes(message) {
+    const brut = message.attachments;
+    if (!brut) return [];
+    const liste = Array.isArray(brut) ? brut : [...(brut.cache?.values?.() || brut.values?.() || [])];
+    return liste.map(piece => ({
+        id: piece.id ?? null,
+        nom: piece.name ?? piece.filename ?? null,
+        url: piece.url ?? null,
+        taille: piece.size ?? null,
+    }));
+}
+
+/**
+ * Lien permanent vers le message.
+ *
+ * `message.url` n'existe que sur l'objet discord.js ; une réponse REST brute ne
+ * le porte pas. On le construit alors, ici et pas dans le code métier — une URL
+ * `discord.com` écrite dans un handler neutre serait exactement ce que ce
+ * chantier retire.
+ */
+function lienMessage(message) {
+    if (typeof message.url === 'string' && message.url) return message.url;
+    const canalId = message.channelId ?? message.channel_id ?? message.channel?.id;
+    if (!canalId || !message.id) return null;
+    const guildeId = message.guildId ?? message.guild_id ?? message.guild?.id ?? '@me';
+    return `${BASE_LIEN_MESSAGE}/${guildeId}/${canalId}/${message.id}`;
+}
+
+/** Le message est-il dans un fil ? */
+function estFil(message) {
+    const canal = message.channel;
+    if (!canal) return false;
+    if (typeof canal.isThread === 'function') return canal.isThread();
+    // Réponse REST : types 10, 11 et 12 sont les trois familles de fils.
+    return [10, 11, 12].includes(canal.type);
 }
 
 /**
@@ -157,6 +237,13 @@ function normaliserSanction(execution) {
         action: execution.action?.type ?? null,
         contenu: execution.content ?? null,
         canalId: execution.channelId ?? null,
+        // ⚠️ Valeur NATIVE assumée : c'est la clé de
+        // `automodSync.TRIGGER_BY_DISCORD_TYPE`, et l'AutoMod n'a pas de second
+        // implémenteur — Fluxer n'en a pas du tout. La neutraliser inventerait
+        // un vocabulaire pour une seule plateforme.
+        declencheurNatif: execution.ruleTriggerType ?? null,
+        motCle: execution.matchedKeyword ?? null,
+        dureeSecondes: execution.action?.metadata?.durationSeconds ?? null,
     };
 }
 
@@ -172,7 +259,12 @@ const EVENEMENTS = Object.freeze({
     reactionRetiree: ['messageReactionRemove', (reaction, user) => [normaliserReaction(reaction), normaliserUtilisateur(user)]],
     membreRejoint: ['guildMemberAdd', (membre) => [normaliserMembre(membre), normaliserGuilde(membre?.guild)]],
     membreParti: ['guildMemberRemove', (membre) => [normaliserMembre(membre), normaliserGuilde(membre?.guild)]],
-    membreModifie: ['guildMemberUpdate', (avant, apres) => [normaliserMembre(avant), normaliserMembre(apres)]],
+    // Le SERVEUR est le troisième argument : sans lui, un handler qui compare
+    // deux états de membre ne sait pas dans quel journal écrire. Ajouté en
+    // queue pour rester additif — aucun consommateur ne lisait ce payload.
+    membreModifie: ['guildMemberUpdate', (avant, apres) => [
+        normaliserMembre(avant), normaliserMembre(apres), normaliserGuilde(apres?.guild ?? avant?.guild),
+    ]],
     guildeRejointe: ['guildCreate', (guilde) => [normaliserGuilde(guilde)]],
     guildeQuittee: ['guildDelete', (guilde) => [normaliserGuilde(guilde)]],
     canalCree: ['channelCreate', (canal) => [normaliserCanal(canal)]],
@@ -262,6 +354,17 @@ function creerContexteEvenement(adaptateur) {
         moi: adaptateur.moi,
         api: adaptateur.api,
         get db() { return require('../../../api/services/database').getDb(); },
+
+        /**
+         * Pose un panneau persistant. Même méthode, même signature et même
+         * routage que sur un contexte de commande : c'est `canalId` qui décide
+         * du salon, pas l'origine de l'appel.
+         *
+         * @see poserPanneau dans bot/platform/discord/context.js
+         */
+        poserPanneau(canalId, contenuOuEmbed, choix, options) {
+            return poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, options);
+        },
     };
 }
 
@@ -329,6 +432,9 @@ module.exports = {
     surErreurParDefaut,
     normaliserMessage,
     normaliserReactions,
+    normaliserPiecesJointes,
+    lienMessage,
+    TYPES_MESSAGE_HUMAINS,
     normaliserReaction,
     normaliserEtatVocal,
     normaliserSanction,

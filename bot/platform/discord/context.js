@@ -33,9 +33,15 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { InteractionResponse } = require('discord.js');
-const { rendreContenu, rendreChoix, rendrePrompt } = require('./render');
+const { rendreContenu, rendreChoix, rendrePrompt, rendreSelecteurMembre } = require('./render');
 const { aPermission, BITS } = require('./permissions');
 const { versNomCanonique } = require('./channels');
+const { dateDuSnowflake } = require('./snowflake');
+
+// Base du CDN Discord, pour reconstruire une URL d'avatar à partir du seul hash
+// rendu par l'API REST (les objets discord.js, eux, savent le faire seuls).
+const CDN = 'https://cdn.discordapp.com';
+const TAILLE_AVATAR_DEFAUT = 128;
 
 // Délais par défaut, en secondes. Alignés sur ce que Discord tolère : un modal
 // reste ouvert 15 minutes, mais attendre aussi longtemps retiendrait un
@@ -51,6 +57,11 @@ const DELAI_CHOOSE_DEFAUT = 120;
 const PERMISSION_STAFF = 'MANAGE_GUILD';
 
 const MODES_AUTORISE = Object.freeze(['auteur', 'tous', 'staff']);
+
+// Périmètres de `ctx.choisirMembre`. Côté Discord, 'salonVocal' restreint le
+// sélecteur aux personnes présentes dans le salon ; côté Fluxer, il validera la
+// mention saisie contre la même liste.
+const PERIMETRES_MEMBRE = Object.freeze(['serveur', 'salonVocal']);
 
 // Ce qui enchaîne un `ctx.choose`. Formulé en intention et non en mécanique :
 //   'message' — l'appelant va poster une réponse ou modifier le panneau ;
@@ -90,6 +101,65 @@ function normaliserUtilisateur(user) {
         mention: `<@${user.id}>`,
         estBot: Boolean(user.bot),
     }, user);
+}
+
+/**
+ * Étiquette lisible d'un compte.
+ *
+ * Depuis la bascule de Discord vers les pseudonymes uniques, un discriminateur
+ * à « 0 » signifie qu'il n'y en a plus : afficher « leeva#0 » serait un
+ * artefact. `tag` fait déjà ce calcul côté discord.js ; la réponse REST brute,
+ * non.
+ */
+function etiquetteUtilisateur(user) {
+    if (!user) return null;
+    if (typeof user.tag === 'string' && user.tag) return user.tag;
+    const discriminateur = user.discriminator;
+    if (discriminateur && discriminateur !== '0') return `${user.username}#${discriminateur}`;
+    return user.username ?? null;
+}
+
+/**
+ * Fabrique d'URL d'avatar, à la taille demandée.
+ *
+ * Une fonction et non une chaîne : l'embed d'accueil veut 128, le journal 64,
+ * et figer une taille obligerait le code métier à réécrire l'URL — donc à
+ * connaître le CDN d'une plateforme.
+ *
+ * Trois sources, dans l'ordre : l'objet discord.js (qui sait construire l'URL),
+ * le hash d'avatar de la réponse REST, et à défaut l'avatar par défaut.
+ *
+ * @param {object} membre  membre ou utilisateur, l'un ou l'autre
+ * @returns {(taille?: number) => string|null}
+ */
+function fabriqueAvatar(membre) {
+    const user = membre?.user ?? membre;
+    const id = user?.id ?? membre?.id;
+
+    return (taille = TAILLE_AVATAR_DEFAUT) => {
+        // `displayAvatarURL` d'un membre rend l'avatar PROPRE AU SERVEUR quand il
+        // en a un, ce qui est ce qu'attend un journal de modération.
+        if (typeof membre?.displayAvatarURL === 'function') return membre.displayAvatarURL({ size: taille });
+        if (typeof user?.displayAvatarURL === 'function') return user.displayAvatarURL({ size: taille });
+        if (!id) return null;
+
+        // Réponse REST : on n'a que des hashs.
+        const hashMembre = typeof membre?.avatar === 'string' ? membre.avatar : null;
+        const guildeId = membre?.guild_id ?? membre?.guildId ?? null;
+        if (hashMembre && guildeId) {
+            return `${CDN}/guilds/${guildeId}/users/${id}/avatars/${hashMembre}.png?size=${taille}`;
+        }
+        const hashUtilisateur = typeof user?.avatar === 'string' ? user.avatar : null;
+        if (hashUtilisateur) return `${CDN}/avatars/${id}/${hashUtilisateur}.png?size=${taille}`;
+
+        // Avatar par défaut : indexé par le discriminateur pour les anciens
+        // comptes, par les bits hauts de l'identifiant pour les nouveaux.
+        const discriminateur = user?.discriminator;
+        const index = discriminateur && discriminateur !== '0'
+            ? Number(discriminateur) % 5
+            : Number((BigInt(id) >> 22n) % 6n);
+        return `${CDN}/embed/avatars/${index}.png`;
+    };
 }
 
 /**
@@ -163,6 +233,26 @@ function normaliserMembre(membre) {
         rejointLe: membre.joinedTimestamp ?? (membre.joined_at ? Date.parse(membre.joined_at) : null),
         estAdmin: aPermission(membre.permissions, 'ADMINISTRATOR'),
         aPermission: (nom) => aPermission(membre.permissions, nom),
+
+        // Fin de l'exclusion temporaire, ou null. C'est la seule façon de
+        // répondre à « ce membre est-il exclu ? » sans lire discord.js.
+        timeoutJusqua: membre.communicationDisabledUntilTimestamp
+            ?? (membre.communication_disabled_until ? Date.parse(membre.communication_disabled_until) : null),
+
+        // Date de création du COMPTE, à ne pas confondre avec `rejointLe`.
+        // Déduite du snowflake quand l'objet ne la porte pas : la convention
+        // appartient à la plateforme, pas à l'anti-raid qui s'en sert.
+        compteCreeLe: membre.user?.createdTimestamp ?? dateDuSnowflake(membre.id ?? membre.user?.id),
+
+        etiquette: etiquetteUtilisateur(membre.user ?? membre),
+        // Pseudonyme BRUT, distinct de `nom` qui rend le nom affiché : le
+        // gabarit d'accueil expose {username} et {user} séparément.
+        nomUtilisateur: membre.user?.username ?? null,
+        avatar: fabriqueAvatar(membre),
+
+        // Salon vocal où le membre se trouve, ou null. Croisé avec la base par
+        // les commandes vocales : sans lui, on piloterait son salon sans y être.
+        canalVocalId: membre.voice?.channelId ?? membre.voice_state?.channel_id ?? null,
     }, membre);
 }
 
@@ -187,6 +277,13 @@ function normaliserGuilde(guilde) {
         // ce drapeau, la purge des données se déclencherait sur une panne : on
         // détruirait les données de serveurs parfaitement actifs.
         disponible: guilde.available !== false && guilde.unavailable !== true,
+        // Effectif du serveur. `null` et non 0 quand l'information manque : une
+        // alerte de vague comparerait sinon un seuil à un effectif inventé.
+        membreCount: guilde.memberCount ?? guilde.member_count ?? null,
+        // Rôle @everyone. Il porte l'identifiant du serveur côté Discord, mais
+        // c'est une connaissance de PLATEFORME : un verrouillage de salon qui
+        // écrirait `guilde.id` en dur cesserait d'être portable.
+        roleParDefautId: guilde.roles?.everyone?.id ?? guilde.id ?? null,
     }, guilde);
 }
 
@@ -272,6 +369,62 @@ function validerSuite(suite) {
         `ctx.choose : « suite: ${JSON.stringify(suite)} » inconnue. `
         + `Valeurs acceptées : ${SUITES_CHOOSE.map(v => `'${v}'`).join(', ')}. `
         + '\'message\' (défaut) si une réponse enchaîne, \'saisie\' si un formulaire enchaîne.'
+    );
+}
+
+/**
+ * Pose un panneau persistant dans un salon donné.
+ *
+ * Écrite une fois, exposée sur TOUS les contextes — commande, panneau,
+ * événement. Un panneau ne naît pas toujours d'une interaction : celui d'un
+ * salon vocal temporaire est posé par `etatVocalModifie` à la création du
+ * salon, et `/ticket setup salon:#support` doit poser le sien dans `#support`,
+ * pas dans le salon d'où la commande est lancée — ce que `ctx.choose` ne sait
+ * pas faire, puisqu'il répond à l'interaction en cours.
+ *
+ * Le `customId` produit est EXACTEMENT celui de
+ * `ctx.choose({ persistant: true, panneau })` : `panneau:cle`. Le routage par
+ * `surPanneau` ne fait donc aucune différence selon l'origine, et le handler
+ * reste déclaré une seule fois — dans `panneaux` d'un descripteur de commande,
+ * ou dans `bot/panneaux/` pour un module qui n'a pas de commande.
+ *
+ * @param {object} adaptateur
+ * @param {string} canalId
+ * @param {string|object} contenuOuEmbed
+ * @param {Array<{cle, libelle, emoji?, style?}>} choix
+ * @param {{panneau: string}} options
+ * @returns {Promise<{canalId: string, messageId: string|null}>}
+ */
+async function poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, { panneau } = {}) {
+    if (typeof panneau !== 'string' || !panneau || panneau.includes(':')) {
+        throw new Error(
+            `poserPanneau : nom de panneau invalide « ${panneau} ». Attendu une chaîne non vide `
+            + 'et sans « : », qui sépare le panneau de la clé du choix.'
+        );
+    }
+    if (!canalId) throw new Error('poserPanneau : le salon de destination est obligatoire.');
+
+    const corps = typeof contenuOuEmbed === 'string'
+        ? { contenu: contenuOuEmbed }
+        : { embeds: [contenuOuEmbed] };
+
+    const message = await adaptateur.api.envoyerMessage(canalId, {
+        ...corps,
+        composants: rendreChoix(choix, panneau).map(rangee => rangee.toJSON()),
+    });
+    return { canalId, messageId: message?.id ?? null };
+}
+
+/**
+ * Valide le périmètre d'un `choisirMembre`. Même sévérité, même raison : une
+ * valeur inconnue retomberait sur le défaut et ouvrirait le sélecteur à tout le
+ * serveur là où on voulait le restreindre au salon vocal.
+ */
+function validerPerimetreMembre(perimetre) {
+    if (perimetre === undefined || PERIMETRES_MEMBRE.includes(perimetre)) return;
+    throw new Error(
+        `ctx.choisirMembre : « parmi: ${JSON.stringify(perimetre)} » inconnu. `
+        + `Valeurs acceptées : ${PERIMETRES_MEMBRE.map(v => `'${v}'`).join(', ')}.`
     );
 }
 
@@ -402,11 +555,45 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
             return adaptateur.api.envoyerMessage(canalId, contenuOuEmbed);
         },
 
+        /**
+         * Acquitte l'interaction SANS répondre, et laisse jusqu'à quinze
+         * minutes pour le faire.
+         *
+         * Une interaction doit être acquittée en trois secondes. Une commande
+         * qui lit cent messages puis les supprime en lot dépasse régulièrement
+         * ce délai : sans acquittement différé elle reste muette alors que le
+         * travail se fait. Après `differer()`, `repondre()` remplit la réponse
+         * différée au lieu d'en créer une.
+         *
+         * ⚠️ `prompt()` devient IMPOSSIBLE après un `differer()` : Discord
+         * n'ouvre un formulaire que sur une interaction vierge. Même famille que
+         * `choose({ suite: 'saisie' })` — si un formulaire enchaîne, ne différez
+         * pas.
+         */
+        differer({ ephemere = false } = {}) {
+            return courante.deferReply(ephemere ? { ephemeral: true } : {});
+        },
+
         /** Message supplémentaire après une première réponse. */
         suivre(contenuOuEmbed, { ephemere = false } = {}) {
             const payload = rendreContenu(contenuOuEmbed);
             if (ephemere) payload.ephemeral = true;
             return courante.followUp(payload);
+        },
+
+        /**
+         * Pose un panneau persistant DANS UN SALON DONNÉ.
+         *
+         * À ne pas confondre avec `choose({ persistant: true })`, qui répond à
+         * l'interaction en cours : ici c'est `canalId` qui décide, et c'est ce
+         * qu'il faut pour `/ticket setup salon:#support`. Même signature, même
+         * `customId`, même routage que depuis un événement — le contexte
+         * d'origine ne change rien.
+         *
+         * @see poserPanneau, en tête de ce fichier
+         */
+        poserPanneau(canalId, contenuOuEmbed, choix, options) {
+            return poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, options);
         },
 
         /**
@@ -448,8 +635,8 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
             if (courante.deferred || courante.replied) {
                 throw new Error(
                     'ctx.prompt : l\'interaction est déjà acquittée, aucun formulaire ne peut plus être ouvert. '
-                    + 'Appelez prompt() avant toute réponse — et si un ctx.choose() le précède, '
-                    + 'déclarez-lui { suite: \'saisie\' }.'
+                    + 'Appelez prompt() avant toute réponse et sans ctx.differer() préalable — '
+                    + 'et si un ctx.choose() le précède, déclarez-lui { suite: \'saisie\' }.'
                 );
             }
 
@@ -501,6 +688,11 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
          *        'staff', un nom canonique de permission, ou un prédicat (membre) => boolean
          * @param {number}  [options.delai]      secondes, panneau éphémère seulement
          * @param {boolean} [options.ephemere]
+         * @param {boolean} [options.sensible]  même sens que sur `repondre` : le
+         *        panneau porte des données personnelles. Sans effet sur Discord,
+         *        où l'éphémère est réellement privé ; côté Fluxer il imposera le
+         *        message privé, jamais l'auto-suppression — un panneau
+         *        d'effacement RGPD ne peut pas reposer sur un délai.
          * @param {'message'|'saisie'} [options.suite]  ce qui enchaîne. Voir ci-dessous.
          * @returns {Promise<string|null|{persistant: true, canalId: string, messageId: string}>}
          *   la clé choisie ; `null` à expiration ; les coordonnées du message
@@ -586,6 +778,96 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
                 mode = 'apresClic';
             }
             return clic.customId.slice(prefixeCustomId.length + 1);
+        },
+
+        /**
+         * Demande de DÉSIGNER QUELQU'UN. Troisième primitive d'interface, aux
+         * côtés de `prompt` (saisir) et `choose` (agir) — DA §6.
+         *
+         * `choose` ne la remplace pas : une liste de membres n'est pas un jeu de
+         * choix fixes, et `prompt` obligerait à taper un identifiant. Autoriser
+         * une personne dans son salon vocal ou l'en expulser passe par là.
+         *
+         * @param {string|object} message  contenu ou embed neutre
+         * @param {object} [options]
+         * @param {'serveur'|'salonVocal'} [options.parmi]  défaut 'serveur'
+         * @param {string}  [options.canalId]  salon vocal, requis si parmi='salonVocal'
+         * @param {string|Function} [options.autorise]  même règle que `choose`
+         * @param {number}  [options.delai]    secondes
+         * @param {boolean} [options.ephemere]
+         * @returns {Promise<{id: string, nom: string, mention: string}|null>}
+         *   `null` à expiration ou si personne n'est sélectionnable.
+         *
+         * Côté Fluxer, où il n'existe aucun sélecteur : le bot demandera « qui ?
+         * mentionnez la personne », résoudra la mention ou l'identifiant, et
+         * validera la réponse contre le même `parmi`. Le code métier ne verra
+         * pas la différence — il décrit qui choisir, pas comment.
+         */
+        async choisirMembre(message, options = {}) {
+            validerAutorise(options.autorise);
+            validerPerimetreMembre(options.parmi);
+
+            const perimetre = options.parmi || 'serveur';
+            const identifiant = `qmembre:${interaction.id}:${compteurInteractions++}`;
+
+            // Périmètre « salon vocal » : la liste est lue AVANT l'envoi, pour
+            // pouvoir dire « il n'y a personne » plutôt que d'afficher un menu
+            // vide que Discord refuserait.
+            let membres = [];
+            if (perimetre === 'salonVocal') {
+                const canalId = options.canalId ?? ctx.canalId;
+                membres = (await adaptateur.api.listerMembresVocal(canalId)) || [];
+                membres = membres.filter(m => m.id !== interaction.user.id && !m.estBot);
+                if (membres.length === 0) return null;
+            }
+
+            const payload = {
+                ...rendreContenu(message),
+                components: [rendreSelecteurMembre(identifiant, {
+                    perimetre, membres, exemple: options.exemple,
+                })],
+            };
+            if (options.ephemere) payload.ephemeral = true;
+
+            let reponse;
+            if (mode === 'apresClic' || courante.replied) {
+                reponse = await courante.followUp(payload);
+            } else if (courante.deferred) {
+                const { ephemeral, ...corps } = payload;
+                reponse = await courante.editReply(corps);
+            } else {
+                reponse = await courante.reply(payload);
+            }
+
+            const msg = await resoudreMessage(reponse, courante);
+            if (!msg) return null;
+
+            let choix;
+            try {
+                choix = await msg.awaitMessageComponent({
+                    time: (options.delai ?? DELAI_CHOOSE_DEFAUT) * 1000,
+                    filter: (i) => i.customId === identifiant
+                        && autoriseClic(i, options.autorise, interaction.user.id),
+                });
+            } catch {
+                return null;
+            }
+
+            await choix.deferUpdate();
+            courante = choix;
+            mode = 'apresClic';
+
+            // Sélecteur natif : `members` porte l'objet complet. Menu de choix :
+            // seule la valeur revient, on la retrouve dans la liste déjà lue.
+            const id = choix.values?.[0] ?? null;
+            if (!id) return null;
+            const natif = choix.members?.get?.(id) ?? choix.users?.get?.(id);
+            if (natif) {
+                const normalise = natif.user ? normaliserMembre(natif) : normaliserUtilisateur(natif);
+                return { id: normalise.id, nom: normalise.nom, mention: normalise.mention };
+            }
+            const connu = membres.find(m => m.id === id);
+            return { id, nom: connu?.nom ?? id, mention: `<@${id}>` };
         },
     };
 
@@ -683,13 +965,17 @@ module.exports = {
     creerContextePanneau,
     creerContexteCompletion,
     creerNoyauContexte,
+    poserPanneau,
     validerAutorise,
     validerSuite,
+    validerPerimetreMembre,
     autoriseClic,
     normaliserUtilisateur,
     normaliserMembre,
     normaliserRole,
     couleurRole,
+    etiquetteUtilisateur,
+    fabriqueAvatar,
     normaliserCanal,
     normaliserGuilde,
     DELAI_PROMPT_DEFAUT,
@@ -697,4 +983,5 @@ module.exports = {
     PERMISSION_STAFF,
     MODES_AUTORISE,
     SUITES_CHOOSE,
+    PERIMETRES_MEMBRE,
 };

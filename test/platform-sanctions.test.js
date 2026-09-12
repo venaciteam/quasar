@@ -189,7 +189,10 @@ test('une action de sanction inconnue lève, en nommant les valeurs acceptées',
 test('une guilde normalisée porte son propriétaire', () => {
     assert.deepEqual(
         { ...normaliserGuilde({ id: GUILDE, name: 'S', ownerId: PROPRIETAIRE }) },
-        { id: GUILDE, nom: 'S', proprietaireId: PROPRIETAIRE, disponible: true },
+        {
+            id: GUILDE, nom: 'S', proprietaireId: PROPRIETAIRE, disponible: true,
+            membreCount: null, roleParDefautId: GUILDE,
+        },
     );
     // Réponse REST brute : snake_case.
     assert.equal(normaliserGuilde({ id: GUILDE, name: 'S', owner_id: PROPRIETAIRE }).proprietaireId, PROPRIETAIRE);
