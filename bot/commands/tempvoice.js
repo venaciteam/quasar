@@ -1,5 +1,6 @@
 const { definirCommande } = require('../platform/commands');
 const { embed } = require('../platform/embed');
+const { PANNEAU, handlerPanneauTempVoice } = require('../interactions/tempvoice');
 
 // Configuration des salons vocaux temporaires (« Join to Create »).
 //
@@ -23,6 +24,17 @@ module.exports = definirCommande({
     // (MANAGE_CHANNELS), puis y déplacer la personne (MOVE_MEMBERS). Sans
     // elles, la configuration s'enregistre et rien ne se produit à l'usage.
     permissionsBot: ['MANAGE_CHANNELS', 'MOVE_MEMBERS'],
+
+    // Panneau du salon vocal temporaire. Déclaré ici parce qu'un panneau
+    // appartient à une commande, mais POSÉ par `etatVocalModifie`, à la
+    // création du salon — un panneau ne naît pas forcément d'une commande. Le
+    // chargeur enregistre le handler au démarrage : c'est ce qui rend les clics
+    // routables après un redémarrage, sans écrire un préfixe en dur dans
+    // bot/index.js.
+    //
+    // Sa logique vit dans bot/interactions/tempvoice.js : cette commande
+    // configure le SERVEUR, le panneau pilote UN salon pour son propriétaire.
+    panneaux: { [PANNEAU]: handlerPanneauTempVoice },
 
     sousCommandes: [
         {
