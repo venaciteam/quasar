@@ -38,8 +38,6 @@ const { MAX_PUNISHED_PER_WAVE } = require('../../bot/modules/antiraid/window');
 
 const router = express.Router({ mergeParams: true });
 
-const SNOWFLAKE = /^\d{17,20}$/;
-
 // ─── Catalogue des actions ──────────────────────────────────────────────────
 //
 // La liste des actions valides vient du socle (ACTION_NAMES) : la recopier
@@ -91,18 +89,17 @@ function readInt(raw, { field, min, max, hint }) {
     return { value };
 }
 
-function readOptionalChannelId(raw, field) {
-    if (raw === undefined || raw === null || raw === '') return { value: null };
-    const id = String(raw).trim();
-    if (!SNOWFLAKE.test(id)) return { error: `${field} : identifiant de salon invalide.` };
-    return { value: id };
-}
-
 /**
  * Valide et normalise le corps d'un enregistrement de configuration.
- * @returns {{ error: string }|{ data: object }}
+ *
+ * ⚠️ `log_channel` est SCELLÉ au serveur de l'URL, pas seulement contrôlé en
+ * forme : c'est le salon où partiront les alertes de vague et les messages du
+ * mode panique de CE serveur. Un identifiant bien formé mais étranger les
+ * publierait dans un autre.
+ *
+ * @returns {Promise<{ error: string, status?: number }|{ data: object }>}
  */
-function parseConfigPayload(body) {
+async function parseConfigPayload(req, body, actuel = {}) {
     if (!body || typeof body !== 'object') return { error: 'Requête vide.' };
 
     const joinCount = readInt(body.join_count, {
@@ -139,8 +136,10 @@ function parseConfigPayload(body) {
     const check = validatePunishments(punishments);
     if (!check.valid) return { error: check.errors.join(' ') };
 
-    const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
-    if (logChannel.error) return { error: logChannel.error };
+    const logChannel = await plateforme.exigerCanalDuServeur(req, body.log_channel, {
+        champ: 'Le salon des journaux', actuel: actuel.log_channel,
+    });
+    if (logChannel.error) return logChannel;
 
     const responseMessage = String(body.response_message ?? '').trim();
     if (responseMessage.length > LIMITS.MAX_RESPONSE_MESSAGE) {
@@ -263,8 +262,8 @@ router.get('/', requireAuth, requireGuildAdmin, async (req, res) => {
 router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const guildId = req.params.guildId;
 
-    const parsed = parseConfigPayload(req.body);
-    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const parsed = await parseConfigPayload(req, req.body, readRow(guildId) || {});
+    if (parsed.error) return res.status(parsed.status || 400).json({ error: parsed.error });
     const { data } = parsed;
 
     getDb().prepare(`

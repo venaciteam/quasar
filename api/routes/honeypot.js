@@ -77,13 +77,6 @@ function buildCatalog() {
 // Tout est revalidé ici, jamais seulement dans le navigateur : le dashboard
 // n'est qu'un client parmi d'autres du point de vue de cette API.
 
-function readOptionalChannelId(raw, field) {
-    if (raw === undefined || raw === null || raw === '') return { value: null };
-    const id = String(raw).trim();
-    if (!SNOWFLAKE.test(id)) return { error: `${field} : identifiant de salon invalide.` };
-    return { value: id };
-}
-
 function readIdArray(raw, field) {
     if (raw === undefined || raw === null || raw === '') return { value: [] };
     if (!Array.isArray(raw)) return { error: `${field} doit être une liste d'identifiants.` };
@@ -103,13 +96,23 @@ function readIdArray(raw, field) {
 
 /**
  * Valide et normalise le corps d'un enregistrement.
- * @returns {{ error: string }|{ data: object }}
+ *
+ * ⚠️ Les deux identifiants de salon sont SCELLÉS au serveur de l'URL, et pas
+ * seulement contrôlés en forme. Un `channel_id` étranger accepté ici, c'est un
+ * `GET` qui rend le nom d'un salon d'un autre serveur ; un `log_channel`
+ * étranger, c'est le bot qui poste les journaux de CE serveur dans un salon de
+ * l'autre. Une valeur inchangée passe sans vérification (cf. l'en-tête de
+ * section de api/services/plateforme.js).
+ *
+ * @returns {Promise<{ error: string, status?: number }|{ data: object }>}
  */
-function parseConfigPayload(body) {
+async function parseConfigPayload(req, body, actuel = {}) {
     if (!body || typeof body !== 'object') return { error: 'Requête vide.' };
 
-    const channel = readOptionalChannelId(body.channel_id, 'Le salon piège');
-    if (channel.error) return { error: channel.error };
+    const channel = await plateforme.exigerCanalDuServeur(req, body.channel_id, {
+        champ: 'Le salon piège', actuel: actuel.channel_id,
+    });
+    if (channel.error) return channel;
 
     const enabled = !!body.enabled;
     // Activer sans salon donnerait une protection qui ne surveille rien, sans le
@@ -133,8 +136,10 @@ function parseConfigPayload(body) {
     const ignoredRoles = readIdArray(body.ignored_roles, 'Les rôles exemptés');
     if (ignoredRoles.error) return { error: ignoredRoles.error };
 
-    const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
-    if (logChannel.error) return { error: logChannel.error };
+    const logChannel = await plateforme.exigerCanalDuServeur(req, body.log_channel, {
+        champ: 'Le salon des journaux', actuel: actuel.log_channel,
+    });
+    if (logChannel.error) return logChannel;
 
     const responseMessage = String(body.response_message ?? '').trim();
     if (responseMessage.length > LIMITS.MAX_RESPONSE_MESSAGE) {
@@ -193,7 +198,13 @@ async function buildWarnings(req, row) {
         return warnings;
     }
 
-    const channel = await api.obtenirCanal(String(row.channel_id)).catch(() => null);
+    // ⚠️ SCELLÉ au serveur de l'URL. `api.obtenirCanal` est global à
+    // l'instance : sur un `channel_id` étranger — écrit en base avant que le
+    // `PUT` ne le valide, ou par une édition manuelle — ce `GET` rendait le NOM
+    // d'un salon d'un autre serveur, et la ligne de permissions plus bas disait
+    // si le bot y voit les messages. Un salon qui n'est pas à ce serveur est
+    // traité comme un salon disparu, ce qui est la vérité utile ici.
+    const channel = await plateforme.canalDuServeur(req, row.channel_id);
     if (!channel) {
         warnings.push('Le salon piège configuré n\'existe plus sur ce serveur : rien n\'est surveillé tant qu\'un autre salon n\'est pas choisi.');
         return warnings;
@@ -258,8 +269,8 @@ router.get('/', requireAuth, requireGuildAdmin, async (req, res) => {
 router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const guildId = req.params.guildId;
 
-    const parsed = parseConfigPayload(req.body);
-    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const parsed = await parseConfigPayload(req, req.body, readRow(guildId) || {});
+    if (parsed.error) return res.status(parsed.status || 400).json({ error: parsed.error });
     const { data } = parsed;
 
     // Les deux colonnes de salons sont écrites explicitement à '[]' : elles ne

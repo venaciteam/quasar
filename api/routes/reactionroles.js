@@ -29,13 +29,13 @@ async function resolveAssignableRole(req, roleId) {
         // hiérarchie », le seul qui le cite. Un échec de lecture n'empêche pas
         // de refuser : la phrase perd un nom, pas son sens.
         const role = refus === 'hierarchy'
-            ? await api.obtenirRole(req.params.guildId, roleId).catch(() => null)
+            ? await plateforme.roleDuServeur(req, roleId)
             : null;
         const { cause, action } = describeRefusal(refus, role);
         return { status: 400, error: `${cause} ${action}` };
     }
 
-    const role = await api.obtenirRole(req.params.guildId, roleId).catch(() => null);
+    const role = await plateforme.roleDuServeur(req, roleId);
     return { role };
 }
 
@@ -90,9 +90,11 @@ router.post('/voiceroles', requireAuth, requireGuildAdmin, async (req, res) => {
     // ligne pointant un salon textuel ne se déclencherait jamais. Les noms
     // canoniques viennent de bot/platform/channels.js — « conference » est le
     // salon de conférence, vocal lui aussi.
-    const api = plateforme.api(req);
-    const channel = api ? await api.obtenirCanal(channelId).catch(() => null) : null;
-    if (!channel || channel.guildeId !== req.params.guildId) {
+    // SCELLÉ au serveur de l'URL : `api.obtenirCanal` est global à l'instance, et
+    // la garde à la main qui vivait ici est désormais dans le helper, avec les
+    // huit autres.
+    const channel = await plateforme.canalDuServeur(req, channelId);
+    if (!channel) {
         return res.status(400).json({ error: 'Ce salon n\'existe pas sur ce serveur.' });
     }
     if (channel.type !== 'vocal' && channel.type !== 'conference') {
@@ -135,21 +137,15 @@ router.get('/panels', requireAuth, requireGuildAdmin, (req, res) => {
 router.get('/panels/status', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const panels = db.prepare('SELECT id, channel_id, message_id FROM reaction_panels WHERE guild_id = ?').all(req.params.guildId);
-    const api = plateforme.api(req);
 
     const status = {};
     for (const p of panels) {
-        try {
-            const msg = api && p.message_id ? await api.obtenirMessage(p.channel_id, p.message_id) : null;
-            status[p.id] = msg ? 'active' : 'missing';
-        } catch {
-            // Panne réseau : `obtenirMessage` LÈVE plutôt que de rendre null,
-            // précisément pour ne pas confondre « supprimé » et « injoignable ».
-            // Le panneau est annoncé manquant comme avant migration — c'est ce
-            // que faisait le `catch` du cache — et l'affichage se corrigera au
-            // rafraîchissement suivant.
-            status[p.id] = 'missing';
-        }
+        // `messageDuServeur` scelle le salon puis lit le message, et absorbe
+        // l'échec : « supprimé », « pas à ce serveur » et « injoignable » se
+        // traitent tous en « missing », comme le faisait le `catch` du cache
+        // avant migration. L'affichage se corrige au rafraîchissement suivant.
+        const msg = await plateforme.messageDuServeur(req, p.channel_id, p.message_id);
+        status[p.id] = msg ? 'active' : 'missing';
     }
     res.json(status);
 });
@@ -161,8 +157,8 @@ router.post('/panels', requireAuth, requireGuildAdmin, async (req, res) => {
     if (!channel_id || !title) return res.status(400).json({ error: 'channel_id et title requis' });
 
     const api = plateforme.api(req);
-    const channel = api ? await api.obtenirCanal(channel_id).catch(() => null) : null;
-    if (!channel || channel.guildeId !== req.params.guildId) {
+    const channel = await plateforme.canalDuServeur(req, channel_id);
+    if (!channel) {
         return res.status(400).json({ error: 'Channel introuvable' });
     }
 
@@ -322,10 +318,13 @@ router.delete('/panels/:panelId', requireAuth, requireGuildAdmin, async (req, re
         .get(panelId, req.params.guildId);
     if (!panel) return res.json({ success: true });
 
-    // Supprimer le message du panneau
+    // Supprimer le message du panneau. `api.supprimerMessage` est global à
+    // l'instance : le salon est SCELLÉ d'abord, sans quoi une ligne dont le
+    // `channel_id` désigne un autre serveur y ferait supprimer un message.
     try {
         const api = plateforme.api(req);
-        if (api && panel.message_id) await api.supprimerMessage(panel.channel_id, panel.message_id);
+        const canal = await plateforme.canalDuServeur(req, panel.channel_id);
+        if (api && canal && panel.message_id) await api.supprimerMessage(panel.channel_id, panel.message_id);
     } catch {} // Message ou salon déjà supprimé
 
     db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId);
@@ -337,7 +336,9 @@ async function refreshPanelFromApi(req, panel, panelId, db) {
         const api = plateforme.api(req);
         if (!api) return;
         const entries = db.prepare('SELECT * FROM reaction_roles WHERE panel_id = ? ORDER BY rowid ASC').all(panelId);
-        const channel = await api.obtenirCanal(panel.channel_id).catch(() => null);
+        // SCELLÉ : un panneau dont le salon n'appartient pas à ce serveur ne se
+        // rafraîchit pas — et surtout, on n'y poste pas.
+        const channel = await plateforme.canalDuServeur(req, panel.channel_id);
         if (!channel) return;
 
         const p = db.prepare('SELECT * FROM reaction_panels WHERE id = ?').get(panelId);
@@ -361,9 +362,7 @@ async function refreshPanelFromApi(req, panel, panelId, db) {
         // Tenter de récupérer le message existant. Le message NORMALISÉ porte ses
         // réactions, `parMoi` compris : c'est ce qui permet de ne reposer que les
         // emojis manquants au lieu de tous les reposer.
-        let msg = panel.message_id
-            ? await api.obtenirMessage(panel.channel_id, panel.message_id).catch(() => null)
-            : null;
+        let msg = await plateforme.messageDuServeur(req, panel.channel_id, panel.message_id);
 
         if (!msg) {
             // Message supprimé par un admin → re-poster

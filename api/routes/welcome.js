@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const { SNOWFLAKE } = require('../services/mentions');
 const router = express.Router({ mergeParams: true });
 
@@ -181,12 +182,28 @@ router.get('/config', requireAuth, requireGuildAdmin, (req, res) => {
     });
 });
 
-router.put('/config', requireAuth, requireGuildAdmin, (req, res) => {
+router.put('/config', requireAuth, requireGuildAdmin, async (req, res) => {
     const verdict = validateWelcomeConfig(req.body);
     if (verdict.error) return res.status(400).json({ error: verdict.error });
     const d = verdict.value;
 
     const db = getDb();
+
+    // Les deux salons sont SCELLÉS au serveur de l'URL avant d'être stockés.
+    // `validateWelcomeConfig` n'en contrôle que la FORME — c'est ce qu'elle doit
+    // faire, et c'est ce qui la rend testable sans bot — mais un identifiant
+    // bien formé peut désigner le salon d'un autre serveur, où le bot posterait
+    // alors les arrivées et les départs de celui-ci.
+    const actuel = db.prepare('SELECT welcome_channel, leave_channel FROM welcome_config WHERE guild_id = ?')
+        .get(req.params.guildId) || {};
+    for (const champ of ['welcome_channel', 'leave_channel']) {
+        const scelle = await plateforme.exigerCanalDuServeur(req, d[champ], {
+            champ: LIBELLES[champ], actuel: actuel[champ],
+        });
+        if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+        d[champ] = scelle.value;
+    }
+
     db.prepare('INSERT OR IGNORE INTO welcome_config (guild_id) VALUES (?)').run(req.params.guildId);
     db.prepare(`UPDATE welcome_config SET
         welcome_channel = ?, welcome_message = ?, welcome_embed = ?, welcome_enabled = ?,

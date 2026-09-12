@@ -313,6 +313,8 @@ function parseRulePayload(body, trigger, perms) {
     if (exemptChannels.error) return { error: exemptChannels.error };
 
     // ─── Journalisation Quasar (inconnue de Discord) ───
+    // Forme seule ici. Le SCELLEMENT au serveur est fait par les deux routes
+    // d'écriture, qui connaissent la valeur déjà en base — cf. `scellerSalons`.
     const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
     if (logChannel.error) return { error: logChannel.error };
 
@@ -326,6 +328,10 @@ function parseRulePayload(body, trigger, perms) {
             exemptRoles: exemptRoles.value,
             exemptChannels: exemptChannels.value,
             logChannel: logChannel.value,
+            // Repris hors de `actions` pour être SCELLÉ au serveur (cf.
+            // `scellerSalons`). La valeur qui part chez Discord reste celle de
+            // `actions[].metadata.channel` : ce champ ne sert qu'au contrôle.
+            alertChannelId: alert.value,
             responseMessage,
         },
     };
@@ -356,6 +362,36 @@ function buildCatalog() {
         // l'explique au lieu de le passer sous silence.
         unsupported_scope: UNSUPPORTED_SCOPE_KEYS,
     };
+}
+
+/**
+ * Scelle au serveur de l'URL les deux salons que ce module stocke ou transmet.
+ *
+ * `log_channel` est la journalisation propre à Quasar : un identifiant étranger
+ * y déverserait les déclenchements de CE serveur. `alert_channel_id` part chez
+ * Discord dans la règle elle-même — Discord le refuserait, mais l'erreur
+ * remonterait en 400 opaque au lieu de nommer le champ.
+ *
+ * `actuel` porte les valeurs déjà en base, pour qu'un enregistrement qui ne
+ * change pas de salon ne dépende pas de l'état de la connexion.
+ *
+ * @returns {Promise<null|{status: number, body: object}>} `null` = rien à
+ *   redire ; sinon le refus à renvoyer tel quel.
+ */
+async function scellerSalons(req, data, actuel = {}) {
+    const champs = [
+        ['logChannel', data.logChannel, actuel.log_channel, 'Le salon des journaux'],
+        ['alertChannelId', data.alertChannelId, actuel.alert_channel_id, 'Le salon d\'alerte'],
+    ];
+    for (const [cle, valeur, reference, libelle] of champs) {
+        if (valeur === undefined) continue;
+        const scelle = await plateforme.exigerCanalDuServeur(req, valeur, { champ: libelle, actuel: reference });
+        if (scelle.error) return { status: scelle.status || 400, body: { error: scelle.error } };
+        data[cle] = scelle.value;
+    }
+    // `alertChannelId` est déjà recopié dans `data.actions` par
+    // `parseRulePayload` : il n'y a rien à réécrire, seulement à refuser.
+    return null;
 }
 
 function buildQuotas(counts) {
@@ -423,6 +459,9 @@ router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
 
     const parsed = parseRulePayload(req.body, trigger, perms);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const refus = await scellerSalons(req, parsed.data);
+    if (refus) return res.status(refus.status).json(refus.body);
 
     let discordRules;
     try {
@@ -501,6 +540,9 @@ router.put('/:id', requireAuth, requireGuildAdmin, async (req, res) => {
     const parsed = parseRulePayload(req.body, trigger, perms);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const { data } = parsed;
+
+    const refus = await scellerSalons(req, data, row);
+    if (refus) return res.status(refus.status).json(refus.body);
 
     // On repart de l'état réel de Discord : la règle a pu être supprimée depuis le
     // chargement de la page, et le miroir mis à jour ici évite d'éditer dans le vide.

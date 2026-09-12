@@ -73,27 +73,33 @@ router.put('/', requireAuth, requireOwner, (req, res) => {
             }
         }
 
-        // Upsert en DB
+        // ⚠️ Le CONTRAT ne couvre pas la présence (voir
+        // `plateforme.definirPresenceNative`). L'application passe donc par le
+        // client natif, et cette route ne le nomme pas elle-même.
+        //
+        // REFUS EXPLICITE quand la plateforme ne sait pas faire, et rien n'est
+        // stocké. La version précédente écrivait en base, n'appliquait rien, et
+        // rendait `{ success: true }` : le dashboard affichait « Statut du bot
+        // mis à jour » pour un réglage sans aucun effet, et la ligne en base
+        // mentait sur l'état réel du bot. Un réglage qu'on ne sait pas appliquer
+        // se refuse, il ne se range pas.
+        const applique = plateforme.definirPresenceNative(req, actType === -1
+            // Aucune activité — statut uniquement
+            ? { status, activities: [] }
+            : { status, activities: [{ name: text, type: actType }] });
+
+        if (!applique) {
+            return res.status(501).json({
+                error: 'Cette plateforme ne sait pas définir la présence du bot : le réglage n\'a pas été enregistré.',
+                hint: 'Le statut et l\'activité du bot se règlent directement sur la plateforme, quand elle le permet.',
+            });
+        }
+
+        // Upsert en DB — après l'application : la base ne doit décrire que des
+        // états réellement appliqués.
         const db = getDb();
         db.prepare(`INSERT OR REPLACE INTO bot_presence (id, status, activity_type, activity_text)
                     VALUES (1, ?, ?, ?)`).run(status, actType, actType === -1 ? '' : text);
-
-        // Appliquer en temps réel sur le bot.
-        //
-        // ⚠️ Le CONTRAT ne couvre pas la présence : ni la DA §4.3 ni les deux
-        // adaptateurs n'exposent de méthode pour la définir, et l'objet de
-        // présence (statut + type d'activité numéroté) est une forme propre à
-        // Discord. On passe donc par le client natif, en vérifiant qu'il sait
-        // faire : sur une plateforme qui ne le sait pas, le réglage est
-        // enregistré en base et simplement pas appliqué — la ligne restera
-        // valable le jour où la méthode existera.
-        const client = plateforme.adaptateur(req)?.client;
-        if (typeof client?.user?.setPresence === 'function') {
-            client.user.setPresence(actType === -1
-                // Aucune activité — statut uniquement
-                ? { status, activities: [] }
-                : { status, activities: [{ name: text, type: actType }] });
-        }
 
         console.log(`[Quasar] Présence mise à jour par ${req.user.username}: ${status}${actType === -1 ? ' (aucune activité)' : ` — ${text} (type ${actType})`}`);
         res.json({ success: true });

@@ -4,11 +4,16 @@ const { getDb } = require('../services/database');
 const plateforme = require('../services/plateforme');
 const router = express.Router({ mergeParams: true });
 
-/** Salon normalisé, ou `null`. Un échec de lecture vaut « supprimé ». */
+// ⚠️ Toute résolution de salon passe par `plateforme.canalDuServeur`, qui SCELLE
+// l'identifiant au serveur de l'URL. Le client REST normalisé est global à
+// l'instance : `api.obtenirCanal(id)` résout le salon de n'importe quel serveur
+// où le bot est présent. C'est ce qui a rendu `DELETE /active/:channelId`
+// capable de détruire un salon d'un AUTRE serveur — le cloisonnement était porté
+// par `guild.channels.cache.get()` avant migration, et il est parti avec.
+//
+/** Salon du serveur courant, ou `null`. Un échec de lecture vaut « supprimé ». */
 function lireCanal(req, canalId) {
-    const api = plateforme.api(req);
-    if (!api || !canalId) return Promise.resolve(null);
-    return api.obtenirCanal(String(canalId)).catch(() => null);
+    return plateforme.canalDuServeur(req, canalId);
 }
 
 // GET /api/guilds/:guildId/tempvoice/triggers
@@ -41,6 +46,13 @@ router.post('/triggers', requireAuth, requireGuildAdmin, async (req, res) => {
     const { channel_id } = req.body;
 
     if (!channel_id) return res.status(400).json({ error: 'channel_id requis' });
+
+    // Le salon déclencheur est validé AVANT d'être stocké : sans ce contrôle,
+    // l'identifiant d'un salon d'un autre serveur était accepté, sa catégorie
+    // en était tirée, et `GET /triggers` affichait ensuite le nom de l'un et de
+    // l'autre. Un déclencheur n'est pas un réglage libre, c'est une désignation.
+    const verdict = await plateforme.exigerCanalDuServeur(req, channel_id, { champ: 'Le salon déclencheur' });
+    if (verdict.error) return res.status(verdict.status || 400).json({ error: verdict.error });
 
     const channel = await lireCanal(req, channel_id);
     const categoryId = channel?.parentId || '';
@@ -87,18 +99,31 @@ router.get('/active', requireAuth, requireGuildAdmin, async (req, res) => {
     const api = plateforme.api(req);
 
     const result = await Promise.all(active.map(async (row) => {
-        const [channel, owner, cat, occupants] = await Promise.all([
-            lireCanal(req, row.channel_id),
-            api ? api.obtenirMembre(guildId, row.owner_id).catch(() => null) : null,
-            row.category_id ? lireCanal(req, row.category_id) : null,
-            // `listerMembresVocal` rend `null` si le salon n'existe plus ou n'est
-            // pas vocal : le compte retombe alors sur 0, comme le faisait
-            // `channel?.members.size` sur un salon absent du cache.
-            api ? api.listerMembresVocal(String(row.channel_id)).catch(() => null) : null,
-        ]);
+        const canal = await lireCanal(req, row.channel_id);
+        // Le salon n'est pas à ce serveur (ou n'existe plus) : on n'interroge
+        // RIEN d'autre à son sujet. Une ligne d'un autre serveur ne peut pas
+        // arriver ici — la table est filtrée sur `guild_id` — mais le principe
+        // vaut : pas de salon scellé, pas de lecture.
+        const [cat, occupants] = canal
+            ? await Promise.all([
+                row.category_id ? lireCanal(req, row.category_id) : null,
+                // `listerMembresVocal` rend `null` si le salon n'existe plus ou
+                // n'est pas vocal : le compte retombe alors sur 0, comme le
+                // faisait `channel?.members.size` sur un salon absent du cache.
+                api ? api.listerMembresVocal(String(row.channel_id)).catch(() => null) : null,
+            ])
+            : [null, null];
+
+        // Nom du propriétaire pris dans les OCCUPANTS du salon, qu'on vient de
+        // lire : le propriétaire d'un salon temporaire y est connecté par
+        // construction. Aucun appel de plus, et surtout aucun `obtenirMembre`
+        // par identifiant — qui retomberait sur un `members.fetch` réseau pour
+        // chaque personne absente du cache.
+        const owner = (occupants || []).find(m => String(m.id) === String(row.owner_id));
+
         return {
             channel_id: row.channel_id,
-            channel_name: channel?.nom || '(supprimé)',
+            channel_name: canal?.nom || '(supprimé)',
             owner_id: row.owner_id,
             owner_name: owner?.nom || owner?.etiquette || row.owner_id,
             member_count: occupants?.length || 0,
@@ -116,6 +141,13 @@ router.delete('/active/:channelId', requireAuth, requireGuildAdmin, async (req, 
     const { channelId } = req.params;
 
     const api = plateforme.api(req);
+    // ⚠️ SCELLÉ au serveur de l'URL, et c'est la ligne qui compte de tout ce
+    // fichier. `api.supprimerCanal` est global à l'instance : sans ce contrôle,
+    // une administratrice du serveur A appelait
+    // `DELETE /api/guilds/A/tempvoice/active/<salon de B>` et détruisait un
+    // salon de B, avec un `200 {"success":true}` en retour. La clause SQL ne
+    // protégeait rien — elle borne la SUPPRESSION EN BASE, pas l'appel réseau
+    // qui la précède.
     const channel = await lireCanal(req, channelId);
 
     if (api && channel) {

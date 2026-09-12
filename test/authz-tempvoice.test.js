@@ -28,13 +28,25 @@ const SALON_DE_B = '910000000000000002';
 
 const app = express();
 app.use(express.json());
-// L'adaptateur n'est lu que pour supprimer le vrai salon : ici son client REST
-// ne connaît aucun salon, la route se contente donc de la ligne en base —
-// exactement le chemin que l'on veut éprouver.
+// ⚠️ La doublure rend un salon appartenant au serveur B, et c'est tout l'intérêt.
+// Une version antérieure de ce fichier posait `obtenirCanal: () => null` : la
+// route n'empruntait jamais la voie plateforme, et le test passait alors même que
+// `DELETE /active/:channelId` détruisait pour de bon le salon d'un autre serveur
+// (le client REST normalisé est global à l'instance). Le cloisonnement complet
+// est éprouvé par test/authz-cloisonnement.test.js ; ici, on veut surtout que la
+// suppression NE soit pas tentée.
+const suppressions = [];
 app.set('plateforme', {
     nom: 'test',
     capacites: {},
-    api: { async envoyerMessage() {}, async obtenirCanal() { return null; } },
+    api: {
+        async envoyerMessage() {},
+        async obtenirCanal(id) {
+            return { id: String(id), nom: 'salon-de-b', type: 'vocal', guildeId: GUILD_B, parentId: null };
+        },
+        async supprimerCanal(id) { suppressions.push(String(id)); },
+        async listerMembresVocal() { return []; },
+    },
 });
 app.use('/api/guilds/:guildId/tempvoice', tempvoiceRoutes);
 
@@ -91,6 +103,9 @@ test('un admin du serveur A ne supprime pas le salon actif du serveur B', async 
     });
     assert.equal(res.status, 200); // rien à supprimer ici : la route reste idempotente
     assert.ok(ligneExiste(SALON_DE_B), 'la ligne du serveur B doit avoir survecu');
+    // Et surtout : le salon lui-même n'a pas été envoyé à la destruction. La
+    // clause SQL borne l'écriture en base, pas l'appel réseau qui la précède.
+    assert.deepEqual(suppressions, [], 'le salon du serveur B a été détruit sur la plateforme');
 });
 
 test('un admin du serveur B supprime bien le salon actif de son serveur', async () => {
