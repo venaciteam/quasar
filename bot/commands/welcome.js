@@ -1,3 +1,7 @@
+// ⚠️ NON MIGRÉ AU LOT 3. Ce fichier n'est qu'un jeu de réglages : tout le corps
+// de /welcome vit dans la fabrique, et c'est elle qui bute sur le contrat —
+// `{username}`, `{membercount}` et l'avatar du membre n'y existent pas. Le
+// détail, et les signatures proposées, sont en tête de bot/utils/configCommand.js.
 const { createConfigCommand } = require('../utils/configCommand');
 
 module.exports = createConfigCommand({

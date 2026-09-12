@@ -1,9 +1,9 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { getDb, CUSTOM_CMD_ACCESS_MODES, effectiveAccessMode } = require('../../api/services/database');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
+const { CUSTOM_CMD_ACCESS_MODES, effectiveAccessMode } = require('../../api/services/database');
 const { hasMentions, silentMentions } = require('../../api/services/mentions');
-const { userError } = require('../utils/errors');
 const { DISABLED_COMMAND_FILES } = require('../utils/disabledCommands');
 const { validateChatInputName, buildCustomCommandDescription } = require('../utils/slashCommandSpec');
 
@@ -14,9 +14,9 @@ const { validateChatInputName, buildCustomCommandDescription } = require('../uti
 // mentions, mais le contrôle d'accès de la commande (access_mode) : tout le
 // monde, les administrateurs, ou un rôle précis.
 const ACCES_CHOIX = [
-    { name: 'Tout le monde', value: 'everyone' },
-    { name: 'Administrateurs uniquement', value: 'admins' },
-    { name: 'Un rôle précis', value: 'role' },
+    { nom: 'Tout le monde', valeur: 'everyone' },
+    { nom: 'Administrateurs uniquement', valeur: 'admins' },
+    { nom: 'Un rôle précis', valeur: 'role' },
 ];
 
 // Libellé lisible d'un mode d'accès lu en base, pour les récapitulatifs et
@@ -75,6 +75,11 @@ let _reservedNames = null;
  * ils ne réservent donc pas leur nom — et prise en charge des fichiers à
  * exports multiples (ex : musiccontrols.js).
  *
+ * Le nom NEUTRE (`mod.nom`) est lu en premier, `mod.data.name` en repli pour les
+ * commandes pas encore migrées. Le pont `data.name` posé par `definirCommande`
+ * n'existait que pour cette fonction : il devient inutile le jour où la dernière
+ * commande est migrée, et sa suppression appartient à la consolidation.
+ *
  * Un fichier illisible n'interrompt pas le calcul : perdre une entrée de la
  * liste ne coûte au pire qu'une commande personnalisée inerte, alors qu'une
  * exception ici bloquerait tout renommage.
@@ -82,16 +87,24 @@ let _reservedNames = null;
 function reservedCommandNames() {
     if (_reservedNames) return _reservedNames;
 
+    // Le nom d'une commande, quel que soit le format du module qui la porte.
+    const nomDe = (valeur) => (typeof valeur?.nom === 'string' && valeur.nom)
+        ? valeur.nom
+        // TRANSITION : format historique, à retirer au lot de consolidation
+        : (typeof valeur?.data?.name === 'string' ? valeur.data.name : null);
+
     const noms = new Set();
     for (const fichier of fs.readdirSync(__dirname).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f))) {
         try {
             const mod = require(path.join(__dirname, fichier));
-            if (mod?.data?.name) {
-                noms.add(mod.data.name);
+            const direct = nomDe(mod);
+            if (direct) {
+                noms.add(direct);
                 continue;
             }
             for (const valeur of Object.values(mod || {})) {
-                if (valeur?.data?.name) noms.add(valeur.data.name);
+                const nom = nomDe(valeur);
+                if (nom) noms.add(nom);
             }
         } catch (e) {
             console.warn(`[Quasar] Noms réservés : fichier ${fichier} illisible (${e.message}), ignoré.`);
@@ -295,56 +308,72 @@ function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = 
     return { ok: true, name: renomme ? newName : currentName };
 }
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('cmd')
-        .setDescription('Gérer les commandes personnalisées')
-        .addSubcommand(sub => sub
-            .setName('create')
-            .setDescription('Créer une commande personnalisée')
-            .addStringOption(opt => opt.setName('nom').setDescription('Nom de la commande (sans /)').setRequired(true))
-            .addStringOption(opt => opt.setName('reponse').setDescription('Texte de la réponse').setRequired(false))
-            .addStringOption(opt => opt.setName('embed').setDescription('Nom d\'un embed sauvegardé (prioritaire sur le texte)').setRequired(false))
-            .addStringOption(opt => opt.setName('acces').setDescription('Qui peut utiliser la commande (par défaut : tout le monde)').setRequired(false).addChoices(...ACCES_CHOIX))
-            .addRoleOption(opt => opt.setName('role').setDescription('Rôle autorisé (uniquement si accès = un rôle précis)').setRequired(false))
-        )
-        .addSubcommand(sub => sub
-            .setName('edit')
-            .setDescription('Modifier une commande existante')
-            .addStringOption(opt => opt.setName('nom').setDescription('Nom de la commande').setRequired(true))
-            .addStringOption(opt => opt.setName('nouveau_nom').setDescription('Renommer la commande (sans /)').setRequired(false))
-            .addStringOption(opt => opt.setName('reponse').setDescription('Nouveau texte').setRequired(false))
-            .addStringOption(opt => opt.setName('embed').setDescription('Nouvel embed (nom)').setRequired(false))
-            .addStringOption(opt => opt.setName('acces').setDescription('Qui peut utiliser la commande').setRequired(false).addChoices(...ACCES_CHOIX))
-            .addRoleOption(opt => opt.setName('role').setDescription('Rôle autorisé (uniquement si accès = un rôle précis)').setRequired(false))
-        )
-        .addSubcommand(sub => sub
-            .setName('delete')
-            .setDescription('Supprimer une commande personnalisée')
-            .addStringOption(opt => opt.setName('nom').setDescription('Nom de la commande').setRequired(true))
-        )
-        .addSubcommand(sub => sub
-            .setName('list')
-            .setDescription('Lister toutes les commandes personnalisées')
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+module.exports = definirCommande({
+    nom: 'cmd',
+    description: 'Gérer les commandes personnalisées',
+    permission: 'MANAGE_GUILD',
+    // Rien à demander au bot : enregistrer une commande d'application relève du
+    // scope `applications.commands` accordé à l'invitation, pas d'une permission
+    // de serveur. Déclaré vide plutôt qu'omis — l'omission ne se distinguerait
+    // pas d'un oubli de migration.
+    permissionsBot: [],
 
-    async execute(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const db = getDb();
+    sousCommandes: [
+        {
+            nom: 'create',
+            description: 'Créer une commande personnalisée',
+            options: [
+                { nom: 'nom', type: 'texte', requis: true, description: 'Nom de la commande (sans /)' },
+                { nom: 'reponse', type: 'texte', requis: false, description: 'Texte de la réponse' },
+                { nom: 'embed', type: 'texte', requis: false, description: 'Nom d\'un embed sauvegardé (prioritaire sur le texte)' },
+                { nom: 'acces', type: 'choix', requis: false, description: 'Qui peut utiliser la commande (par défaut : tout le monde)', choix: ACCES_CHOIX },
+                { nom: 'role', type: 'role', requis: false, description: 'Rôle autorisé (uniquement si accès = un rôle précis)' },
+            ],
+        },
+        {
+            nom: 'edit',
+            description: 'Modifier une commande existante',
+            options: [
+                { nom: 'nom', type: 'texte', requis: true, description: 'Nom de la commande' },
+                { nom: 'nouveau_nom', type: 'texte', requis: false, description: 'Renommer la commande (sans /)' },
+                { nom: 'reponse', type: 'texte', requis: false, description: 'Nouveau texte' },
+                { nom: 'embed', type: 'texte', requis: false, description: 'Nouvel embed (nom)' },
+                { nom: 'acces', type: 'choix', requis: false, description: 'Qui peut utiliser la commande', choix: ACCES_CHOIX },
+                { nom: 'role', type: 'role', requis: false, description: 'Rôle autorisé (uniquement si accès = un rôle précis)' },
+            ],
+        },
+        {
+            nom: 'delete',
+            description: 'Supprimer une commande personnalisée',
+            options: [
+                { nom: 'nom', type: 'texte', requis: true, description: 'Nom de la commande' },
+            ],
+        },
+        {
+            nom: 'list',
+            description: 'Lister toutes les commandes personnalisées',
+        },
+    ],
+
+    // Un seul `executer` pour les quatre sous-commandes : `create` et `edit`
+    // partagent l'essentiel de leur corps, et les séparer en quatre fonctions
+    // dupliquerait le contrôle d'accès et la résolution d'embed.
+    async executer(ctx) {
+        const sub = ctx.options.sousCommande;
+        const db = ctx.db;
 
         if (sub === 'create' || sub === 'edit') {
-            const nom = normalizeCustomCommandName(interaction.options.getString('nom'));
-            const reponse = interaction.options.getString('reponse');
-            const embedNom = interaction.options.getString('embed');
+            const nom = normalizeCustomCommandName(ctx.options.get('nom'));
+            const reponse = ctx.options.get('reponse');
+            const embedNom = ctx.options.get('embed');
             // Option propre à `/cmd edit` : à la création, il n'y a rien à renommer.
-            const nouveauNom = sub === 'edit' ? interaction.options.getString('nouveau_nom') : null;
+            const nouveauNom = sub === 'edit' ? ctx.options.get('nouveau_nom') : null;
 
             // Un `/cmd edit` qui ne fait que renommer est légitime : il ne touche
             // ni au texte ni à l'embed, la commande garde son contenu.
             if (!reponse && !embedNom && !nouveauNom) {
-                return userError(interaction, {
-                    title: 'Commande sans contenu',
+                return ctx.erreurUtilisateur({
+                    titre: 'Commande sans contenu',
                     cause: 'Une commande personnalisée doit répondre quelque chose : un texte, ou un embed enregistré.',
                     action: sub === 'edit'
                         ? 'Renseignez `reponse`, `embed`, ou `nouveau_nom` si vous voulez seulement la renommer.'
@@ -358,10 +387,10 @@ module.exports = {
             if (embedNom) {
                 const embedRow = db.prepare(
                     'SELECT id, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE guild_id = ? AND name = ?'
-                ).get(interaction.guild.id, embedNom);
+                ).get(ctx.guildeId, embedNom);
                 if (!embedRow) {
-                    return userError(interaction, {
-                        title: 'Embed introuvable',
+                    return ctx.erreurUtilisateur({
+                        titre: 'Embed introuvable',
                         cause: `Aucun embed enregistré ne s'appelle **${embedNom}** sur ce serveur.`,
                         action: 'Créez-le d\'abord avec `/embed create`, ou consultez les embeds existants avec `/embed list`.',
                     });
@@ -374,20 +403,20 @@ module.exports = {
             // Un rôle fourni sans `acces` explicite ne peut vouloir dire qu'une
             // chose : réserver la commande à ce rôle. On l'interprète ainsi
             // plutôt que d'ignorer silencieusement l'option.
-            const accesOpt = interaction.options.getString('acces');
-            const roleOpt = interaction.options.getRole('role');
+            const accesOpt = ctx.options.get('acces');
+            const roleOpt = ctx.options.get('role');
             let accesMode = accesOpt || (roleOpt ? 'role' : null);
 
             if (accesMode && !CUSTOM_CMD_ACCESS_MODES.includes(accesMode)) {
-                return userError(interaction, {
-                    title: 'Mode d\'accès inconnu',
+                return ctx.erreurUtilisateur({
+                    titre: 'Mode d\'accès inconnu',
                     cause: `« ${accesMode} » n'est pas un mode d'accès valide.`,
                     action: 'Choisissez « Tout le monde », « Administrateurs uniquement » ou « Un rôle précis ».',
                 });
             }
             if (accesMode === 'role' && !roleOpt) {
-                return userError(interaction, {
-                    title: 'Rôle manquant',
+                return ctx.erreurUtilisateur({
+                    titre: 'Rôle manquant',
                     cause: 'Vous avez choisi de réserver la commande à un rôle, mais aucun rôle n\'a été indiqué.',
                     action: 'Relancez la commande en renseignant aussi l\'option `role`.',
                 });
@@ -405,8 +434,8 @@ module.exports = {
                 // Forme du nom, collision avec une commande de Quasar, collision
                 // avec une commande existante : les trois d'un coup, et avec les
                 // mêmes textes que le renommage.
-                const nomValide = validateCustomCommandCreate(db, interaction.guild.id, nom);
-                if (nomValide.error) return userError(interaction, nomValide.error);
+                const nomValide = validateCustomCommandCreate(db, ctx.guildeId, nom);
+                if (nomValide.error) return ctx.erreurUtilisateur(versErreurNeutre(nomValide.error));
 
                 // À la création, l'absence d'option `acces` vaut « tout le
                 // monde » : c'est le défaut de la colonne et le comportement
@@ -414,33 +443,31 @@ module.exports = {
                 const modeCree = accesMode || 'everyone';
 
                 db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
-                    .run(interaction.guild.id, nom, reponse || null, embedId, modeCree, accesRoleId);
+                    .run(ctx.guildeId, nom, reponse || null, embedId, modeCree, accesRoleId);
 
                 // Déployer la commande slash
-                await deployCustomCommand(interaction.guild.id, nom, reponse);
+                await deployCustomCommand(ctx.guildeId, nom, reponse);
 
-                await interaction.reply({
-                    embeds: [new EmbedBuilder()
-                        .setTitle('✅ Commande créée')
-                        .setColor(0xc86e8e)
-                        .setDescription(`La commande \`/${nom}\` est disponible sur le serveur.${avertPing(modeCree)}`)
-                        .addFields(
-                            embedNom
-                                ? { name: 'Réponse', value: `Embed: **${embedNom}**` }
-                                : { name: 'Réponse', value: reponse },
-                            { name: 'Accès', value: decrireAcces(modeCree, accesRoleId) }
-                        )
-                        .setTimestamp()],
-                    ephemeral: true
-                });
+                await ctx.repondre(embed({
+                    titre: '✅ Commande créée',
+                    couleur: 0xc86e8e,
+                    description: `La commande \`/${nom}\` est disponible sur le serveur.${avertPing(modeCree)}`,
+                    champs: [
+                        embedNom
+                            ? { nom: 'Réponse', valeur: `Embed: **${embedNom}**` }
+                            : { nom: 'Réponse', valeur: reponse },
+                        { nom: 'Accès', valeur: decrireAcces(modeCree, accesRoleId) },
+                    ],
+                    horodatage: true,
+                }), { ephemere: true });
 
             } else {
                 // ─── Renommage : tout valider AVANT la moindre écriture ───────
                 let renommage = null;
                 if (nouveauNom) {
-                    const verdict = validateCustomCommandRename(db, interaction.guild.id, nom, nouveauNom);
-                    if (verdict.error) return userError(interaction, {
-                        title: 'Renommage impossible',
+                    const verdict = validateCustomCommandRename(db, ctx.guildeId, nom, nouveauNom);
+                    if (verdict.error) return ctx.erreurUtilisateur({
+                        titre: 'Renommage impossible',
                         cause: verdict.error.cause,
                         action: verdict.error.action,
                     });
@@ -466,9 +493,9 @@ module.exports = {
                     fields.access_role_id = accesRoleId;
                 }
 
-                const ecriture = updateCustomCommand(db, interaction.guild.id, nom, { fields, newName: renommage });
-                if (ecriture.error) return userError(interaction, {
-                    title: renommage ? 'Renommage impossible' : 'Modification impossible',
+                const ecriture = updateCustomCommand(db, ctx.guildeId, nom, { fields, newName: renommage });
+                if (ecriture.error) return ctx.erreurUtilisateur({
+                    titre: renommage ? 'Renommage impossible' : 'Modification impossible',
                     cause: ecriture.error.cause,
                     action: ecriture.error.action,
                 });
@@ -480,14 +507,14 @@ module.exports = {
                 // fournie. La réponse sert aussi à construire la description
                 // envoyée à Discord en cas de renommage.
                 const apres = db.prepare('SELECT response, access_mode, access_role_id FROM custom_commands WHERE guild_id = ? AND name = ?')
-                    .get(interaction.guild.id, nomFinal);
+                    .get(ctx.guildeId, nomFinal);
 
                 // Base d'abord, Discord ensuite (cf. le bloc « ordre des
                 // opérations » en bas de fichier).
                 let avertissement = null;
                 if (renommage) {
                     ({ warning: avertissement } = await syncCustomCommandRename(
-                        interaction.guild.id, nom, nomFinal, apres?.response
+                        ctx.guildeId, nom, nomFinal, apres?.response
                     ));
                 }
 
@@ -495,52 +522,67 @@ module.exports = {
                     ? `✅ Commande \`/${nom}\` renommée en \`/${nomFinal}\`.`
                     : `✅ Commande \`/${nomFinal}\` mise à jour.`;
 
-                await interaction.reply({
-                    content: `${entete}\nAccès : ${decrireAcces(apres?.access_mode, apres?.access_role_id)}${avertPing(apres?.access_mode)}`
+                await ctx.repondre({
+                    contenu: `${entete}\nAccès : ${decrireAcces(apres?.access_mode, apres?.access_role_id)}${avertPing(apres?.access_mode)}`
                         + (avertissement ? `\n\n⚠️ ${avertissement}` : ''),
-                    allowedMentions: silentMentions(), // le récap ne doit pinger personne
-                    ephemeral: true
-                });
+                    mentionsAutorisees: silentMentions(), // le récap ne doit pinger personne
+                }, { ephemere: true });
             }
 
         } else if (sub === 'delete') {
-            const nom = interaction.options.getString('nom').toLowerCase();
-            const result = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
+            const nom = ctx.options.get('nom').toLowerCase();
+            const result = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(ctx.guildeId, nom);
 
-            if (result.changes === 0) return userError(interaction, {
-                    title: 'Commande introuvable',
+            if (result.changes === 0) return ctx.erreurUtilisateur({
+                    titre: 'Commande introuvable',
                     cause: `Aucune commande personnalisée **/${nom}** n'existe sur ce serveur.`,
                     action: 'Consultez la liste avec `/cmd list`.',
                 });
 
             // Retirer la commande slash de la guild
-            await removeCustomCommand(interaction.guild.id, nom);
+            await removeCustomCommand(ctx.guildeId, nom);
 
-            await interaction.reply({ content: `🗑️ Commande \`/${nom}\` supprimée.`, ephemeral: true });
+            await ctx.repondre(`🗑️ Commande \`/${nom}\` supprimée.`, { ephemere: true });
 
         } else if (sub === 'list') {
-            const cmds = db.prepare('SELECT name, response, embed_id, access_mode, access_role_id FROM custom_commands WHERE guild_id = ?').all(interaction.guild.id);
+            const cmds = db.prepare('SELECT name, response, embed_id, access_mode, access_role_id FROM custom_commands WHERE guild_id = ?').all(ctx.guildeId);
 
-            if (cmds.length === 0) return interaction.reply({ content: 'Aucune commande personnalisée.', ephemeral: true });
+            if (cmds.length === 0) return ctx.repondre('Aucune commande personnalisée.', { ephemere: true });
 
             const lines = cmds.map(c => {
                 const reponse = c.embed_id ? '*(embed)*' : (c.response?.substring(0, 50) + (c.response?.length > 50 ? '…' : ''));
                 return `⚡ \`/${c.name}\` — ${reponse}\n　${decrireAcces(c.access_mode, c.access_role_id)}`;
             });
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
-                    .setTitle('⚡ Commandes personnalisées')
-                    .setColor(0x6e8ec8)
-                    .setDescription(lines.join('\n'))
-                    .setTimestamp()],
-                ephemeral: true
-            });
+            await ctx.repondre(embed({
+                titre: '⚡ Commandes personnalisées',
+                couleur: 0x6e8ec8,
+                description: lines.join('\n'),
+                horodatage: true,
+            }), { ephemere: true });
         }
-    }
-};
+    },
+});
+
+/**
+ * Erreur de validation partagée avec le dashboard -> forme attendue par le
+ * contexte neutre. Les validateurs rendent `{ title, cause, action }`, la
+ * formulation anglaise de la route API : les renommer là-bas casserait
+ * api/routes/customcmds.js, hors périmètre du lot 3.
+ */
+function versErreurNeutre({ title, cause, action }) {
+    return { titre: title, cause, action };
+}
+
+// ⚠️ Les quatre fonctions qui suivent enregistrent et retirent une commande
+// d'application auprès de Discord. Le contrat neutre n'a AUCUN équivalent, et
+// pour une bonne raison : Fluxer n'a pas d'interactions, donc pas de commandes à
+// enregistrer. Elles restent donc en discord.js brut, et sont appelées telles
+// quelles par api/routes/customcmds.js — hors périmètre du lot 3. Voir le
+// compte-rendu : la signature proposée est `adaptateur.deployerCommandeServeur`.
 
 /** Client REST Discord, construit à la demande (le token n'est lu qu'à l'appel). */
+// TRANSITION : format historique, à retirer au lot de consolidation
 function restClient() {
     const { REST } = require('discord.js');
     return new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -635,9 +677,9 @@ async function syncCustomCommandRename(guildId, oldName, newName, response) {
 }
 
 // Noyau partagé avec la route du dashboard (api/routes/customcmds.js), qui écrit
-// dans la même table et déploie sur le même Discord. `data` et `execute` restent
-// exportés tels quels : les chargeurs de commandes (bot/index.js,
-// deploy-commands.js) testent `mod.data` et ignorent le reste.
+// dans la même table et déploie sur le même Discord. Le descripteur neutre reste
+// l'export principal : le chargeur de commandes le reconnaît à `nom` +
+// `executer`, et ignore les fonctions qu'on lui attache ici.
 Object.assign(module.exports, {
     normalizeCustomCommandName,
     reservedCommandNames,

@@ -1,3 +1,28 @@
+// ═══════════════════════════════════════════════════════════════
+//  ⚠️ NON MIGRÉ AU CONTRAT NEUTRE — lot 3, point d'arrêt assumé
+//
+//  Cette fabrique (et donc /welcome et /leave) reste en discord.js parce que
+//  trois informations qu'elle affiche n'existent pas dans le contrat neutre :
+//
+//    • `{username}` — `resolveVariables` lit `member.user.username`. Le contexte
+//      neutre n'expose que `membre.nom`, qui vaut `displayName ?? nick ??
+//      username` : ce n'est PAS la même chaîne dès qu'un pseudo de serveur ou un
+//      nom global est défini.
+//    • `{membercount}` — `member.guild.memberCount`. Ni `ctx.guilde`, ni
+//      `api.obtenirGuilde` ne rendent le nombre de membres. C'est le même
+//      `membreCount` que réclame l'anti-raid (cf. bot/events/guildMemberAdd.js).
+//    • l'avatar — l'embed de bienvenue pose `thumbnail: 'avatar'`, rendu par
+//      `member.user.displayAvatarURL({ size: 128 })`. Aucune URL d'avatar dans
+//      le contrat.
+//
+//  Migrer sans elles changerait le texte affiché aux membres : c'est une
+//  régression, pas un détail de forme. Les signatures proposées sont dans le
+//  compte-rendu du lot 3 ; `bot/platform/**` est en lecture seule pour ce lot.
+//
+//  Même blocage pour bot/events/guildMemberAdd.js et guildMemberRemove.js, qui
+//  consomment les mêmes fonctions.
+// ═══════════════════════════════════════════════════════════════
+
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { resolveVariables, buildEmbed } = require('./welcomeMessage');

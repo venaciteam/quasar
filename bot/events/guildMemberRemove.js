@@ -1,3 +1,10 @@
+// ⚠️ NON MIGRÉ AU LOT 3.
+//
+// Mêmes manques que guildMemberAdd.js, dont ce handler est le symétrique :
+// l'avatar du membre, `user.tag` et `membreCount` sont absents du payload neutre
+// de `membreParti`, et `{username}` n'a pas d'équivalent exact dans `membre.nom`.
+// Pas d'anti-raid ici, en revanche : ce fichier se débloquera dès que le contrat
+// portera ces trois champs. Signatures proposées dans le compte-rendu du lot 3.
 const { EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { resolveVariables, buildEmbed } = require('../utils/welcomeMessage');

@@ -1,3 +1,30 @@
+// ═══════════════════════════════════════════════════════════════
+//  ⚠️ NON MIGRÉ AU LOT 3 — et ce n'est pas un oubli
+//
+//  Ce handler reste au format historique, avec un membre discord.js, parce
+//  qu'il est le point d'entrée de l'ANTI-RAID : `handleMemberJoin(member)` a
+//  besoin de l'objet natif. `bot/modules/antiraid/index.js` n'a pas pu être
+//  rendu neutre au lot sécurité, faute de deux champs au contrat :
+//
+//    • `compteCreeLe` — date de création du COMPTE, pas de l'arrivée. C'est le
+//      signal principal d'une vague de comptes fraîchement créés.
+//    • `membreCount`  — nombre de membres du serveur.
+//
+//  Basculer ce fichier sur `membreRejoint` sans migrer l'anti-raid en même
+//  temps serait une régression SILENCIEUSE en production : `handleMemberJoin`
+//  recevrait un membre normalisé sans `.guild`, sortirait sur
+//  `{ removed: false }` à chaque arrivée, sans erreur ni journal. L'anti-raid
+//  s'éteindrait sans que personne ne le voie.
+//
+//  Les deux autres responsabilités portées ici — message de bienvenue et
+//  autorôles — attendent donc le même lot dédié. Elles butent de toute façon
+//  sur les mêmes manques, plus l'avatar du membre, `user.tag` et `{username}`
+//  (que `membre.nom` ne rend pas à l'identique) : voir bot/utils/configCommand.js
+//  et le compte-rendu du lot 3.
+//
+//  À migrer conjointement avec `bot/modules/antiraid/index.js`, une fois
+//  `compteCreeLe` et `membreCount` posés au contrat.
+// ═══════════════════════════════════════════════════════════════
 const { EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { resolveVariables, buildEmbed } = require('../utils/welcomeMessage');

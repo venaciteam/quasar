@@ -1,3 +1,6 @@
+// ⚠️ NON MIGRÉ AU LOT 3. Même situation que /welcome, dont cette commande
+// partage intégralement la fabrique : le blocage est dans celle-ci, pas ici.
+// Voir l'en-tête de bot/utils/configCommand.js.
 const { createConfigCommand } = require('../utils/configCommand');
 
 module.exports = createConfigCommand({

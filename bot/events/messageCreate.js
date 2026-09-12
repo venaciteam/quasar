@@ -37,6 +37,27 @@
 //  enregistrement et rejoue `normalize` pour afficher le même diagnostic que
 //  celui qui commande le comportement du bot. Une seule source de vérité, comme
 //  bot/modules/antiraid/config.js le fait pour l'anti-raid.
+//
+//  ─── ⚠️ NON MIGRÉ AU CONTRAT NEUTRE — lot 3, point d'arrêt assumé ──────────
+//
+//  Le payload neutre de `messageCree` (bot/platform/discord/events.js) est
+//  `{ id, canalId, guildeId, auteur, contenu, embeds, estBot, partiel }`. Il
+//  manque trois choses, et chacune porte un GARDE-FOU de ce fichier :
+//
+//   • `message.type` — le filtre HUMAN_MESSAGE_TYPES. Sans lui, un salon piège
+//     qui se trouve être le salon système sanctionnerait chaque arrivée pour un
+//     message d'arrivée que personne n'a écrit. Aucun équivalent neutre.
+//   • « ce salon est-il un fil, et de quel salon ? » — sans quoi le piège
+//     redevient contournable en répondant dans un fil. `api.obtenirCanal` rend
+//     bien `parentId`, mais le parent d'un salon ordinaire est sa CATÉGORIE :
+//     sans savoir distinguer un fil, la règle change de sens. Et l'appel serait
+//     sur le chemin rapide, c'est-à-dire un aller-retour par message reçu.
+//   • `message.url` — le lien remis à l'arbitrage (`evidence`). Le reconstruire
+//     à la main (`https://discord.com/channels/...`) mettrait une URL propre à
+//     Discord dans du code censé être neutre.
+//
+//  Signatures proposées dans le compte-rendu du lot 3 ; `bot/platform/**` est en
+//  lecture seule pour ce lot.
 // ═══════════════════════════════════════════════════════════════
 
 const { EmbedBuilder, Events, MessageType, PermissionFlagsBits } = require('discord.js');

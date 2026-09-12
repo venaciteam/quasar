@@ -45,15 +45,20 @@ function readIdList(raw) {
 }
 
 /**
- * Identifiants de rôles d'un membre. Le membre arrive soit en objet discord.js
- * (roles = gestionnaire avec cache), soit en membre brut de l'API (roles =
- * tableau d'IDs) — les deux formes circulent déjà dans le projet (cf. bot/index.js).
+ * Identifiants de rôles d'un membre.
+ *
+ * Le tableau d'identifiants est la forme du contrat neutre (`membre.roles`,
+ * bot/platform/discord/context.js) et celle du membre brut de l'API. Le
+ * gestionnaire à cache est la forme discord.js, encore servie par les modules
+ * pas migrés.
+ *
  * @returns {string[] | null} null = rôles non déterminables.
  */
 function memberRoleIds(member) {
     if (!member) return null;
     const roles = member.roles;
     if (Array.isArray(roles)) return roles.map(String);
+    // TRANSITION : format historique, à retirer au lot de consolidation
     if (roles?.cache) return [...roles.cache.keys()].map(String);
     return null;
 }
