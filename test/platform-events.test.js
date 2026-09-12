@@ -17,6 +17,7 @@ const {
     normaliserEtatVocal,
     cleEmoji,
 } = require('../bot/platform/discord/events');
+const { normaliserRole } = require('../bot/platform/discord/context');
 const creerAdaptateurDiscord = require('../bot/platform/discord');
 
 // Les dix-sept noms neutres de la DA §4.4, dans l'ordre du document.
@@ -153,4 +154,83 @@ test('un état vocal distingue la coupure serveur de la coupure volontaire', () 
     // Les résumés restent disponibles pour qui n'a pas besoin de la nuance.
     assert.equal(etat.muet, true);
     assert.equal(etat.sourd, true);
+});
+
+// ── Payload d'un rôle (lot 0.6) ──────────────────────────────────────────────
+
+test('un rôle porte sa couleur et son serveur', () => {
+    // Sans `couleur`, l'embed de roleCreate / roleDelete perd la pastille qu'il
+    // affichait ; sans `guildeId`, le handler ne sait pas dans quel serveur
+    // écrire son journal — le payload neutre ne porte que le rôle, exactement
+    // comme GUILD_ROLE_CREATE côté Fluxer porte `guild_id` à côté du rôle.
+    const natif = normaliserRole({ id: '1', name: 'Membre', position: 2, hexColor: '#C8A86E', guildId: 'G1' });
+    assert.equal(natif.couleur, '#c8a86e', 'normalisée en minuscules');
+    assert.equal(natif.guildeId, 'G1');
+
+    // Réponse REST brute : couleur entière et guild_id.
+    const rest = normaliserRole({ id: '1', name: 'R', position: 2, color: 0xc8a86e, guild_id: 'G2' });
+    assert.equal(rest.couleur, '#c8a86e');
+    assert.equal(rest.guildeId, 'G2');
+
+    // Objet discord.js complet : la guilde est imbriquée.
+    assert.equal(normaliserRole({ id: '1', name: 'R', guild: { id: 'G3' } }).guildeId, 'G3');
+
+    // Rôle sans couleur : Discord y met 0, ce qui se rend « #000000 » — la
+    // valeur qu'affichaient déjà les embeds avant migration.
+    assert.equal(normaliserRole({ id: '1', name: 'R' }).couleur, '#000000');
+    assert.equal(normaliserRole({ id: '1', name: 'R', color: 0 }).couleur, '#000000');
+    assert.equal(normaliserRole({ id: '1', name: 'R' }).guildeId, null);
+});
+
+test('les champs existants du rôle n\'ont pas bougé', () => {
+    // Six agents lisent ce contrat : l'ajout doit être strictement additif.
+    const role = normaliserRole({ id: '1', name: 'Membre', position: 4, managed: true, guildId: 'G1' });
+    assert.deepEqual(Object.keys(role).sort(), ['couleur', 'gere', 'guildeId', 'id', 'mention', 'nom', 'position']);
+    assert.equal(role.mention, '<@&1>');
+    assert.equal(role.gere, true);
+    assert.equal(role.position, 4);
+});
+
+// ── Réactions d'un message (lot 0.6) ─────────────────────────────────────────
+
+test('un message porte ses réactions, cache discord.js comme tableau REST', () => {
+    // `parMoi` est la raison d'être du champ : sans lui, un panneau de rôles
+    // repose chaque emoji à chaque modification, faute de pouvoir constater
+    // qu'il est déjà là — un PUT par entrée au lieu de zéro, sur une route
+    // limitée en débit.
+    const cache = new Map([
+        ['a', { emoji: { id: null, name: '🎮' }, count: 3, me: true }],
+        ['b', { emoji: { id: '55', name: 'quasar', animated: true }, count: 1, me: false }],
+    ]);
+    const depuisCache = normaliserMessage({ id: '1', channelId: '2', reactions: { cache } }).reactions;
+
+    assert.deepEqual(depuisCache, [
+        { emoji: { id: null, nom: '🎮', anime: false, cle: '🎮' }, nombre: 3, parMoi: true },
+        { emoji: { id: '55', nom: 'quasar', anime: true, cle: '<a:quasar:55>' }, nombre: 1, parMoi: false },
+    ]);
+
+    // Réponse REST brute : un tableau, pas un gestionnaire.
+    const depuisRest = normaliserMessage({
+        id: '1', channel_id: '2',
+        reactions: [{ count: 2, me: true, emoji: { id: '77', name: 'boum', animated: false } }],
+    }).reactions;
+    assert.deepEqual(depuisRest, [
+        { emoji: { id: '77', nom: 'boum', anime: false, cle: '<:boum:77>' }, nombre: 2, parMoi: true },
+    ]);
+
+    // Aucune réaction, et message partiel : un tableau vide, jamais undefined.
+    assert.deepEqual(normaliserMessage({ id: '1', channelId: '2' }).reactions, []);
+    assert.deepEqual(normaliserMessage({ id: '1', partial: true }).reactions, []);
+});
+
+test('la clé de réaction d\'un message est la même que celle d\'un événement', () => {
+    // Les deux voies doivent indexer à l'identique : `reaction_roles.emoji`
+    // contient cette chaîne, et une divergence ferait échouer la comparaison
+    // sur les emojis personnalisés — donc plus aucune attribution de rôle.
+    for (const emoji of [{ id: null, name: '🎮' }, { id: '55', name: 'quasar' }, { id: '77', name: 'b', animated: true }]) {
+        const surMessage = normaliserMessage({ id: '1', reactions: [{ emoji, count: 1, me: false }] }).reactions[0];
+        const surEvenement = normaliserReaction({ message: { id: '1' }, emoji });
+        assert.equal(surMessage.emoji.cle, surEvenement.emoji.cle);
+        assert.equal(surMessage.emoji.cle, cleEmoji(emoji));
+    }
 });

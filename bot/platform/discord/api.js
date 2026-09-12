@@ -213,6 +213,10 @@ function creerApi(client) {
         /**
          * @returns {Promise<object|null>} `null` si le message ou son salon
          *   n'existe plus. Même règle que les autres lecteurs : une panne LÈVE.
+         *
+         * Le message rendu porte ses `reactions` (avec `parMoi`), que l'API
+         * inclut dans sa réponse : c'est ce qui permet de ne reposer que les
+         * emojis manquants d'un panneau au lieu de tous les reposer.
          */
         async obtenirMessage(canalId, messageId) {
             try {

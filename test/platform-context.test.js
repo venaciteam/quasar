@@ -39,7 +39,11 @@ function faireClient({ rolePosition = 1, roleGere = false, positionBot = 5 } = {
         client: {
             ws: { ping: 42 },
             guilds: { cache: new Map([[GUILDE, guilde]]) },
+            // `on` est requis depuis que l'adaptateur branche lui-même le
+            // redéploiement des commandes à l'invitation du bot.
+            on: () => {},
             once: () => {},
+            off: () => {},
             rest: {},
         },
     };

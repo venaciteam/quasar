@@ -92,6 +92,32 @@ function normaliserUtilisateur(user) {
     }, user);
 }
 
+/**
+ * Couleur d'un rôle, en hexadécimal « #rrggbb ».
+ *
+ * Trois sources possibles selon la provenance : `hexColor` (objet discord.js),
+ * `color` entier (objet discord.js comme réponse REST brute), ou rien. Un rôle
+ * sans couleur vaut 0 côté Discord, ce qui se rend « #000000 » — c'est déjà ce
+ * que produit `hexColor`, et c'est la valeur qu'affichaient les embeds de
+ * roleCreate / roleDelete avant migration.
+ */
+function couleurRole(role) {
+    if (typeof role.hexColor === 'string' && /^#?[0-9a-f]{6}$/i.test(role.hexColor)) {
+        return `#${role.hexColor.replace(/^#/, '').toLowerCase()}`;
+    }
+    const entier = Number.isFinite(role.color) ? role.color : 0;
+    return `#${(entier & 0xFFFFFF).toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * role : { id, nom, mention, position, gere, couleur, guildeId }
+ *
+ * `couleur` et `guildeId` sont portés par le RÔLE, et non passés en second
+ * argument d'événement : c'est aussi la forme de `GUILD_ROLE_CREATE` côté
+ * Fluxer, dont le payload porte `guild_id` à côté du rôle. Sans `guildeId`, un
+ * handler `roleCree` ne sait pas dans quel serveur écrire son journal — le
+ * payload neutre ne porte que le rôle.
+ */
 function normaliserRole(role) {
     if (!role) return null;
     return avecBrut({
@@ -100,6 +126,8 @@ function normaliserRole(role) {
         mention: `<@&${role.id}>`,
         position: role.position,
         gere: Boolean(role.managed),
+        couleur: couleurRole(role),
+        guildeId: role.guildId ?? role.guild_id ?? role.guild?.id ?? null,
     }, role);
 }
 
@@ -661,6 +689,7 @@ module.exports = {
     normaliserUtilisateur,
     normaliserMembre,
     normaliserRole,
+    couleurRole,
     normaliserCanal,
     normaliserGuilde,
     DELAI_PROMPT_DEFAUT,

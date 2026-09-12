@@ -30,7 +30,8 @@ const {
 const { EVENEMENTS_NEUTRES, estDescripteurEvenement } = require('../events');
 
 /**
- * message : { id, canalId, guildeId, auteur, contenu, embeds, estBot, partiel }
+ * message : { id, canalId, guildeId, auteur, contenu, embeds, reactions,
+ *             estBot, partiel }
  *
  * `partiel` signale un message hors cache : seuls `id`, `canalId` et `guildeId`
  * sont alors fiables. C'est le cas courant d'une suppression ou d'une réaction
@@ -48,9 +49,41 @@ function normaliserMessage(message) {
         auteur: normaliserUtilisateur(message.author),
         contenu: message.content ?? null,
         embeds: message.embeds ?? [],
+        reactions: normaliserReactions(message),
         estBot: Boolean(message.author?.bot),
         partiel: Boolean(message.partial),
     };
+}
+
+/**
+ * reactions : [{ emoji: { id, nom, anime, cle }, nombre, parMoi }]
+ *
+ * `parMoi` dit si le bot a DÉJÀ posé cette réaction, et c'est la raison d'être
+ * de ce champ : sans lui, un panneau de rôles-réactions doit reposer chaque
+ * emoji à chaque modification, faute de pouvoir constater qu'il est déjà là.
+ * Un PUT par entrée au lieu de zéro, sur une route limitée en débit — l'état
+ * final est le même, le coût ne l'est pas.
+ *
+ * Accepte le gestionnaire discord.js (`reactions.cache`) comme le tableau brut
+ * d'une réponse REST. `cle` est produite par `cleEmoji`, la même fonction que
+ * pour `reactionAjoutee` : les deux voies doivent indexer à l'identique, sinon
+ * une comparaison avec la base échoue sur les emojis personnalisés.
+ */
+function normaliserReactions(message) {
+    const brut = message.reactions;
+    if (!brut) return [];
+
+    const liste = Array.isArray(brut) ? brut : [...(brut.cache?.values?.() || [])];
+    return liste.map(reaction => ({
+        emoji: {
+            id: reaction.emoji?.id ?? null,
+            nom: reaction.emoji?.name ?? null,
+            anime: Boolean(reaction.emoji?.animated),
+            cle: cleEmoji(reaction.emoji),
+        },
+        nombre: reaction.count ?? 0,
+        parMoi: Boolean(reaction.me),
+    }));
 }
 
 /**
@@ -295,6 +328,7 @@ module.exports = {
     creerContexteEvenement,
     surErreurParDefaut,
     normaliserMessage,
+    normaliserReactions,
     normaliserReaction,
     normaliserEtatVocal,
     normaliserSanction,
