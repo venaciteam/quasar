@@ -1,27 +1,30 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('sanctions')
-        .setDescription('Voir l\'historique complet des sanctions d\'un membre')
-        .addUserOption(opt => opt.setName('membre').setDescription('Le membre à vérifier').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+module.exports = definirCommande({
+    nom: 'sanctions',
+    description: 'Voir l\'historique complet des sanctions d\'un membre',
+    permission: 'MODERATE_MEMBERS',
+    // Lecture seule en base, puis une réponse : rien à demander à la plateforme.
+    permissionsBot: [],
 
-    async execute(interaction) {
-        const target = interaction.options.getUser('membre');
-        const db = getDb();
+    options: [
+        { nom: 'membre', type: 'utilisateur', requis: true, description: 'Le membre à vérifier' },
+    ],
 
-        const sanctions = db.prepare(`
+    async executer(ctx) {
+        const cible = ctx.options.get('membre');
+
+        const sanctions = ctx.db.prepare(`
             SELECT id, type, moderator_id, reason, duration, created_at, active
             FROM sanctions
             WHERE guild_id = ? AND user_id = ?
             ORDER BY created_at DESC
             LIMIT 20
-        `).all(interaction.guild.id, target.id);
+        `).all(ctx.guildeId, cible.id);
 
         if (sanctions.length === 0) {
-            return interaction.reply({ content: `✅ ${target} n'a aucune sanction.`, ephemeral: true });
+            return ctx.repondre(`✅ ${cible.mention} n'a aucune sanction.`, { ephemere: true });
         }
 
         const icons = { warn: '⚠️', mute: '🔇', kick: '🔴', ban: '🔨' };
@@ -33,13 +36,12 @@ module.exports = {
             return `${icon} **#${s.id}** ${s.type}${duration} — ${s.reason} (par <@${s.moderator_id}> le ${date})${status}`;
         });
 
-        const embed = new EmbedBuilder()
-            .setTitle(`📋 Sanctions de ${target.tag}`)
-            .setColor(0xc8a86e)
-            .setDescription(lines.join('\n'))
-            .setFooter({ text: `${sanctions.length} sanction(s) affichée(s)` })
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
-    }
-};
+        await ctx.repondre(embed({
+            titre: `📋 Sanctions de ${cible.etiquette}`,
+            couleur: 0xc8a86e,
+            description: lines.join('\n'),
+            pied: { texte: `${sanctions.length} sanction(s) affichée(s)` },
+            horodatage: true,
+        }));
+    },
+});

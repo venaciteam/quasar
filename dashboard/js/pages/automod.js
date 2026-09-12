@@ -26,10 +26,14 @@ const _automodState = {
  * Enregistre un onglet. Appelé par chaque module au chargement de son fichier.
  *
  * @param {object}   tab
- * @param {string}   tab.id     — identifiant unique et stable
- * @param {string}   tab.label  — libellé affiché
- * @param {number}   tab.order  — position (10, 20, 30, 40…)
- * @param {function} tab.render — async (container, guildId) => void
+ * @param {string}   tab.id       — identifiant unique et stable
+ * @param {string}   tab.label    — libellé affiché
+ * @param {number}   tab.order    — position (10, 20, 30, 40…)
+ * @param {function} tab.render   — async (container, guildId) => void
+ * @param {string}   [tab.capacite] — l'onglet n'est affiché que si la plateforme
+ *   déclare cette capacité. Les fichiers d'onglet s'enregistrent au chargement,
+ *   avant que `/api/plateforme` n'ait répondu : le filtre est donc appliqué à
+ *   l'AFFICHAGE, pas à l'enregistrement.
  */
 function registerAutomodTab(tab) {
     if (!tab || typeof tab.id !== 'string' || !tab.id) {
@@ -46,6 +50,7 @@ function registerAutomodTab(tab) {
         label: tab.label || tab.id,
         order: Number.isFinite(tab.order) ? tab.order : 100,
         render: tab.render,
+        capacite: tab.capacite || null,
     };
 
     // Ré-enregistrement du même identifiant : on remplace au lieu d'empiler.
@@ -57,7 +62,12 @@ function registerAutomodTab(tab) {
 }
 
 function sortedAutomodTabs() {
-    return [..._automodTabs].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'fr'));
+    return _automodTabs
+        // Un onglet dont la plateforme n'a pas la capacité n'est pas désactivé :
+        // il n'existe pas. Son API répond 404, l'afficher ferait chercher un
+        // réglage introuvable. Les trois autres onglets, eux, sont portables.
+        .filter(t => !t.capacite || QuasarPlateforme.a(t.capacite))
+        .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'fr'));
 }
 
 function activeAutomodTab() {

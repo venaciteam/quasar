@@ -33,7 +33,13 @@ function checkAssignableRole(guild, role) {
 
 /**
  * Motif de refus détaillé, au format attendu par `userError` (embeds du bot).
- * L'API sert le même texte à plat via `describeForApi`.
+ * L'API en sert le même texte à plat, en concaténant `cause` et `action`.
+ *
+ * @param {null|'missing'|'everyone'|'managed'|'hierarchy'} code
+ * @param {{nom?: string}} [role] rôle NORMALISÉ (cf. `normaliserRole` de la
+ *   couche plateforme). Un objet discord.js n'est plus accepté : il porterait
+ *   son nom sous `name`, et le message « trop haut dans la hiérarchie » ne
+ *   nommerait plus le rôle fautif — le seul renseignement qu'il apporte.
  */
 function describeRefusal(code, role) {
     switch (code) {
@@ -58,7 +64,7 @@ function describeRefusal(code, role) {
         case 'hierarchy':
             return {
                 title: 'Ce rôle est trop haut dans la hiérarchie',
-                cause: `« ${role?.name} » est au-dessus du rôle le plus haut de Quasar. Discord interdit à un bot d'attribuer un rôle situé au-dessus du sien.`,
+                cause: `« ${role?.nom} » est au-dessus du rôle le plus haut de Quasar. Discord interdit à un bot d'attribuer un rôle situé au-dessus du sien.`,
                 action: 'Remontez le rôle « Quasar » dans Paramètres du serveur → Rôles, ou choisissez un rôle plus bas.',
             };
         default:
@@ -70,10 +76,4 @@ function describeRefusal(code, role) {
     }
 }
 
-/** Même motif, en une phrase, pour un `res.status(400).json({ error })`. */
-function describeForApi(code, role) {
-    const { cause, action } = describeRefusal(code, role);
-    return `${cause} ${action}`;
-}
-
-module.exports = { checkAssignableRole, describeRefusal, describeForApi };
+module.exports = { checkAssignableRole, describeRefusal };

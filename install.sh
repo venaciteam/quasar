@@ -72,6 +72,10 @@ aide() {
     --dir <chemin>       Dossier d'installation (défaut : quasar).
     -h, --help           Afficher cette aide.
 
+  setup.sh prend le relais et pose les questions. La première est la plateforme
+  du bot — Discord ou Fluxer : il ne demande ensuite que les identifiants de
+  celle-là, jamais ceux de l'autre.
+
   Toute autre option est transmise à setup.sh, qui accepte notamment :
     --non-interactive    Ne rien demander : la configuration vient alors des
                          variables d'environnement (voir ./setup.sh --help).

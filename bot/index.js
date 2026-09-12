@@ -1,9 +1,8 @@
-const { Client, GatewayIntentBits, Collection, Partials, PermissionFlagsBits } = require('discord.js');
-const fs = require('fs');
 const path = require('path');
-const { getDb, effectiveAccessMode } = require('../api/services/database');
+const { resolvePlatform } = require('./platform');
+const { getDb } = require('../api/services/database');
 const { buildMentionPayload } = require('../api/services/mentions');
-const { deployCommands } = require('./utils/deploy-commands');
+const { deployCommands } = require('./platform/discord/deploy');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
 const { reportIncident, userError } = require('./utils/errors');
 const { isSuspended } = require('./utils/suspension');
@@ -11,164 +10,80 @@ const { isSuspended } = require('./utils/suspension');
 // ═══════════════════════════════════════════════════════════════
 //  Commandes personnalisées — contrôle d'accès
 //
-//  Une commande custom est déclenchable à volonté par n'importe qui, et elle
-//  rejoue désormais les mentions de son embed (@everyone compris) comme celles
+//  Une commande personnalisée est déclenchable à volonté par n'importe qui, et
+//  elle rejoue les mentions de son embed (@everyone compris) comme celles
 //  écrites dans sa réponse texte. C'est ce contrôle d'accès, et lui seul, qui
 //  empêche que `/faq` devienne un bouton « pinger tout le serveur » à
 //  disposition de tous. Il est donc appliqué côté bot, à l'exécution — jamais
 //  uniquement dans l'interface du dashboard.
 //
-//  Trois modes exclusifs, portés par la ligne `custom_commands` :
-//    'everyone' → tout le monde (défaut, et comportement historique)
-//    'admins'   → permission Administrateur de Discord, la même notion que
-//                 celle utilisée par /log, /unlog et le middleware
-//                 requireGuildAdmin du dashboard
-//    'role'     → les porteurs d'un rôle précis (access_role_id)
+//  ⚠️ La règle vit dans `bot/platform/accesCommandePersonnalisee.js` et est
+//  exposée par les deux adaptateurs sous `platform.verifierAccesCommandePersonnalisee`.
+//  Ce fichier en portait sa PROPRE copie, écrite pour discord.js, pendant que le
+//  parseur Fluxer en portait une seconde. Deux copies d'un contrôle d'accès
+//  divergent, et la divergence ne se voit pas : elle s'observe le jour où une
+//  commande restreinte répond à quelqu'un qui n'aurait pas dû pouvoir la lancer.
+//  Le bootstrap se contente donc de fournir ce que la règle demande — le membre
+//  NORMALISÉ et les rôles du serveur — et de traduire son refus en éphémère.
 //
-//  Dans tous les modes, un administrateur du serveur passe (cf. le
-//  contournement dans checkCustomCommandAccess) : « réservée au rôle X »
-//  signifie donc en pratique « rôle X ou administrateur ».
+//  ⚠️ Le contrôle d'accès décide QUI peut déclencher la commande, pas ce qu'elle
+//  a le droit de NOTIFIER. Les deux questions ont longtemps été confondues ici :
+//  le chemin texte partait SANS verrou de mentions, au motif que le contrôle
+//  d'accès suffisait. Il ne suffit pas — un détenteur de MANAGE_GUILD fabrique
+//  une commande en mode `everyone` dont le texte contient `@everyone`, et
+//  n'importe quel membre la déclenche. Le verrou vit lui aussi dans
+//  `bot/platform/accesCommandePersonnalisee.js`, sous
+//  `mentionsAutoriseesPour` / `restreindreMentionsAuDeclencheur`.
 // ═══════════════════════════════════════════════════════════════
 
-// Un membre peut arriver en objet discord.js (roles = gestionnaire avec cache)
-// ou en membre brut de l'API (roles = tableau d'IDs). Les deux sont gérés.
-function memberHasRole(member, roleId) {
-    const roles = member?.roles;
-    if (!roles) return false;
-    if (Array.isArray(roles)) return roles.includes(roleId);
-    return !!roles.cache?.has(roleId);
-}
-
-// Permission Administrateur du membre à l'origine de l'interaction. discord.js
-// l'expose soit sur l'interaction, soit sur le membre ; si aucun jeu de
-// permissions exploitable n'est disponible, on répond « non » plutôt que de
-// transformer un « je ne sais pas » en droit accordé.
-function memberIsAdministrator(interaction) {
-    const perms = interaction.memberPermissions || interaction.member?.permissions;
-    return typeof perms?.has === 'function' && perms.has(PermissionFlagsBits.Administrator);
-}
-
 /**
- * @returns {null|{title:string,cause:string,action:string}} null = accès accordé,
- *          sinon le refus à afficher en éphémère.
+ * Câble le bot sur la plateforme active et rend l'ADAPTATEUR, pas le client.
+ *
+ * C'est le point de bascule du chantier multiplateforme : tout ce qui vit
+ * au-dessus de `bot/platform/` ne connaît plus que le contrat neutre. Le client
+ * natif reste accessible par `plateforme.client` tant que `api/` et le
+ * dashboard le consomment directement (lot 7).
+ *
+ * @param {{plateforme?: object}} [options] plateforme injectable pour les tests
+ * @returns {object} adaptateur de plateforme (cf. bot/platform/index.js)
  */
-function checkCustomCommandAccess(interaction, row) {
-    // Repli sur le plus restrictif si la valeur en base n'est pas reconnue
-    // (cf. effectiveAccessMode). On le journalise : c'est le signe d'une base
-    // incohérente, et la commande devient inaccessible aux non-administrateurs.
-    const mode = effectiveAccessMode(row.access_mode);
-    if (row.access_mode && mode !== row.access_mode) {
-        console.warn(`[Quasar] Commande custom /${row.name} : mode d'accès inconnu "${row.access_mode}" — repli sur "${mode}".`);
-    }
+function createBot({ plateforme = null } = {}) {
+    const platform = plateforme || resolvePlatform();
+    const client = platform.client;
 
-    if (mode === 'everyone') return null;
+    // Registre d'exécution des commandes, indexé par nom. Une simple Map : rien
+    // ici n'a besoin des méthodes supplémentaires d'une Collection discord.js.
+    client.commands = new Map();
 
-    // Hors serveur (message privé) il n'y a ni membre ni rôle : rien n'est
-    // vérifiable, donc rien n'est accordé. En pratique les commandes custom sont
-    // déployées par serveur et n'arrivent jamais en MP, mais on ne s'appuie pas
-    // sur cette hypothèse pour décider d'un droit.
-    if (!interaction.guild || !interaction.member) {
-        return {
-            title: 'Commande réservée au serveur',
-            cause: 'L\'accès à cette commande dépend de vos rôles ou de vos permissions, et je n\'arrive pas à les consulter ici.',
-            action: 'Relancez-la depuis un salon du serveur concerné. Si vous y êtes déjà, réessayez dans un instant.',
-        };
-    }
-
-    // Contournement administrateur — appliqué à TOUS les modes, et AVANT leur
-    // évaluation. Ce n'est pas un trou de sécurité, c'est ce qui rend le réglage
-    // réparable :
-    //   1. on ne s'enferme pas dehors de sa propre commande (configurer un mode
-    //      « rôle » sans s'être attribué ce rôle est l'erreur la plus courante) ;
-    //   2. une configuration cassée — rôle supprimé du serveur, mode inconnu en
-    //      base — resterait sinon bloquée pour tout le monde, y compris pour les
-    //      seules personnes capables de la corriger.
-    // Un administrateur peut de toute façon s'attribuer n'importe quel rôle :
-    // la restriction ne lui interdisait rien, elle ne faisait que le gêner.
-    if (memberIsAdministrator(interaction)) return null;
-
-    if (mode === 'admins') {
-        return {
-            title: 'Commande réservée aux administrateurs',
-            cause: 'Cette commande personnalisée est configurée pour les membres ayant la permission « Administrateur » sur ce serveur.',
-            action: 'Demandez à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    // mode === 'role'
-    const roleId = row.access_role_id;
-
-    // Rôle configuré puis supprimé du serveur : plus personne ne peut le porter.
-    // On refuse (retomber sur « tout le monde » ouvrirait en grand une commande
-    // volontairement restreinte) et on le dit clairement, pour que la personne
-    // puisse le signaler plutôt que de croire à un bug. Les administrateurs, eux,
-    // sont déjà passés plus haut : ils peuvent utiliser la commande et surtout la
-    // reconfigurer.
-    if (!roleId || !interaction.guild.roles.cache.has(roleId)) {
-        return {
-            title: 'Commande momentanément indisponible',
-            cause: 'Cette commande est réservée à un rôle qui n\'existe plus sur le serveur : en dehors des administrateurs, personne ne peut donc l\'utiliser pour l\'instant.',
-            action: 'Signalez-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    if (memberHasRole(interaction.member, roleId)) return null;
-
-    return {
-        title: 'Commande réservée à un rôle',
-        cause: `Cette commande personnalisée est réservée aux membres ayant le rôle <@&${roleId}>, ainsi qu'aux administrateurs du serveur.`,
-        action: 'Si vous pensez que ce rôle devrait vous être attribué, demandez-le à un administrateur.',
-    };
-}
-
-function createBot() {
-    const client = new Client({
-        intents: [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMembers,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.GuildMessageReactions,
-            GatewayIntentBits.GuildVoiceStates,
-            GatewayIntentBits.GuildPresences,
-            GatewayIntentBits.MessageContent,
-            // AutoMod natif de Discord. Ces deux intents ne sont PAS privilégiés
-            // (seuls GuildMembers, GuildPresences et MessageContent le sont) : rien
-            // à activer dans le portail développeur, aucune demande d'approbation.
-            //  - Configuration : tient à jour le cache des règles quand elles sont
-            //    modifiées ailleurs que depuis Quasar.
-            //  - Execution : indispensable pour recevoir AUTO_MODERATION_ACTION_EXECUTION,
-            //    l'événement qui permet d'historiser et de journaliser les
-            //    déclenchements (cf. bot/events/autoModerationActionExecution.js).
-            GatewayIntentBits.AutoModerationConfiguration,
-            GatewayIntentBits.AutoModerationExecution
-        ],
-        partials: [
-            Partials.Message,
-            Partials.Reaction
-        ]
+    // Chargement des commandes par le registre de la plateforme. Il accepte les
+    // DEUX formats pendant la migration — descripteur neutre (/ping, /autorole)
+    // et module discord.js historique (les 27 autres) — et rend dans les deux
+    // cas la même entrée { nom, data, execute, autocomplete }.
+    const entrees = platform.chargerCommandes({
+        dossier: path.join(__dirname, 'commands'),
+        exclus: DISABLED_COMMAND_FILES,
     });
 
-    // Collection de commandes
-    client.commands = new Collection();
+    // Le jeu COMPLET, y compris les entrées sans handler : ce sont deux
+    // questions distinctes, et les confondre retirerait du déploiement une
+    // commande simplement pas exécutable.
+    client.commandEntries = entrees;
 
-    // Charger les commandes
-    const commandsPath = path.join(__dirname, 'commands');
-    const commandFiles = fs.readdirSync(commandsPath).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f));
+    for (const entree of entrees) {
+        // Une entrée sans handler est déployable mais pas exécutable : c'était
+        // déjà la règle des deux chargeurs d'origine, on ne l'enregistre pas.
+        if (typeof entree.execute !== 'function') continue;
+        client.commands.set(entree.nom, entree);
+        console.log(`[Quasar] Commande chargée: /${entree.nom}`);
+    }
 
-    for (const file of commandFiles) {
-        const mod = require(path.join(commandsPath, file));
-        // Fichier avec exports multiples (ex: musiccontrols.js)
-        if (!mod.data && typeof mod === 'object') {
-            for (const key of Object.keys(mod)) {
-                const command = mod[key];
-                if (command?.data && command?.execute) {
-                    client.commands.set(command.data.name, command);
-                    console.log(`[Quasar] Commande chargée: /${command.data.name}`);
-                }
-            }
-        } else if (mod.data && mod.execute) {
-            client.commands.set(mod.data.name, mod);
-            console.log(`[Quasar] Commande chargée: /${mod.data.name}`);
+    // Panneaux persistants déclarés par les commandes. Ils sont enregistrés par
+    // le chargeur lui-même ; la ligne de journal est là pour le diagnostic le
+    // plus probable — « mon panneau n'est pas routé » se règle en regardant
+    // d'abord s'il a seulement été déclaré.
+    for (const entree of entrees) {
+        for (const panneau of entree.panneaux || []) {
+            console.log(`[Quasar] Panneau enregistré: ${panneau} (/${entree.nom})`);
         }
     }
 
@@ -183,48 +98,59 @@ function createBot() {
     // L'administrateur constate « les autorôles ne marchent plus », sans aucun
     // lien visible avec la cause.
     //
-    // Promise.resolve().then() plutôt qu'un try/catch : il attrape aussi bien le
-    // throw synchrone que le rejet asynchrone, en une seule forme.
-    // L'alerte d'incident est conservée : sans elle, poser ce filet remplacerait
-    // un rejet non capté (journalisé ET annoncé sur le webhook) par un silence.
+    // Le branchement passe désormais par le chargeur de la plateforme, qui
+    // accepte les DEUX formats — descripteur neutre `{ nom, executer }` et
+    // handler discord.js historique `{ name, execute }`. Sans lui, un handler
+    // migré serait abonné à `client.on('roleCree')`, un événement que discord.js
+    // n'émet jamais : pas d'erreur, pas de journal, la fonctionnalité disparaît.
+    // Le filet d'incident, lui, reste ici : c'est la politique du bootstrap, pas
+    // celle de la couche d'abstraction.
     const { newIncidentCode, alertIncident } = require('../api/services/incidents');
 
-    const executerEvent = (event, args) => {
-        Promise.resolve()
-            .then(() => event.execute(...args))
-            .catch((err) => {
-                const code = newIncidentCode();
-                console.error(
-                    `[Quasar] ⚠️  INCIDENT ${code} | event ${event.name} | ` +
-                    `${err?.name || 'Error'}: ${err?.message || err}`,
-                );
-                console.error(err?.stack || err);
-                alertIncident(err, {
-                    code,
-                    source: `event ${event.name}`,
-                    details: { Event: event.name },
-                });
-            });
+    const signalerIncidentEvent = (err, { evenement }) => {
+        const code = newIncidentCode();
+        console.error(
+            `[Quasar] ⚠️  INCIDENT ${code} | event ${evenement} | ` +
+            `${err?.name || 'Error'}: ${err?.message || err}`,
+        );
+        console.error(err?.stack || err);
+        alertIncident(err, {
+            code,
+            source: `event ${evenement}`,
+            details: { Event: evenement },
+        });
     };
 
-    const eventsPath = path.join(__dirname, 'events');
-    if (fs.existsSync(eventsPath)) {
-        const eventFiles = fs.readdirSync(eventsPath).filter(f => f.endsWith('.js'));
-        for (const file of eventFiles) {
-            const event = require(path.join(eventsPath, file));
-            if (event.once) {
-                client.once(event.name, (...args) => executerEvent(event, args));
-            } else {
-                client.on(event.name, (...args) => executerEvent(event, args));
-            }
-            console.log(`[Quasar] Event chargé: ${event.name}`);
-        }
+    const evenements = platform.chargerEvenements({
+        dossier: path.join(__dirname, 'events'),
+        surErreur: signalerIncidentEvent,
+    });
+
+    // Panneaux persistants sans commande — ceux des modules configurés depuis le
+    // dashboard, comme l'arbitrage des sanctions. Chargés APRÈS les commandes :
+    // une collision de nom doit désigner la déclaration qui arrive, pas celle
+    // qui était déjà là.
+    const panneauxAutonomes = platform.chargerPanneaux({
+        dossier: path.join(__dirname, 'panneaux'),
+        surErreur: (err, { panneau }) => signalerIncidentEvent(err, { evenement: `panneau ${panneau}` }),
+    });
+    for (const panneau of panneauxAutonomes) {
+        console.log(
+            panneau.enregistre
+                ? `[Quasar] Panneau enregistré: ${panneau.nom} (module)`
+                : `[Quasar] Panneau ignoré: ${panneau.nom} — capacité absente sur ${platform.nom}.`
+        );
     }
 
-    // Handler d'interactions
-    const { handleTempVoiceInteraction } = require('./interactions/tempvoice');
-    const { handleTicketInteraction } = require('./interactions/ticket');
-    const { handleDeferInteraction } = require('./interactions/defer');
+    for (const evenement of evenements) {
+        // Un handler écarté faute de capacité doit se VOIR : c'est normal côté
+        // Fluxer (pas d'AutoMod), et ce serait un défaut côté Discord.
+        console.log(
+            evenement.branche
+                ? `[Quasar] Event chargé: ${evenement.nom}`
+                : `[Quasar] Event ignoré: ${evenement.nom} — capacité absente sur ${platform.nom}.`
+        );
+    }
 
     // Rate limit autocomplete : max 5 par utilisateur par 10 secondes
     const autocompleteLimits = new Map();
@@ -262,7 +188,7 @@ function createBot() {
             return;
         }
 
-        // TempVoice : boutons, select menus, modals
+        // Composants et formulaires : boutons, menus, modals.
         if (interaction.isButton() || interaction.isUserSelectMenu() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
             // Même trace que pour les commandes. Les tickets et les salons vocaux
             // passent presque entièrement par des boutons : sans cette ligne, la
@@ -274,48 +200,30 @@ function createBot() {
                 `| guild=${interaction.guild?.id || 'MP'} | user=${interaction.user?.id}`
             );
 
-            if (interaction.customId.startsWith('tv_')) {
-                try { await handleTempVoiceInteraction(interaction); } catch (e) {
-                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
+            // SEULE voie de routage d'un clic : le registre de panneaux de la
+            // plateforme. Le routage par préfixes écrits en dur (`tv_`,
+            // `ticket_`, `defer_`, `signaler_`, `mesdonnees_`) a été retiré à la
+            // consolidation, avec les deux modules qui n'existaient que pour
+            // lui (`bot/interactions/{ticket,defer}.js`) — il était la dernière
+            // connaissance de composants Discord dans ce fichier, et il doublait
+            // un routage que la couche fait déjà.
+            //
+            // Rien ne revendique ce customId ? Deux cas, aucun à traiter ici :
+            //   • il appartient à un COLLECTEUR (`qprompt:`, `qchoose:`,
+            //     `qmembre:`), qui l'attend de son côté ;
+            //   • il vient d'un panneau posé par une version ANTÉRIEURE de
+            //     Quasar (`ticket_open`, `tv_lock`…). Discord affichera
+            //     « L'interaction a échoué » : c'est le point de la note de
+            //     version, qui demande de relancer `/ticket setup`. La ligne de
+            //     journal ci-dessus reste, elle, le seul indice nécessaire pour
+            //     rattacher un signalement à sa cause.
+            const routage = platform.routerPanneau(interaction);
+            if (routage) {
+                try { await routage; } catch (e) {
+                    reportIncident(interaction, e, { command: `panneau ${interaction.customId}` });
                 }
-                return;
             }
-
-            if (interaction.customId.startsWith('ticket_')) {
-                try { await handleTicketInteraction(interaction); } catch (e) {
-                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
-                }
-                return;
-            }
-
-            // Arbitrage : les boutons portent l'identifiant du cas et restent
-            // fonctionnels après un redémarrage, sans état en mémoire.
-            if (interaction.customId.startsWith('defer_')) {
-                try { await handleDeferInteraction(interaction); } catch (e) {
-                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
-                }
-                return;
-            }
-
-            if (interaction.customId.startsWith('signaler_')) {
-                try {
-                    const { handleReportModal } = require('./commands/signaler');
-                    await handleReportModal(interaction);
-                } catch (e) {
-                    reportIncident(interaction, e, { command: `formulaire ${interaction.customId}` });
-                }
-                return;
-            }
-
-            if (interaction.customId.startsWith('mesdonnees_')) {
-                try {
-                    const { handleMesDonneesButton } = require('./commands/mesdonnees');
-                    await handleMesDonneesButton(interaction);
-                } catch (e) {
-                    reportIncident(interaction, e, { command: `bouton ${interaction.customId}` });
-                }
-                return;
-            }
+            return;
         }
 
         if (!interaction.isChatInputCommand()) return;
@@ -332,9 +240,33 @@ function createBot() {
 
             if (customCmd) {
                 try {
-                    // Contrôle d'accès AVANT toute réponse : un refus est éphémère,
-                    // rien n'est jamais posté dans le salon.
-                    const refus = checkCustomCommandAccess(interaction, customCmd);
+                    // Contexte NEUTRE, y compris ici : une commande
+                    // personnalisée n'a pas de descripteur — elle est définie en
+                    // base, serveur par serveur — mais elle répond par la même
+                    // voie que les autres. C'était le dernier endroit du bot à
+                    // construire un corps de message Discord à la main, et le
+                    // dernier appelant de `buildDiscordEmbed`.
+                    //
+                    // Construit AVANT le contrôle d'accès, et ce n'est pas un
+                    // relâchement : créer un contexte n'écrit rien nulle part,
+                    // et c'est lui qui porte le membre normalisé que la règle
+                    // d'accès attend. Un refus reste éphémère, et rien n'est
+                    // jamais posté dans le salon.
+                    const ctx = platform.contexteCommandePersonnalisee(interaction, interaction.commandName);
+
+                    // Règle partagée avec le parseur de l'autre plateforme. Les
+                    // rôles du serveur ne servent qu'à distinguer « rôle
+                    // supprimé » de « rôle que vous n'avez pas » : omis, le
+                    // contrôle d'existence est simplement sauté.
+                    // Lus UNE fois : le contrôle d'accès s'en sert pour
+                    // distinguer « rôle supprimé » de « rôle que vous n'avez
+                    // pas », et le verrou de mentions pour distinguer un rôle
+                    // mentionnable d'un rôle qui ne l'est pas.
+                    const rolesDuServeur = interaction.guild?.roles?.cache || null;
+
+                    const refus = platform.verifierAccesCommandePersonnalisee(customCmd, ctx.membre, {
+                        roles: rolesDuServeur,
+                    });
                     if (refus) return userError(interaction, refus);
 
                     if (customCmd.embed_id) {
@@ -342,30 +274,51 @@ function createBot() {
                             'SELECT data, mention_roles, mention_users, mention_everyone, mention_here FROM embeds WHERE id = ?'
                         ).get(customCmd.embed_id);
                         if (embedRow) {
-                            const { buildDiscordEmbed } = require('./commands/embed');
-                            const embed = buildDiscordEmbed(JSON.parse(embedRow.data));
-                            // Mentions de l'embed appliquées à l'identique de
-                            // `/embed send` et des rappels programmés : même helper,
-                            // même payload à configuration égale. C'est le contrôle
-                            // d'accès ci-dessus qui protège de l'abus.
+                            const { construireEmbedEnregistre } = require('./commands/embed');
+                            // Mentions de l'embed construites par le même helper
+                            // que `/embed send` et les rappels programmés, puis
+                            // RESTREINTES à ce que le déclencheur pourrait faire
+                            // lui-même. Les mentions d'un embed ne notifient
+                            // pas ; la ligne de rejeu ci-dessous, elle, si — un
+                            // embed configuré avec `@everyone` serait sinon un
+                            // canon déclenchable par n'importe qui.
                             const { content, allowedMentions } = buildMentionPayload(embedRow);
-                            const payload = { embeds: [embed], allowedMentions };
-                            if (content) payload.content = content;
-                            return interaction.reply(payload);
+                            return ctx.repondre({
+                                // `undefined` et non `''` : une clé `contenu`
+                                // vide produirait un `content: ""` que le corps
+                                // d'origine n'envoyait pas.
+                                contenu: content || undefined,
+                                embeds: [construireEmbedEnregistre(JSON.parse(embedRow.data))],
+                                mentionsAutorisees: platform.restreindreMentionsAuDeclencheur(
+                                    allowedMentions, ctx.membre, { roles: rolesDuServeur },
+                                ),
+                            });
                         }
                     }
                     if (customCmd.response) {
-                        // Réponse texte : volontairement SANS allowedMentions, à
-                        // l'inverse du chemin embed juste au-dessus. Ce qui est
-                        // écrit dans la réponse doit pinger normalement (@everyone,
-                        // rôles, membres) — c'est le comportement d'origine, et le
-                        // contrôle d'accès ci-dessus limite déjà qui peut déclencher
-                        // la commande.
-                        // Les deux chemins divergent délibérément : l'embed rejoue
-                        // strictement les mentions cochées sur lui (parse: [] + listes
-                        // explicites), le texte laisse Discord analyser son contenu.
-                        // Ne pas les « harmoniser ».
-                        return interaction.reply({ content: customCmd.response });
+                        // Réponse texte, AVEC son verrou de mentions.
+                        //
+                        // Ce chemin partait nu jusqu'ici, et le commentaire qui
+                        // l'expliquait affirmait que « ce qui est écrit dans la
+                        // réponse doit pinger normalement » parce que le contrôle
+                        // d'accès limitait déjà qui pouvait déclencher la
+                        // commande. C'était faux dès qu'une commande est en mode
+                        // `everyone` — c'est-à-dire par défaut : le contrôle
+                        // d'accès a alors fait son travail en laissant passer
+                        // tout le monde, et plus rien ne protégeait le serveur.
+                        //
+                        // La règle est celle de
+                        // `bot/platform/accesCommandePersonnalisee.js` : les
+                        // mentions que la commande déclenche sont celles que la
+                        // personne qui la déclenche pourrait faire elle-même.
+                        // Les deux chemins ne divergent plus.
+                        return ctx.repondre({
+                            contenu: customCmd.response,
+                            mentionsAutorisees: platform.mentionsAutoriseesPour(ctx.membre, {
+                                contenu: customCmd.response,
+                                roles: rolesDuServeur,
+                            }),
+                        });
                     }
                 } catch (err) {
                     reportIncident(interaction, err, { command: `commande personnalisée /${interaction.commandName}` });
@@ -387,19 +340,21 @@ function createBot() {
         try {
             await command.execute(interaction);
 
-            // Log commande utilisée
+            // Log commande utilisée. Portée d'écriture NEUTRE et embed neutre :
+            // c'était le dernier embed brut du fichier, et la dernière écriture
+            // qui passait par le cache de salons de discord.js.
             const { sendLog } = require('./utils/logger');
-            const { EmbedBuilder } = require('discord.js');
-            const cmdEmbed = new EmbedBuilder()
-                .setTitle('⚡ Commande utilisée')
-                .setColor(0xc8a86e)
-                .addFields(
-                    { name: 'Commande', value: `\`/${interaction.commandName}\``, inline: true },
-                    { name: 'Par', value: `${interaction.user}`, inline: true },
-                    { name: 'Channel', value: `<#${interaction.channel?.id}>`, inline: true }
-                )
-                .setTimestamp();
-            sendLog(interaction.guild, 'quasar_command', cmdEmbed).catch(() => {});
+            const { embed } = require('./platform/embed');
+            sendLog({ guildeId: interaction.guild?.id, api: platform.api }, 'quasar_command', embed({
+                titre: '⚡ Commande utilisée',
+                couleur: 0xc8a86e,
+                champs: [
+                    { nom: 'Commande', valeur: `\`/${interaction.commandName}\``, enLigne: true },
+                    { nom: 'Par', valeur: `<@${interaction.user?.id}>`, enLigne: true },
+                    { nom: 'Channel', valeur: `<#${interaction.channel?.id}>`, enLigne: true },
+                ],
+                horodatage: true,
+            })).catch(() => {});
         } catch (error) {
             reportIncident(interaction, error, {
                 command: `/${interaction.commandName}${sub ? ' ' + sub : ''}`,
@@ -414,17 +369,23 @@ function createBot() {
     // serveur reste fermé indéfiniment), aucune purge de rétention. Et rien ne le
     // signalerait.
     client.once('clientReady', () => {
-        demarrerServices(client).catch((err) => {
+        demarrerServices(client, platform).catch((err) => {
             console.error('[Quasar] ❌ Échec du démarrage des services :', err?.message || err);
             console.error(err?.stack || err);
             process.exit(1);
         });
     });
 
-    return client;
+    return platform;
 }
 
-async function demarrerServices(client) {
+/**
+ * @param {object} client   client natif de la plateforme
+ * @param {object} [platform] adaptateur. Facultatif : les tests appellent cette
+ *   fonction avec un client factice pour contrôler le garde de base de données,
+ *   et le déploiement retombe alors sur `deployCommands`.
+ */
+async function demarrerServices(client, platform = null) {
     console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
     console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
 
@@ -457,7 +418,11 @@ async function demarrerServices(client) {
     // commandes déjà déployées sur Discord restent utilisables, et le bot rend
     // encore tous ses autres services. Il doit en revanche se voir.
     try {
-        await deployCommands(client);
+        // `commandEntries` évite de relire bot/commands/ et de reconstruire les
+        // builders : ils viennent d'être produits par le chargeur. Absent (client
+        // factice des tests), `deployCommands` relit le dossier comme avant.
+        if (platform) await platform.enregistrerCommandes(client.commandEntries || null);
+        else await deployCommands(client);
     } catch (err) {
         console.error('[Quasar] ⚠️  Déploiement des commandes slash impossible :', err?.message || err);
         console.error('[Quasar]    Les commandes déjà enregistrées sur Discord restent utilisables.');
@@ -504,17 +469,37 @@ async function demarrerServices(client) {
     }
 
     // TempVoice — Nettoyage des vocaux orphelins au boot
+    //
+    // Passe par le client REST normalisé : `obtenirCanal` rend `null` quand le
+    // salon n'existe plus, et `listerMembresVocal` rend la liste des personnes
+    // connectées — les deux questions que `guild.channels.cache` et
+    // `channel.members.size` posaient au cache de discord.js.
+    //
+    // ⚠️ `listerMembresVocal` peut rendre `null` (salon illisible, connexion
+    // incomplète) : on ne supprime PAS dans ce cas. « Je ne sais pas qui est
+    // dedans » et « il est vide » sont deux réponses différentes, et les
+    // confondre fermerait un salon occupé au redémarrage.
     try {
-        const tvActive = db.prepare('SELECT * FROM tempvoice_active').all();
+        // Sans adaptateur (tests du garde de base de données), il n'y a pas de
+        // client REST : on ne touche à rien plutôt que de supprimer des lignes
+        // sur la foi d'une lecture qu'on n'a pas faite.
+        const tvActive = platform ? db.prepare('SELECT * FROM tempvoice_active').all() : [];
         let cleaned = 0;
         for (const row of tvActive) {
-            const g = client.guilds.cache.get(row.guild_id);
-            const ch = g?.channels.cache.get(row.channel_id);
-            if (!ch || ch.members.size === 0) {
-                if (ch) await ch.delete().catch(() => {});
-                db.prepare('DELETE FROM tempvoice_active WHERE channel_id = ?').run(row.channel_id);
-                cleaned++;
+            const canal = await platform.api.obtenirCanal(row.channel_id).catch(() => undefined);
+            // `undefined` = lecture en échec : on laisse la ligne pour le
+            // prochain démarrage plutôt que d'oublier un salon bien vivant.
+            if (canal === undefined) continue;
+
+            let occupants = null;
+            if (canal) {
+                occupants = await platform.api.listerMembresVocal(row.channel_id).catch(() => null);
+                if (occupants === null || occupants.length > 0) continue;
             }
+
+            if (canal) await platform.api.supprimerCanal(row.channel_id, 'Salon temporaire vide au démarrage').catch(() => {});
+            db.prepare('DELETE FROM tempvoice_active WHERE channel_id = ?').run(row.channel_id);
+            cleaned++;
         }
         if (cleaned > 0) console.log(`[Quasar] TempVoice boot cleanup: ${cleaned} salon(s) orphelin(s) supprimé(s)`);
     } catch (e) {
@@ -523,16 +508,23 @@ async function demarrerServices(client) {
 
     // Scheduler — Démarrer la boucle d'envoi des rappels programmés
     try {
-        const scheduler = require('./modules/scheduler');
-        scheduler.start(client);
+        // L'ADAPTATEUR, pas le client : le planificateur poste par le client
+        // REST normalisé, et son garde « connexion incomplète » lit l'identité
+        // du bot. `platform` peut être nulle (tests du garde de base de
+        // données) : on ne démarre alors aucun balayage, plutôt que de passer un
+        // client que plus rien ne sait lire.
+        if (platform) require('./modules/scheduler').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur démarrage scheduler:', e.message || e);
     }
 
     // Rétention — Purge des serveurs quittés et des sanctions expirées
     try {
-        const retention = require('./modules/retention');
-        retention.start(client);
+        // L'ADAPTATEUR : ce module SUPPRIME des données, et il lui faut la
+        // distinction que le cache de discord.js ne savait pas exprimer —
+        // `listerGuildes()` rend `null` quand la connexion n'est pas établie,
+        // `[]` quand le bot n'est réellement sur aucun serveur.
+        if (platform) require('./modules/retention').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
     }
@@ -540,7 +532,10 @@ async function demarrerServices(client) {
     // Notification de violation (art. 33) — Boucle qui dépile et envoie les
     // notifications enfilées depuis le dashboard owner.
     try {
-        require('./modules/breach').start(client);
+        // L'ADAPTATEUR : les envois passent par `ouvrirMessagePrive` +
+        // `envoyerMessage`, et le garde « connexion incomplète » lit l'identité
+        // du bot plutôt que le cache de serveurs.
+        if (platform) require('./modules/breach').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage notification de violation:', e.message || e);
     }
@@ -548,7 +543,9 @@ async function demarrerServices(client) {
     // Effacement (art. 17) — Boucle de suivi des demandes de suppression
     // (échéances légales, alertes owner).
     try {
-        require('./modules/erasure').start(client);
+        // L'ADAPTATEUR : la relance part en message privé par `ouvrirMessagePrive`
+        // puis `envoyerMessage`, et non plus par `client.users.fetch()`.
+        if (platform) require('./modules/erasure').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
     }
@@ -558,7 +555,11 @@ async function demarrerServices(client) {
     // serait un ban définitif. La boucle ne fait rien tant qu'aucune échéance
     // n'est en base (un SELECT indexé par minute).
     try {
-        require('./utils/punishments').startTempBanSweeper(client);
+        // L'ADAPTATEUR, pas le client : le balayeur emprunte la voie neutre
+        // (client REST normalisé, codes d'erreur neutres) et distingue « bot
+        // retiré du serveur » d'une panne réseau — la confusion qui
+        // transformerait un bannissement temporaire en bannissement définitif.
+        if (platform) require('./utils/punishments').startTempBanSweeper(platform);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage bannissements temporaires:', e.message || e);
     }
@@ -568,7 +569,11 @@ async function demarrerServices(client) {
     // le processus a redemarre laisserait un serveur ferme indefiniment. Le
     // balayage relit l'echeance en base et rend au serveur son etat d'origine.
     try {
-        require('./modules/antiraid').startPanicSweeper(client);
+        // L'ADAPTATEUR, comme pour les bannissements temporaires : `listerGuildes`
+        // distingue « pas encore connecté » (null) de « sur aucun serveur » ([]),
+        // ce que le cache de discord.js ne sait pas exprimer — et c'est cette
+        // distinction qui évite de laisser un serveur fermé indéfiniment.
+        if (platform) require('./modules/antiraid').startPanicSweeper(platform);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage anti-raid:', e.message || e);
     }

@@ -1,26 +1,28 @@
-const { EmbedBuilder } = require('discord.js');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { sendLog } = require('../utils/logger');
 
-module.exports = {
-    name: 'messageUpdate',
-    once: false,
-    async execute(oldMessage, newMessage) {
-        if (!newMessage.guild || newMessage.author?.bot) return;
-        if (oldMessage.partial || newMessage.partial) return;
-        if (oldMessage.content === newMessage.content) return; // Embed preview, pas un edit
+module.exports = definirEvenement({
+    nom: 'messageModifie',
 
-        const embed = new EmbedBuilder()
-            .setTitle('✏️ Message modifié')
-            .setColor(0x3498db)
-            .addFields(
-                { name: 'Auteur', value: `${newMessage.author} (${newMessage.author.tag})`, inline: true },
-                { name: 'Channel', value: `<#${newMessage.channel.id}>`, inline: true },
-                { name: 'Avant', value: (oldMessage.content || '*vide*').slice(0, 1024) },
-                { name: 'Après', value: (newMessage.content || '*vide*').slice(0, 1024) }
-            )
-            .setURL(newMessage.url)
-            .setTimestamp();
+    async executer(ctx, avant, apres) {
+        if (!apres.guildeId || apres.auteur?.estBot) return;
+        if (avant.partiel || apres.partiel) return;
+        if (avant.contenu === apres.contenu) return; // Embed preview, pas un edit
 
-        await sendLog(newMessage.guild, 'msg_edit', embed);
-    }
-};
+        await sendLog({ guildeId: apres.guildeId, api: ctx.api }, 'msg_edit', embed({
+            titre: '✏️ Message modifié',
+            couleur: 0x3498db,
+            // Le lien pointe sur le message : sans lui, on lit un avant/après
+            // sans pouvoir aller voir le fil de la conversation.
+            lien: apres.lien,
+            champs: [
+                { nom: 'Auteur', valeur: `${apres.auteur.mention} (${apres.auteur.etiquette})`, enLigne: true },
+                { nom: 'Channel', valeur: `<#${apres.canalId}>`, enLigne: true },
+                { nom: 'Avant', valeur: (avant.contenu || '*vide*').slice(0, 1024) },
+                { nom: 'Après', valeur: (apres.contenu || '*vide*').slice(0, 1024) },
+            ],
+            horodatage: true,
+        }));
+    },
+});

@@ -1,19 +1,24 @@
-const { EmbedBuilder } = require('discord.js');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { sendLog } = require('../utils/logger');
 
-module.exports = {
-    name: 'roleCreate',
-    once: false,
-    async execute(role) {
-        if (role.managed) return; // Rôles de bots
-        const embed = new EmbedBuilder()
-            .setTitle('🎭 Rôle créé')
-            .setColor(0x2ecc71)
-            .addFields(
-                { name: 'Nom', value: role.name, inline: true },
-                { name: 'Couleur', value: role.hexColor, inline: true }
-            )
-            .setTimestamp();
-        await sendLog(role.guild, 'server_role', embed);
-    }
-};
+module.exports = definirEvenement({
+    nom: 'roleCree',
+    async executer(ctx, role) {
+        if (role.gere) return; // Rôles de bots
+
+        // `guildeId` est porté par le rôle : l'événement neutre ne transmet pas
+        // de serveur, et un contexte d'événement n'en vise aucun en propre.
+        await sendLog({ guildeId: role.guildeId, api: ctx.api }, 'server_role', embed({
+            titre: '🎭 Rôle créé',
+            couleur: 0x2ecc71,
+            champs: [
+                { nom: 'Nom', valeur: role.nom, enLigne: true },
+                // `role.couleur` est la forme « #rrggbb » minuscule qu'affichait
+                // déjà `hexColor`, « #000000 » pour un rôle sans couleur.
+                { nom: 'Couleur', valeur: role.couleur, enLigne: true },
+            ],
+            horodatage: true,
+        }));
+    },
+});

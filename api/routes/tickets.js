@@ -1,7 +1,22 @@
+// ═══════════════════════════════════════════════════════════════
+//  Tickets — configuration depuis le dashboard
+//
+//  ⚠️ Le panneau posé ici est le MÊME que celui que pose `/ticket setup` :
+//  même nom de panneau (`ticket`), même clé de choix (`ouvrir`). Ce n'est pas
+//  une coquetterie : depuis la consolidation, un clic n'atteint du code métier
+//  que par `platform.routerPanneau`, qui lit `panneau:cle` dans l'identifiant du
+//  composant. Un panneau posé avec l'ancien `ticket_open` s'affiche
+//  parfaitement, et son bouton ne répond jamais.
+//
+//  La pose passe par `api/services/panneau.js`, qui emprunte l'adaptateur.
+// ═══════════════════════════════════════════════════════════════
+
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { embed } = require('../../bot/platform/embed');
+const plateforme = require('../services/plateforme');
+const { poserPanneau } = require('../services/panneau');
 const router = express.Router({ mergeParams: true });
 
 const ACCENT_COLOR = 0xDE3163;
@@ -9,26 +24,39 @@ const ACCENT_COLOR = 0xDE3163;
 const DEFAULT_PANEL_TITLE = '🎫 Support — Ouvrir un ticket';
 const DEFAULT_PANEL_DESC = 'Cliquez sur le bouton ci-dessous pour ouvrir un ticket.\nUn membre du staff vous répondra dès que possible.';
 
+// Nom du panneau et choix d'ouverture, à l'identique de `bot/commands/ticket.js`.
+// Recopiés plutôt qu'importés parce que le descripteur d'une commande n'expose
+// pas ses constantes internes ; `test/lot5-tickets-arbitrage.test.js` vérifie
+// que le nom correspond bien à un panneau DÉCLARÉ par la commande, pour qu'une
+// divergence casse un test au lieu de produire un bouton muet.
+const PANNEAU = 'ticket';
+const CHOIX_OUVRIR = Object.freeze({
+    cle: 'ouvrir', libelle: 'Ouvrir un ticket', emoji: '🎫', style: 'primaire',
+});
+
+/** Embed du panneau, au format NEUTRE. Identique à celui de `/ticket setup`. */
 function buildPanelEmbed(config) {
-    return new EmbedBuilder()
-        .setTitle(config?.panel_title || DEFAULT_PANEL_TITLE)
-        .setDescription(config?.panel_description || DEFAULT_PANEL_DESC)
-        .setColor(ACCENT_COLOR)
-        .setTimestamp();
+    return embed({
+        titre: config?.panel_title || DEFAULT_PANEL_TITLE,
+        description: config?.panel_description || DEFAULT_PANEL_DESC,
+        couleur: ACCENT_COLOR,
+        horodatage: true,
+    });
 }
 
-function buildPanelRow() {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('ticket_open')
-            .setLabel('Ouvrir un ticket')
-            .setEmoji('🎫')
-            .setStyle(ButtonStyle.Primary)
+/** Pose le panneau d'ouverture dans un salon. Lève si l'envoi échoue. */
+function poserPanneauTicket(req, canalId, config) {
+    return poserPanneau(
+        plateforme.adaptateur(req),
+        canalId,
+        buildPanelEmbed(config),
+        [CHOIX_OUVRIR],
+        { panneau: PANNEAU, guildeId: req.params.guildId },
     );
 }
 
 // GET /api/guilds/:guildId/tickets — config tickets du serveur
-router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
+router.get('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const config = db.prepare('SELECT * FROM ticket_config WHERE guild_id = ?').get(req.params.guildId);
 
@@ -36,21 +64,26 @@ router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
         return res.json({ configured: false });
     }
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(req.params.guildId);
-
-    const channel = guild?.channels.cache.get(config.channel_id);
-    const category = config.category_id ? guild?.channels.cache.get(config.category_id) : null;
-    const role = guild?.roles.cache.get(config.staff_role_id);
+    // Noms d'affichage, SCELLÉS au serveur de l'URL. Un échec de lecture — ou un
+    // identifiant qui n'appartient pas à ce serveur — vaut « supprimé », comme
+    // un cache froid avant migration : la page reste utilisable, la
+    // configuration aussi. `category_id` en particulier a pu être écrit sans
+    // contrôle par une version antérieure du `PUT`, et son nom serait alors
+    // celui d'une catégorie d'un autre serveur.
+    const [channel, category, role] = await Promise.all([
+        plateforme.canalDuServeur(req, config.channel_id),
+        config.category_id ? plateforme.canalDuServeur(req, config.category_id) : Promise.resolve(null),
+        plateforme.roleDuServeur(req, config.staff_role_id),
+    ]);
 
     res.json({
         configured: true,
         channel_id: config.channel_id,
-        channel_name: channel?.name || '(supprimé)',
+        channel_name: channel?.nom || '(supprimé)',
         category_id: config.category_id || null,
-        category_name: category?.name || null,
+        category_name: category?.nom || null,
         staff_role_id: config.staff_role_id,
-        staff_role_name: role?.name || '(supprimé)',
+        staff_role_name: role?.nom || '(supprimé)',
         welcome_message: config.welcome_message,
         panel_title: config.panel_title || '',
         panel_description: config.panel_description || '',
@@ -68,12 +101,24 @@ router.post('/setup', requireAuth, requireGuildAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Le salon et le rôle staff sont requis.' });
     }
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
-    if (!guild) return res.status(404).json({ error: 'Serveur introuvable.' });
+    const api = plateforme.api(req);
+    if (!api) return res.status(404).json({ error: 'Serveur introuvable.' });
 
-    const channel = guild.channels.cache.get(channel_id);
-    if (!channel) return res.status(404).json({ error: 'Salon introuvable.' });
+    const channel = await plateforme.canalDuServeur(req, channel_id);
+    if (!channel) {
+        return res.status(404).json({ error: 'Salon introuvable.' });
+    }
+
+    // Les deux autres identifiants sont SCELLÉS avant d'être stockés. Sans ce
+    // contrôle, une catégorie ou un rôle d'un AUTRE serveur s'enregistrait sans
+    // broncher : les tickets s'y créeraient, et le `GET` en affichait le nom.
+    const categorie = await plateforme.exigerCanalDuServeur(req, category_id, {
+        champ: 'La catégorie', type: 'categorie',
+    });
+    if (categorie.error) return res.status(categorie.status || 400).json({ error: categorie.error });
+
+    const roleStaff = await plateforme.exigerRoleDuServeur(req, staff_role_id, { champ: 'Le rôle staff' });
+    if (roleStaff.error) return res.status(roleStaff.status || 400).json({ error: roleStaff.error });
 
     // Sauvegarder la config
     db.prepare(`
@@ -87,13 +132,13 @@ router.post('/setup', requireAuth, requireGuildAdmin, async (req, res) => {
             panel_title = excluded.panel_title,
             panel_description = excluded.panel_description,
             enabled = 1
-    `).run(guildId, channel_id, category_id || null, staff_role_id, welcome_message || null, panel_title || null, panel_description || null);
+    `).run(guildId, channel_id, categorie.value, roleStaff.value, welcome_message || null, panel_title || null, panel_description || null);
 
     const configForEmbed = { panel_title, panel_description };
 
-    // Envoyer l'embed avec le bouton dans le salon
+    // Envoyer le panneau dans le salon
     try {
-        await channel.send({ embeds: [buildPanelEmbed(configForEmbed)], components: [buildPanelRow()] });
+        await poserPanneauTicket(req, channel_id, configForEmbed);
     } catch (err) {
         return res.status(500).json({ error: 'Impossible d\'envoyer le message dans le salon : ' + err.message });
     }
@@ -110,14 +155,16 @@ router.post('/resend', requireAuth, requireGuildAdmin, async (req, res) => {
     const config = db.prepare('SELECT * FROM ticket_config WHERE guild_id = ?').get(guildId);
     if (!config) return res.status(404).json({ error: 'Tickets non configurés.' });
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
-    if (!guild) return res.status(404).json({ error: 'Serveur introuvable.' });
+    const api = plateforme.api(req);
+    if (!api) return res.status(404).json({ error: 'Serveur introuvable.' });
 
-    // Utiliser le channel_id fourni ou celui de la config
+    // Utiliser le channel_id fourni ou celui de la config. SCELLÉ : ce salon est
+    // à la fois la cible d'un envoi et une valeur stockée juste en dessous.
     const targetChannelId = channel_id || config.channel_id;
-    const channel = guild.channels.cache.get(targetChannelId);
-    if (!channel) return res.status(404).json({ error: 'Salon introuvable.' });
+    const channel = await plateforme.canalDuServeur(req, targetChannelId);
+    if (!channel) {
+        return res.status(404).json({ error: 'Salon introuvable.' });
+    }
 
     // Mettre à jour le channel_id si changé
     if (channel_id && channel_id !== config.channel_id) {
@@ -125,7 +172,7 @@ router.post('/resend', requireAuth, requireGuildAdmin, async (req, res) => {
     }
 
     try {
-        await channel.send({ embeds: [buildPanelEmbed(config)], components: [buildPanelRow()] });
+        await poserPanneauTicket(req, targetChannelId, config);
     } catch (err) {
         return res.status(500).json({ error: 'Impossible d\'envoyer le message : ' + err.message });
     }
@@ -134,7 +181,7 @@ router.post('/resend', requireAuth, requireGuildAdmin, async (req, res) => {
 });
 
 // PUT /api/guilds/:guildId/tickets — update config
-router.put('/', requireAuth, requireGuildAdmin, (req, res) => {
+router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const guildId = req.params.guildId;
     const { staff_role_id, category_id, welcome_message, panel_title, panel_description, enabled } = req.body;
@@ -144,11 +191,24 @@ router.put('/', requireAuth, requireGuildAdmin, (req, res) => {
         return res.status(404).json({ error: 'Tickets non configurés. Utilisez le setup d\'abord.' });
     }
 
+    // Les deux désignations sont SCELLÉES au serveur avant d'être stockées.
+    // `category_id` n'était contrôlé nulle part : l'identifiant d'une catégorie
+    // d'un AUTRE serveur s'enregistrait, et `GET /tickets` en rendait le nom.
+    const categorie = await plateforme.exigerCanalDuServeur(req, category_id, {
+        champ: 'La catégorie', actuel: existing.category_id, type: 'categorie',
+    });
+    if (categorie.error) return res.status(categorie.status || 400).json({ error: categorie.error });
+
+    const roleStaff = await plateforme.exigerRoleDuServeur(req, staff_role_id, {
+        champ: 'Le rôle staff', actuel: existing.staff_role_id,
+    });
+    if (roleStaff.error) return res.status(roleStaff.status || 400).json({ error: roleStaff.error });
+
     const updates = [];
     const params = [];
 
-    if (staff_role_id !== undefined) { updates.push('staff_role_id = ?'); params.push(staff_role_id); }
-    if (category_id !== undefined) { updates.push('category_id = ?'); params.push(category_id || null); }
+    if (staff_role_id !== undefined) { updates.push('staff_role_id = ?'); params.push(roleStaff.value); }
+    if (category_id !== undefined) { updates.push('category_id = ?'); params.push(categorie.value); }
     if (welcome_message !== undefined) { updates.push('welcome_message = ?'); params.push(welcome_message || null); }
     if (panel_title !== undefined) { updates.push('panel_title = ?'); params.push(panel_title || null); }
     if (panel_description !== undefined) { updates.push('panel_description = ?'); params.push(panel_description || null); }
@@ -162,32 +222,55 @@ router.put('/', requireAuth, requireGuildAdmin, (req, res) => {
     res.json({ success: true });
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  Noms des personnes dans la liste des tickets
+//
+//  ⚠️ Volontairement NON résolus, et c'est une régression d'affichage assumée
+//  faute de méthode au contrat.
+//
+//  Avant migration, la route lisait `guild.members.cache.get(id)` : CACHE SEUL,
+//  aucun appel réseau, et l'identifiant brut s'affichait pour qui n'y était pas.
+//  `api.obtenirMembre(guildeId, membreId)` ne sait pas faire ça — il retombe sur
+//  `members.fetch(id)` dès que la personne manque au cache. Or un onglet Tickets
+//  cite surtout des comptes PARTIS (tickets fermés) : quatre-vingts tickets
+//  fermés par des membres partis, c'était quatre-vingts requêtes REST à chaque
+//  ouverture de l'onglet, sur le seau de débit que partage toute la modération.
+//
+//  `api.listerMembres(guildeId)` n'est pas une issue non plus : un
+//  `members.fetch()` complet à chaque affichage de page coûte plus cher encore
+//  sur un gros serveur.
+//
+//  Ce qu'il faudrait au contrat, et que le compte-rendu réclame :
+//      api.obtenirMembreEnCache(guildeId, membreId) -> object|null
+//        — lecture SANS repli réseau ; `null` veut dire « pas sous la main »,
+//          jamais « n'existe pas ». Le jour où elle arrive, la carte des
+//          identifiants se remplit ici et rien d'autre ne change.
+// ═══════════════════════════════════════════════════════════════
+
 // GET /api/guilds/:guildId/tickets/list — liste des tickets
-router.get('/list', requireAuth, requireGuildAdmin, (req, res) => {
+router.get('/list', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const guildId = req.params.guildId;
 
     const open = db.prepare('SELECT * FROM tickets WHERE guild_id = ? AND closed_at IS NULL ORDER BY opened_at DESC').all(guildId);
     const recentClosed = db.prepare('SELECT * FROM tickets WHERE guild_id = ? AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 50').all(guildId);
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
+    // Aucune résolution de nom : voir le bloc ci-dessus. La carte reste vide
+    // tant que le contrat n'offre pas de lecture sans repli réseau, et chaque
+    // ligne affiche l'identifiant — ce que faisait déjà un cache froid.
+    const noms = new Map();
 
-    const mapTicket = (t) => {
-        const user = guild?.members.cache.get(t.user_id);
-        const closedBy = t.closed_by ? guild?.members.cache.get(t.closed_by) : null;
-        return {
-            id: t.id,
-            channel_id: t.channel_id,
-            user_id: t.user_id,
-            user_name: user?.displayName || user?.user?.tag || t.user_id,
-            opened_at: t.opened_at,
-            closed_at: t.closed_at,
-            closed_by: t.closed_by,
-            closed_by_name: closedBy?.displayName || closedBy?.user?.tag || t.closed_by,
-            close_reason: t.close_reason
-        };
-    };
+    const mapTicket = (t) => ({
+        id: t.id,
+        channel_id: t.channel_id,
+        user_id: t.user_id,
+        user_name: noms.get(t.user_id) || t.user_id,
+        opened_at: t.opened_at,
+        closed_at: t.closed_at,
+        closed_by: t.closed_by,
+        closed_by_name: t.closed_by ? (noms.get(t.closed_by) || t.closed_by) : t.closed_by,
+        close_reason: t.close_reason
+    });
 
     res.json({
         open: open.map(mapTicket),
@@ -201,3 +284,5 @@ router.get('/list', requireAuth, requireGuildAdmin, (req, res) => {
 // de l'administrateur du serveur.
 
 module.exports = router;
+module.exports.PANNEAU = PANNEAU;
+module.exports.CHOIX_OUVRIR = CHOIX_OUVRIR;

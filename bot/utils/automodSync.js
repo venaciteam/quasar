@@ -22,6 +22,41 @@
 //  Performance — des instances tournent sur Raspberry Pi : AUCUNE resynchronisation
 //  périodique. `syncGuildRules` n'est appelée qu'à la demande, quand l'onglet du
 //  dashboard s'ouvre ou qu'une action est effectuée.
+//
+//  ─── EXCEPTION ASSUMÉE au principe « seul bot/platform/discord/ dépend de
+//      discord.js » ─────────────────────────────────────────────────────────
+//
+//  Ce fichier importe `discord.js` et continuera de le faire. Ce n'est pas une
+//  migration en retard, c'est la seule forme correcte :
+//
+//   • Il n'y a RIEN À ABSTRAIRE. Les tables ci-dessous — TRIGGERS, ACTIONS,
+//     PRESETS — sont le miroir littéral des énumérations
+//     `AutoModerationRuleTriggerType`, `AutoModerationActionType` et
+//     `AutoModerationRuleKeywordPresetType` de Discord, jusqu'aux plafonds et
+//     aux combinaisons action/déclencheur que SON API refuse. Fluxer n'a aucun
+//     automod (`fluxerapp/fluxer`, septembre 2026 : aucun fichier, aucune route,
+//     aucun événement) : il n'existe pas de second cas dont ces tables seraient
+//     l'abstraction, et une couche neutre à un seul implémenteur n'abstrait rien
+//     — elle ne fait que déplacer le couplage d'un cran, en le rendant plus
+//     difficile à voir.
+//   • L'ABSTRAIRE COÛTERAIT LA PRÉCISION. `describeDiscordError` déplie
+//     `err.rawError.errors` champ par champ pour dire à l'administrateur QUELLE
+//     regex Rust Discord a refusée. Un code neutre (« permission »,
+//     « inconnu ») remplacerait ce diagnostic par un haussement d'épaules.
+//
+//  La règle qui remplace le principe général, et qui doit être tenue :
+//
+//   ⚠️ AUCUN module ne charge ce fichier au `require` de son propre module. Le
+//      chargement est PARESSEUX — `require('../utils/automodSync')` à l'intérieur
+//      de la fonction appelante — et sous la garde de `capacites.automod` chez
+//      l'appelant. Sur une plateforme sans automod, ce fichier ne doit jamais
+//      être évalué : il n'a rien à y faire, et son import tirerait `discord.js`
+//      dans un processus qui n'en veut pas.
+//
+//      Exception à l'exception : `api/routes/automod.js` l'importe en tête de
+//      fichier. C'est le lot dashboard qui décidera de rendre cette route
+//      conditionnelle à la plateforme active ; côté bot, la garde ci-dessus
+//      suffit.
 // ═══════════════════════════════════════════════════════════════
 
 const {

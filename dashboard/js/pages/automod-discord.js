@@ -632,6 +632,11 @@ registerAutomodTab({
     label: 'AutoMod Discord',
     order: 10,
     render: renderAutomodDiscord,
+    // Cet onglet est une FAÇADE sur l'AutoMod natif de la plateforme. Là où il
+    // n'y en a pas, il n'y a rien à mirrorer : l'onglet disparaît, et sa route
+    // répond 404 (api/routes/automod.js). Les trois autres onglets de la page
+    // sont de la logique Quasar et restent disponibles partout.
+    capacite: 'automod',
 });
 
 window.amdOpenEditor = amdOpenEditor;

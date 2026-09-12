@@ -11,10 +11,10 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 
 const router = express.Router({ mergeParams: true });
 
-const SNOWFLAKE = /^\d{17,20}$/;
 const VALID_STATUSES = ['pending', 'approved', 'rejected'];
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -31,17 +31,19 @@ router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
 });
 
 // PUT /api/guilds/:guildId/defer
-router.put('/', requireAuth, requireGuildAdmin, (req, res) => {
+router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const enabled = req.body?.enabled ? 1 : 0;
-    const rawChannel = req.body?.channel_id;
-    let channelId = null;
 
-    if (rawChannel !== null && rawChannel !== undefined && rawChannel !== '') {
-        channelId = String(rawChannel);
-        if (!SNOWFLAKE.test(channelId)) {
-            return res.status(400).json({ error: 'Identifiant de salon invalide.' });
-        }
-    }
+    // Salon SCELLÉ au serveur de l'URL : c'est là que partiront les cas
+    // d'arbitrage, nominatifs par nature. Un identifiant bien formé mais
+    // étranger ferait publier les signalements de CE serveur dans un autre.
+    const actuel = getDb().prepare('SELECT channel_id FROM defer_config WHERE guild_id = ?')
+        .get(req.params.guildId)?.channel_id;
+    const scelle = await plateforme.exigerCanalDuServeur(req, req.body?.channel_id, {
+        champ: 'Le salon d\'arbitrage', actuel,
+    });
+    if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+    const channelId = scelle.value;
 
     // Activer sans salon donnerait une protection qui échoue en silence à chaque
     // cas : le refus est explicite.

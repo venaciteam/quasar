@@ -34,8 +34,9 @@
 //     processus.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const { embed } = require('../platform/embed');
+const { resoudrePorteeNeutre } = require('./errors');
 const { isInScope } = require('./scopeFilter');
 const {
     applyPunishments,
@@ -168,50 +169,62 @@ function buildReason(tier, warnCount) {
  * doit produire quelque chose de visible, sinon il ne se distingue pas d'une
  * escalade en panne.
  */
-async function sendAlertOnly(guild, tier, targetId, warnCount) {
-    const embed = new EmbedBuilder()
-        .setTitle('⚠️ Palier d\'avertissements atteint')
-        .setColor(0xf1c40f)
-        .addFields(
-            { name: 'Membre', value: targetId ? `<@${targetId}> (${targetId})` : 'Inconnu', inline: true },
-            { name: 'Déclencheur', value: SOURCE_LABELS[SOURCE], inline: true },
-            { name: 'Palier', value: `${tier.threshold} avertissement(s)`, inline: true },
-            { name: 'Avertissements actifs', value: `${warnCount}`, inline: true },
-            { name: 'Sanction', value: 'Aucune : ce palier est réglé en alerte seule.' }
-        )
-        .setTimestamp();
+async function sendAlertOnly(portee, tier, targetId, warnCount) {
+    const alerte = embed({
+        titre: '⚠️ Palier d\'avertissements atteint',
+        couleur: 0xf1c40f,
+        champs: [
+            { nom: 'Membre', valeur: targetId ? `<@${targetId}> (${targetId})` : 'Inconnu', enLigne: true },
+            { nom: 'Déclencheur', valeur: SOURCE_LABELS[SOURCE], enLigne: true },
+            { nom: 'Palier', valeur: `${tier.threshold} avertissement(s)`, enLigne: true },
+            { nom: 'Avertissements actifs', valeur: `${warnCount}`, enLigne: true },
+            { nom: 'Sanction', valeur: 'Aucune : ce palier est réglé en alerte seule.' },
+        ],
+        horodatage: true,
+    });
 
-    await sendAutomodLog(guild, embed, 'mod_warn', tier.log_channel);
+    await sendAutomodLog(portee, alerte, 'mod_warn', tier.log_channel);
 }
 
 /**
  * Évalue l'escalade après l'enregistrement d'un avertissement, et l'applique.
  * Ne lève jamais.
  *
- * @param {object} ctx
- * @param {import('discord.js').Guild} ctx.guild
- * @param {import('discord.js').GuildMember|null} ctx.member — null si la
- *        personne a quitté le serveur entre l'avertissement et la sanction
- * @param {string} ctx.userId       — cible, y compris quand `member` est null
- * @param {number} ctx.warnCount    — compte borné par la rétention (cf. en-tête)
- * @param {string} ctx.moderatorId  — identifiant du bot : la sanction est automatique
- * @param {object} [ctx.channel]    — salon d'où l'avertissement a été donné, pour la portée
+ * @param {object} options
+ * @param {object} options.portee     portée neutre : le `ctx` de /warn, ou
+ *        `{ guildeId, api }`. C'est elle qui porte le serveur et le client REST.
+ * @param {object|null} [options.member] membre NORMALISÉ (cf. platform/discord/context.js),
+ *        ou null si la personne a quitté le serveur entre l'avertissement et la sanction
+ * @param {string} options.userId       — cible, y compris quand `member` est null
+ * @param {number} options.warnCount    — compte borné par la rétention (cf. en-tête)
+ * @param {string} options.moderatorId  — identifiant du bot : la sanction est automatique
+ * @param {string} [options.canalId]    — salon d'où l'avertissement a été donné, pour la portée
  * @returns {Promise<{tier: object, results: Array, alertOnly: boolean, skipped: string|null}|null>}
  *          null quand aucun palier n'est atteint : le cas courant, il ne doit
  *          rien coûter et rien afficher.
  */
-async function runWarnEscalation(ctx = {}) {
+async function runWarnEscalation(options = {}) {
     try {
-        const { guild, member = null, userId, warnCount, moderatorId, channel = null } = ctx;
-        if (!guild || !Number.isFinite(warnCount)) return null;
+        const { portee, member = null, userId, warnCount, moderatorId, canalId = null } = options;
+        const resolue = resoudrePorteeNeutre(portee);
+        if (!resolue?.guildeId || !Number.isFinite(warnCount)) return null;
 
-        const tier = selectTier(listTiers(guild.id), warnCount);
+        const tier = selectTier(listTiers(resolue.guildeId), warnCount);
         if (!tier) return null;
+
+        // Le salon n'est résolu QU'ICI, une fois un palier retenu : `isInScope`
+        // a besoin de la catégorie parente (exempter une catégorie exempte les
+        // salons qu'elle contient), et `ctx` ne porte que l'identifiant du
+        // salon. Le résoudre plus haut ferait payer une lecture à chaque /warn,
+        // alors que le cas courant est « aucun palier atteint ».
+        const canal = canalId
+            ? await resolue.api.obtenirCanal(canalId).catch(() => null)
+            : null;
 
         // Portée par palier : rôles et salons concernés ou exemptés. Évaluée par
         // le socle, jamais réimplémentée — une exemption qui ne s'applique pas
         // partout pareil ne protège personne.
-        if (!isInScope(tier, { member, channel })) {
+        if (!isInScope(tier, { member, channel: canal })) {
             return { tier, results: [], alertOnly: false, skipped: 'scope' };
         }
 
@@ -219,12 +232,12 @@ async function runWarnEscalation(ctx = {}) {
 
         const { punishments } = parsePunishments(tier.punishments);
         if (!punishments.length) {
-            await sendAlertOnly(guild, tier, member?.id || userId || null, warnCount);
+            await sendAlertOnly(portee, tier, member?.id || userId || null, warnCount);
             return { tier, results: [], alertOnly: true, skipped: null };
         }
 
         const results = await applyPunishments(punishments, {
-            guild,
+            portee,
             member,
             userId: member?.id || userId,
             reason,

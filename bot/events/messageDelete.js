@@ -1,28 +1,39 @@
-const { EmbedBuilder } = require('discord.js');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { sendLog } = require('../utils/logger');
 
-module.exports = {
-    name: 'messageDelete',
-    once: false,
-    async execute(message) {
-        if (!message.guild || message.author?.bot) return;
-        if (message.partial) return; // Pas assez d'infos
+module.exports = definirEvenement({
+    nom: 'messageSupprime',
 
-        const content = message.content?.slice(0, 1024) || '*contenu non disponible*';
-        const embed = new EmbedBuilder()
-            .setTitle('🗑️ Message supprimé')
-            .setColor(0xe74c3c)
-            .addFields(
-                { name: 'Auteur', value: message.author ? `${message.author} (${message.author.tag})` : 'Inconnu', inline: true },
-                { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
-                { name: 'Contenu', value: content }
-            )
-            .setTimestamp();
+    async executer(ctx, message) {
+        if (!message.guildeId || message.auteur?.estBot) return;
+        if (message.partiel) return; // Pas assez d'infos
 
-        if (message.attachments.size > 0) {
-            embed.addFields({ name: '📎 Pièces jointes', value: message.attachments.map(a => a.name).join(', ') });
+        const contenu = message.contenu?.slice(0, 1024) || '*contenu non disponible*';
+        const champs = [
+            {
+                nom: 'Auteur',
+                valeur: message.auteur ? `${message.auteur.mention} (${message.auteur.etiquette})` : 'Inconnu',
+                enLigne: true,
+            },
+            { nom: 'Channel', valeur: `<#${message.canalId}>`, enLigne: true },
+            { nom: 'Contenu', valeur: contenu },
+        ];
+
+        // Les pièces jointes ne sont listées que par leur nom, et c'est souvent
+        // la seule trace qu'il en reste : le fichier, lui, est parti avec le
+        // message.
+        if (message.piecesJointes.length > 0) {
+            champs.push({ nom: '📎 Pièces jointes', valeur: message.piecesJointes.map(p => p.nom).join(', ') });
         }
 
-        await sendLog(message.guild, 'msg_delete', embed);
-    }
-};
+        // Portée d'écriture construite à la main : le contexte d'un événement ne
+        // porte pas de serveur, c'est le payload qui le désigne.
+        await sendLog({ guildeId: message.guildeId, api: ctx.api }, 'msg_delete', embed({
+            titre: '🗑️ Message supprimé',
+            couleur: 0xe74c3c,
+            champs,
+            horodatage: true,
+        }));
+    },
+});
