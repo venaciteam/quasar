@@ -36,9 +36,11 @@ const { estEmbed } = require('../bot/platform/embed');
 const { versEmbedDiscord } = require('../bot/utils/errors');
 
 const notify = require('../bot/modules/breach/notify');
-const { handleMemberJoin, invalidateConfig } = require('../bot/modules/antiraid');
-const { liftPanic } = require('../bot/modules/antiraid/panic');
-const { forget } = require('../bot/modules/antiraid/window');
+const { enterPanic, liftPanic, sweepExpiredPanics } = require('../bot/modules/antiraid/panic');
+// Requis AVANT toute autre chose liée à l'AutoMod : le premier test de la
+// section vérifie que `automodSync` n'est PAS encore en cache.
+const evenementAutomod = require('../bot/events/autoModerationActionExecution');
+const CHEMIN_AUTOMODSYNC = require.resolve('../bot/utils/automodSync');
 
 const GUILDE = '111111111111111111';
 const SALON_LOG = '999999999999999999';
@@ -55,36 +57,6 @@ db.prepare(`
     INSERT INTO modules (guild_id, module_name, enabled, config) VALUES (?, 'moderation', 1, ?)
     ON CONFLICT(guild_id, module_name) DO UPDATE SET config = excluded.config
 `).run(GUILDE, JSON.stringify({ logChannel: SALON_LOG }));
-
-/** Écrit la configuration anti-raid du serveur et vide le cache de 15 s. */
-function configurerAntiraid(patch = {}) {
-    const valeurs = {
-        enabled: 1,
-        join_count: 2,
-        join_window_seconds: 10,
-        min_account_age_hours: 0,
-        punishments: '',            // alerte seule : aucune sanction réelle en test
-        panic_duration_seconds: 0,  // mode panique désactivé
-        log_channel: SALON_LOG,
-        ...patch,
-    };
-    db.prepare(`
-        INSERT INTO antiraid_config
-            (guild_id, enabled, join_count, join_window_seconds, min_account_age_hours,
-             punishments, panic_duration_seconds, log_channel)
-        VALUES (@guild_id, @enabled, @join_count, @join_window_seconds, @min_account_age_hours,
-                @punishments, @panic_duration_seconds, @log_channel)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            enabled = excluded.enabled, join_count = excluded.join_count,
-            join_window_seconds = excluded.join_window_seconds,
-            min_account_age_hours = excluded.min_account_age_hours,
-            punishments = excluded.punishments,
-            panic_duration_seconds = excluded.panic_duration_seconds,
-            log_channel = excluded.log_channel
-    `).run({ guild_id: GUILDE, ...valeurs });
-    invalidateConfig();
-    forget();
-}
 
 // ── Doublures ────────────────────────────────────────────────────────────────
 
@@ -109,13 +81,20 @@ function faireGuilde({ memberCount = 42 } = {}) {
     return { guilde, envois };
 }
 
-/** Membre discord.js, tel que `guildMemberAdd` le fournit encore aujourd'hui. */
-function faireMembre(guilde, id, { creeLe = Date.now() - 365 * 24 * 3600 * 1000 } = {}) {
-    return { id, guild: guilde, user: { id, bot: false, createdTimestamp: creeLe } };
-}
-
-/** Client REST normalisé, réduit aux méthodes que `notify.js` emprunte. */
-function faireApi({ guilde = { id: GUILDE, nom: 'Serveur de test' }, canal = { id: SALON_LOG } } = {}) {
+/**
+ * Client REST normalisé, réduit aux méthodes que ce lot emprunte. Chaque appel
+ * est tracé : c'est la preuve que la voie neutre ne passe QUE par le contrat.
+ */
+function faireApi({
+    guilde = { id: GUILDE, nom: 'Serveur de test' },
+    canal = { id: SALON_LOG },
+    permissions = { aPermission: () => true },
+    membre = { id: BOT, aPermission: () => true },
+    etatInvitations = { enPauseJusqua: null, desactiveesEnDur: false },
+    guildes = [GUILDE],
+    voie = 'incident',
+    echecPause = null,
+} = {}) {
     const appels = [];
     return {
         appels,
@@ -123,12 +102,39 @@ function faireApi({ guilde = { id: GUILDE, nom: 'Serveur de test' }, canal = { i
         async envoyerMessage(canalId, contenu) { appels.push(['envoyerMessage', canalId, contenu]); return { id: 'm1' }; },
         async obtenirGuilde(id) { appels.push(['obtenirGuilde', id]); return guilde; },
         async obtenirCanal(id) { appels.push(['obtenirCanal', id]); return canal; },
+        async obtenirMembre(g, m) { appels.push(['obtenirMembre', g, m]); return membre; },
+        async permissionsSurCanal(c, m) { appels.push(['permissionsSurCanal', c, m]); return permissions; },
+        async obtenirEtatInvitations(id) { appels.push(['obtenirEtatInvitations', id]); return etatInvitations; },
+        async listerGuildes() { appels.push(['listerGuildes']); return guildes; },
+        async mettreInvitationsEnPause(id, jusquA, raison) {
+            appels.push(['mettreInvitationsEnPause', id, jusquA, raison]);
+            if (echecPause) throw echecPause;
+            return jusquA === null ? 'levee' : voie;
+        },
     };
 }
 
 function fairePortee(options) {
     const api = faireApi(options);
     return { portee: { guildeId: GUILDE, api, moi: { id: BOT } }, api };
+}
+
+/**
+ * Adaptateur de plateforme réduit à ce que le balayage du mode panique lit :
+ * un `api`, une identité et un jeu de capacités. Pas de `guildeId` — un
+ * adaptateur n'en désigne aucun, c'est la ligne en base qui le nomme.
+ */
+function faireAdaptateur(options = {}) {
+    const api = faireApi(options);
+    return {
+        adaptateur: {
+            nom: 'discord',
+            capacites: { pauseInvitations: true, automod: true, ...(options.capacites || {}) },
+            moi: { id: BOT },
+            api,
+        },
+        api,
+    };
 }
 
 /** Client discord.js réduit à ce que `notify.js` emprunte sur la voie historique. */
@@ -155,6 +161,26 @@ function faireClient({ peutEcrire = true, salonPresent = true } = {}) {
 }
 
 /**
+ * Contexte d'événement neutre, tel que l'adaptateur le sert à un handler :
+ * ni serveur, ni interlocuteur — un événement agit par `api`. `envois` collecte
+ * ce que le handler poste, avec le salon visé.
+ */
+function faireCtx() {
+    const envois = [];
+    return {
+        envois,
+        ctx: {
+            plateforme: 'discord',
+            capacites: { automod: true },
+            moi: { id: BOT },
+            api: {
+                async envoyerMessage(canalId, contenu) { envois.push({ canalId, contenu }); return { id: 'm1' }; },
+            },
+        },
+    };
+}
+
+/**
  * Corps d'embed TEL QU'IL PART SUR LE RÉSEAU. L'aller-retour JSON n'est pas
  * cosmétique : `setAuthor({ nom })` laisse `icon_url: undefined` et
  * `url: undefined` dans l'objet du builder, deux clés que `JSON.stringify`
@@ -168,53 +194,19 @@ function corpsEnvoye(embedOuBuilder) {
     return JSON.parse(JSON.stringify(builder.toJSON()));
 }
 
-// ═══ Anti-raid : alertes ════════════════════════════════════════════════════
+// ═══ Mode panique ═══════════════════════════════════════════════════════════
 
-test('anti-raid — l\'alerte de vague sort en embed neutre, champs identiques', async () => {
-    configurerAntiraid();
-    const { guilde, envois } = faireGuilde({ memberCount: 1337 });
+function semerPanique({ method = 'incident_actions', echu = true, previous = 0 } = {}) {
+    db.prepare(`
+        INSERT INTO antiraid_panic (guild_id, method, expires_at, previous_invites_disabled, reason)
+        VALUES (?, ?, ?, ?, 'test')
+        ON CONFLICT(guild_id) DO UPDATE SET method = excluded.method,
+            expires_at = excluded.expires_at, previous_invites_disabled = excluded.previous_invites_disabled
+    `).run(GUILDE, method, nowSec() + (echu ? -5 : 600), previous);
+}
 
-    // Deux arrivées dans la fenêtre : le seuil est franchi au second membre.
-    await handleMemberJoin(faireMembre(guilde, '444444444444444444'));
-    const verdict = await handleMemberJoin(faireMembre(guilde, '555555555555555555'));
-
-    assert.deepEqual(verdict, { removed: false }, 'alerte seule : personne n\'est retiré');
-    assert.equal(envois.length, 1, 'une seule alerte par vague');
-
-    const rendu = corpsEnvoye(envois[0].embeds[0]);
-    assert.equal(rendu.title, '🚨 Vague d\'arrivées détectée');
-    assert.equal(rendu.color, 0xe74c3c);
-    assert.equal(typeof rendu.timestamp, 'string');
-    assert.deepEqual(rendu.fields, [
-        { name: 'Arrivées', value: '2 en moins de 10 s', inline: true },
-        { name: 'Déclencheur', value: 'Anti-raid', inline: true },
-        { name: 'Membres du serveur', value: '1337', inline: true },
-        { name: 'Sanction', value: 'Aucune : ce serveur est réglé en alerte seule.', inline: false },
-        { name: 'Mode panique', value: 'Désactivé sur ce serveur (durée réglée à 0).', inline: false },
-    ]);
-});
-
-test('anti-raid — l\'alerte de compte trop récent sort en embed neutre', async () => {
-    // Seuil de vague hors d'atteinte : c'est le contrôle d'âge qui doit parler.
-    configurerAntiraid({ join_count: 50, min_account_age_hours: 48 });
-    const { guilde, envois } = faireGuilde();
-
-    const membre = faireMembre(guilde, '666666666666666666', { creeLe: Date.now() - 3 * 3600 * 1000 });
-    const verdict = await handleMemberJoin(membre);
-
-    assert.deepEqual(verdict, { removed: false });
-    assert.equal(envois.length, 1);
-
-    const rendu = corpsEnvoye(envois[0].embeds[0]);
-    assert.equal(rendu.title, '⚠️ Compte trop récent');
-    assert.equal(rendu.color, 0xf1c40f);
-    assert.deepEqual(rendu.fields, [
-        { name: 'Membre', value: '<@666666666666666666> (666666666666666666)', inline: true },
-        { name: 'Déclencheur', value: 'Anti-raid', inline: true },
-        { name: 'Âge du compte', value: '3 h (minimum exigé : 48 h)', inline: true },
-        { name: 'Sanction', value: 'Aucune : ce serveur est réglé en alerte seule.', inline: false },
-    ]);
-});
+const ligneDePanique = () => db.prepare('SELECT * FROM antiraid_panic WHERE guild_id = ?').get(GUILDE);
+const oublierPanique = () => db.prepare('DELETE FROM antiraid_panic WHERE guild_id = ?').run(GUILDE);
 
 test('anti-raid — le message de levée du mode panique sort en embed neutre', async () => {
     const { guilde, envois } = faireGuilde();
@@ -326,10 +318,12 @@ test('violation — repli salon voie neutre : le pointeur part dans le salon de 
     const res = await notify.sendToGuildChannel(portee, GUILDE);
 
     assert.deepEqual(res, { ok: true, error: null });
-    assert.deepEqual(api.appels.map(a => a[0]), ['obtenirGuilde', 'obtenirCanal', 'envoyerMessage']);
-    assert.equal(api.appels[2][1], SALON_LOG);
-    assert.equal(estEmbed(api.appels[2][2]), true);
-    assert.equal(corpsEnvoye(api.appels[2][2]).fields, undefined);
+    assert.deepEqual(api.appels.map(a => a[0]),
+        ['obtenirGuilde', 'obtenirCanal', 'permissionsSurCanal', 'envoyerMessage']);
+    const envoi = api.appels[3];
+    assert.equal(envoi[1], SALON_LOG);
+    assert.equal(estEmbed(envoi[2]), true);
+    assert.equal(corpsEnvoye(envoi[2]).fields, undefined);
 });
 
 test('violation — repli salon voie neutre : bot retiré du serveur, rien n\'est posté', async () => {
@@ -371,4 +365,243 @@ test('violation — truncate : borne respectée et troncature annoncée', () => 
     const coupe = notify.truncate(long);
     assert.ok(coupe.length <= notify.MAX_DESCRIPTION);
     assert.match(coupe, /Message tronqué/);
+});
+
+test('violation — repli salon voie neutre : sans droit d\'écriture, rien n\'est posté', async () => {
+    const { portee, api } = fairePortee({ permissions: { aPermission: (nom) => nom === 'VIEW_CHANNEL' } });
+
+    const res = await notify.sendToGuildChannel(portee, GUILDE);
+
+    // MÊME motif que la voie historique : il est stocké en base et relu par le
+    // dashboard, les deux voies ne peuvent pas en avoir deux versions.
+    assert.deepEqual(res, { ok: false, error: 'aucun salon de logs configure pour le repli' });
+    assert.equal(api.appels.some(a => a[0] === 'envoyerMessage'), false);
+});
+
+test('violation — repli salon voie neutre : permissions illisibles valent refus', async () => {
+    const { portee, api } = fairePortee({ permissions: null });
+
+    const res = await notify.sendToGuildChannel(portee, GUILDE);
+
+    assert.deepEqual(res, { ok: false, error: 'aucun salon de logs configure pour le repli' });
+    assert.equal(api.appels.some(a => a[0] === 'envoyerMessage'), false);
+});
+
+// ═══ Mode panique : voie neutre ═════════════════════════════════════════════
+
+test('panique — pose neutre : une seule méthode du contrat, méthode « incident » en base', async () => {
+    oublierPanique();
+    const { portee, api } = fairePortee({ voie: 'incident' });
+
+    const res = await enterPanic(portee, { durationSeconds: 300, reason: 'Vague', logChannelId: SALON_LOG });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.method, 'incident_actions');
+    assert.equal(res.extended, false);
+    // La ligne persistée porte la valeur de colonne historique, pas le
+    // vocabulaire de la voie rendue par le contrat.
+    assert.equal(ligneDePanique().method, 'incident_actions');
+
+    const pause = api.appels.find(a => a[0] === 'mettreInvitationsEnPause');
+    assert.equal(pause[1], GUILDE);
+    assert.equal(pause[2], res.expiresAt * 1000, 'échéance en millisecondes');
+    assert.equal(pause[3], 'Vague');
+    assert.equal(api.appels.some(a => a[0] === 'obtenirEtatInvitations'), true, 'état d\'origine relevé');
+});
+
+test('panique — pose neutre : la voie « permanent » est enregistrée comme telle', async () => {
+    oublierPanique();
+    const { portee } = fairePortee({ voie: 'permanent' });
+
+    const res = await enterPanic(portee, { durationSeconds: 300, reason: 'Vague', logChannelId: SALON_LOG });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.method, 'invites_disabled');
+    // C'est cette valeur qui fera choisir la levée : un repli sans échéance ne
+    // se lève que par le balayage, et sa ligne ne doit pas être supprimée avant.
+    assert.equal(ligneDePanique().method, 'invites_disabled');
+});
+
+test('panique — sans la capacité, la mesure est sautée, jamais tentée', async () => {
+    oublierPanique();
+    const { adaptateur, api } = faireAdaptateur({ capacites: { pauseInvitations: false } });
+    const portee = { guildeId: GUILDE, api: adaptateur.api, moi: adaptateur.moi, capacites: adaptateur.capacites };
+
+    const res = await enterPanic(portee, { durationSeconds: 300, reason: 'Vague' });
+
+    assert.deepEqual(res, { ok: false, skipped: 'indisponible' });
+    assert.deepEqual(api.appels, [], 'aucun appel : on ne tente pas ce que la plateforme ne sait pas faire');
+    assert.equal(ligneDePanique(), undefined);
+});
+
+test('panique — permission manquante : même motif que la voie historique', async () => {
+    oublierPanique();
+    const { portee, api } = fairePortee({ membre: { id: BOT, aPermission: () => false } });
+
+    const res = await enterPanic(portee, { durationSeconds: 300, reason: 'Vague' });
+
+    assert.equal(res.ok, false);
+    assert.match(res.error, /Gérer le serveur/);
+    assert.equal(api.appels.some(a => a[0] === 'mettreInvitationsEnPause'), false);
+});
+
+test('panique — permission indéterminable : on tente, on n\'invente pas un refus', async () => {
+    oublierPanique();
+    // Adaptateur pas encore connecté : `moiId` absent de la portée.
+    const api = faireApi();
+    const res = await enterPanic({ guildeId: GUILDE, api }, { durationSeconds: 300, reason: 'Vague' });
+
+    assert.equal(res.ok, true);
+    assert.equal(api.appels.some(a => a[0] === 'obtenirMembre'), false);
+});
+
+test('panique — levée neutre : une seule méthode, la ligne disparaît', async () => {
+    semerPanique({ method: 'incident_actions' });
+    const { portee, api } = fairePortee();
+
+    const res = await liftPanic(portee, { liftedBy: '777777777777777777', logChannelId: SALON_LOG });
+
+    assert.deepEqual(res, { ok: true });
+    assert.equal(ligneDePanique(), undefined);
+    const pause = api.appels.find(a => a[0] === 'mettreInvitationsEnPause');
+    assert.equal(pause[2], null, 'null = levée');
+});
+
+test('panique — levée neutre : invitations déjà fermées avant moi, rien n\'est rouvert', async () => {
+    semerPanique({ method: 'incident_actions', previous: 1 });
+    const { portee, api } = fairePortee();
+
+    const res = await liftPanic(portee, { logChannelId: SALON_LOG });
+
+    assert.deepEqual(res, { ok: true });
+    assert.equal(ligneDePanique(), undefined, 'mon échéance est retirée');
+    assert.equal(api.appels.some(a => a[0] === 'mettreInvitationsEnPause'), false,
+        'la décision de quelqu\'un d\'autre n\'est pas défaite');
+});
+
+test('panique — balayage neutre : « je ne sais pas » ne supprime AUCUNE échéance', async () => {
+    semerPanique();
+    const { adaptateur, api } = faireAdaptateur({ guildes: null });
+
+    assert.equal(await sweepExpiredPanics(adaptateur), 0);
+    assert.ok(ligneDePanique(), 'la ligne survit : listerGuildes() a rendu null, pas []');
+    assert.deepEqual(api.appels.map(a => a[0]), ['listerGuildes']);
+});
+
+test('panique — balayage neutre : « aucun serveur » oublie les échéances orphelines', async () => {
+    semerPanique();
+    const { adaptateur, api } = faireAdaptateur({ guildes: [] });
+
+    assert.equal(await sweepExpiredPanics(adaptateur), 0);
+    assert.equal(ligneDePanique(), undefined, 'plus rien à lever : la ligne est oubliée');
+    assert.equal(api.appels.some(a => a[0] === 'mettreInvitationsEnPause'), false);
+});
+
+test('panique — balayage neutre : une échéance échue est levée par le contrat', async () => {
+    semerPanique();
+    const { adaptateur, api } = faireAdaptateur({ guildes: [GUILDE] });
+
+    assert.equal(await sweepExpiredPanics(adaptateur), 1);
+    assert.equal(ligneDePanique(), undefined);
+    const pause = api.appels.find(a => a[0] === 'mettreInvitationsEnPause');
+    assert.deepEqual([pause[1], pause[2]], [GUILDE, null]);
+});
+
+// ═══ Événement AutoMod ══════════════════════════════════════════════════════
+
+test('automod — le descripteur déclare la capacité qui le cantonne', () => {
+    assert.equal(evenementAutomod.nom, 'sanctionAutomatique');
+    assert.equal(evenementAutomod.capaciteRequise, 'automod');
+    assert.equal(typeof evenementAutomod.executer, 'function');
+    assert.equal('execute' in evenementAutomod, false, 'plus de handler discord.js');
+});
+
+test('automod — automodSync n\'est chargé QU\'À l\'exécution', async () => {
+    assert.equal(CHEMIN_AUTOMODSYNC in require.cache, false,
+        'le require du module ne doit pas tirer discord.js par automodSync');
+
+    await evenementAutomod.executer(faireCtx().ctx, {
+        guildeId: GUILDE, membreId: '888888888888888888', regleId: 'r-inconnue',
+        action: 1, contenu: null, canalId: null,
+        declencheurNatif: 1, motCle: null, dureeSecondes: null,
+    });
+
+    assert.equal(CHEMIN_AUTOMODSYNC in require.cache, true, 'chargé à l\'appel, sous garde de capacité');
+});
+
+test('automod — une exclusion temporaire : historique écrit et embed complet', async () => {
+    const { ACTIONS, TRIGGERS } = require('../bot/utils/automodSync');
+    db.prepare(`
+        INSERT INTO automod_rules (guild_id, discord_rule_id, trigger_type, name, enabled, log_channel)
+        VALUES (?, 'regle-42', 'KEYWORD', 'Insultes', 1, ?)
+        ON CONFLICT DO NOTHING
+    `).run(GUILDE, SALON_LOG);
+
+    const { ctx, envois } = faireCtx();
+    await evenementAutomod.executer(ctx, {
+        guildeId: GUILDE,
+        membreId: '888888888888888888',
+        regleId: 'regle-42',
+        action: ACTIONS.TIMEOUT.discordType,
+        contenu: 'contenu incriminé',
+        canalId: '555555555555555555',
+        declencheurNatif: TRIGGERS.KEYWORD.discordType,
+        motCle: 'gros mot',
+        dureeSecondes: 600,
+    });
+
+    const sanction = db.prepare(
+        "SELECT * FROM sanctions WHERE guild_id = ? AND type = 'mute' ORDER BY id DESC"
+    ).get(GUILDE);
+    assert.equal(sanction.reason, 'AutoMod Discord — Insultes (Mots interdits et liens)');
+    assert.equal(sanction.duration, '10m');
+    assert.equal(sanction.moderator_id, BOT, 'modérateur = identité du bot, lue sur le contexte');
+
+    assert.equal(envois.length, 1);
+    const rendu = corpsEnvoye(envois[0].contenu);
+    assert.equal(rendu.title, '🔇 Exclusion temporaire par AutoMod');
+    assert.equal(rendu.color, 0xe67e22);
+    assert.deepEqual(rendu.footer, { text: 'Filtré par Discord — Quasar ne fait qu\'enregistrer.' });
+    assert.deepEqual(rendu.fields.map(f => [f.name, f.value, f.inline]), [
+        ['Membre', '<@888888888888888888> (888888888888888888)', true],
+        ['Règle', 'Insultes', true],
+        ['Filtre', 'Mots interdits et liens', true],
+        ['Salon', '<#555555555555555555>', true],
+        ['Durée', '10m', true],
+        ['Numéro de sanction', `#${sanction.id}`, true],
+        ['Terme détecté', '`gros mot`', false],
+        ['Contenu', '```contenu incriminé```', false],
+    ]);
+    // Le salon dédié de la règle est privilégié sur le modlog global.
+    assert.equal(envois[0].canalId, SALON_LOG);
+});
+
+test('automod — une alerte n\'est pas une sanction : journalisée, jamais historisée', async () => {
+    const { ACTIONS, TRIGGERS } = require('../bot/utils/automodSync');
+    const avant = db.prepare('SELECT COUNT(*) c FROM sanctions WHERE guild_id = ?').get(GUILDE).c;
+
+    const { ctx, envois } = faireCtx();
+    await evenementAutomod.executer(ctx, {
+        guildeId: GUILDE, membreId: '888888888888888888', regleId: 'regle-42',
+        action: ACTIONS.SEND_ALERT_MESSAGE.discordType, contenu: null, canalId: null,
+        declencheurNatif: TRIGGERS.KEYWORD.discordType, motCle: null, dureeSecondes: null,
+    });
+
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM sanctions WHERE guild_id = ?').get(GUILDE).c, avant);
+    assert.equal(envois.length, 1);
+    assert.equal(corpsEnvoye(envois[0].contenu).title, '🛡️ Alerte AutoMod');
+});
+
+test('automod — action inconnue : rien n\'est écrit, rien n\'est journalisé', async () => {
+    const avant = db.prepare('SELECT COUNT(*) c FROM sanctions WHERE guild_id = ?').get(GUILDE).c;
+    const { ctx, envois } = faireCtx();
+
+    await evenementAutomod.executer(ctx, {
+        guildeId: GUILDE, membreId: '888888888888888888', regleId: 'regle-42',
+        action: 99, contenu: null, canalId: null,
+        declencheurNatif: 1, motCle: null, dureeSecondes: null,
+    });
+
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM sanctions WHERE guild_id = ?').get(GUILDE).c, avant);
+    assert.equal(envois.length, 0);
 });

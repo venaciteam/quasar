@@ -27,14 +27,11 @@
 //                      `// TRANSITION : format historique, à retirer au lot de
 //                      consolidation`.
 //
-//  ⚠️ Un contrôle de la voie historique n'a PAS d'équivalent dans le contrat
-//  neutre : `channel.permissionsFor(moi)` — le droit d'écrire dans UN salon.
-//  `api.obtenirMembre` ne rend que les permissions de serveur, `api.obtenirCanal`
-//  ne rend aucune permission. La voie neutre vérifie donc l'existence du salon
-//  puis TENTE l'envoi ; un refus ressort en erreur d'API tracée, au lieu du
-//  motif « aucun salon de logs configure pour le repli ». Même issue — rien n'est
-//  posté, l'échec est tracé — mais le motif est moins précis. Signalé au lot de
-//  consolidation.
+//  Les deux voies rendent les MÊMES motifs d'échec, mot pour mot : ils sont
+//  stockés dans `breach_deliveries.error` et relus par le dashboard. Le droit
+//  d'écrire dans un salon passe par `api.permissionsSurCanal`, et des
+//  permissions illisibles valent refus — ce module trace qui n'a pas reçu
+//  (art. 33.5) plutôt que de poster dans un salon dont il ne sait rien.
 // ═══════════════════════════════════════════════════════════════
 
 const { embed } = require('../../platform/embed');
@@ -222,8 +219,16 @@ async function sendToGuildChannel(cible, guildId) {
         const canal = await portee.api.obtenirCanal(logChannelId).catch(() => null);
         if (!canal) return { ok: false, error: NO_LOG_CHANNEL };
 
-        // Pas de contrôle du droit d'écrire : le contrat ne l'expose pas (voir
-        // l'en-tête). Un refus ressort en erreur d'API, tracée comme les autres.
+        // Droit d'écrire dans CE salon. `null` — permissions illisibles — vaut
+        // refus, exactement comme sur la voie historique : ce module trace qui
+        // n'a pas reçu (art. 33.5) plutôt que de poster dans un salon dont il ne
+        // sait rien.
+        const permissions = await portee.api.permissionsSurCanal(logChannelId, portee.moiId).catch(() => null);
+        const peutEcrire = Boolean(permissions
+            && permissions.aPermission('VIEW_CHANNEL')
+            && permissions.aPermission('SEND_MESSAGES'));
+        if (!peutEcrire) return { ok: false, error: NO_LOG_CHANNEL };
+
         try {
             await portee.api.envoyerMessage(logChannelId, buildBreachPointerEmbed());
             return { ok: true, error: null };
