@@ -184,8 +184,15 @@ test('un rôle porte sa couleur et son serveur', () => {
 
 test('les champs existants du rôle n\'ont pas bougé', () => {
     // Six agents lisent ce contrat : l'ajout doit être strictement additif.
+    // `parDefaut` est arrivé au lot 0.8 — sans lui, le sélecteur de rôles du
+    // dashboard devait reconstruire lui-même « @everyone porte l'identifiant du
+    // serveur », une connaissance de plateforme qui n'a rien à y faire.
     const role = normaliserRole({ id: '1', name: 'Membre', position: 4, managed: true, guildId: 'G1' });
-    assert.deepEqual(Object.keys(role).sort(), ['couleur', 'gere', 'guildeId', 'id', 'mention', 'nom', 'position']);
+    assert.deepEqual(
+        Object.keys(role).sort(),
+        ['couleur', 'gere', 'guildeId', 'id', 'mention', 'nom', 'parDefaut', 'position'],
+    );
+    assert.equal(role.parDefaut, false, 'un rôle ordinaire n\'est pas @everyone');
     assert.equal(role.mention, '<@&1>');
     assert.equal(role.gere, true);
     assert.equal(role.position, 4);

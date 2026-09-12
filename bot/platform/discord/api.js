@@ -43,6 +43,11 @@ const TAILLE_LOT_SUPPRESSION = 100;
 // Permission exigée du BOT pour chaque action de sanction. C'est la moitié
 // « permission » de `verifierMembreSanctionnable` ; l'autre moitié est la
 // hiérarchie des rôles.
+// Taille des vignettes d'emoji servies au sélecteur du dashboard. 32 px est ce
+// que le front affiche ; demander la taille d'origine ferait télécharger des
+// centaines de kilo-octets pour une grille de cases de 32 pixels.
+const TAILLE_EMOJI = 32;
+
 const PERMISSION_PAR_SANCTION = Object.freeze({
     timeout: 'MODERATE_MEMBERS',
     kick: 'KICK_MEMBERS',
@@ -750,6 +755,110 @@ function creerApi(client) {
             const permissions = canal.permissionsFor(cible);
             if (!permissions) return null;
             return { aPermission: (nom) => aPermission(permissions, nom) };
+        },
+
+        // ─── Inventaires d'un serveur ────────────────────────────────────────
+        //
+        //  Les quatre lecteurs ci-dessous alimentent les SÉLECTEURS du
+        //  dashboard, et un cinquième usage qui n'en est pas un : la liste des
+        //  destinataires d'une notification de violation (RGPD art. 33).
+        //
+        //  Tous rendent `null` pour « je ne vois pas ce serveur » et `[]` pour
+        //  « il n'a rien ». La distinction n'est pas cosmétique : un sélecteur
+        //  vide et un sélecteur indisponible n'appellent pas le même message, et
+        //  pour la notification de violation, `null` est ce qui permet de dire à
+        //  la propriétaire combien de serveurs n'ont PAS été atteints.
+
+        /**
+         * Salons d'un serveur, normalisés (`position` comprise).
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerCanaux(guildeId) {
+            let guilde;
+            try {
+                guilde = await guildeDiscord(guildeId);
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+            const cache = guilde?.channels?.cache;
+            if (!cache || typeof cache.values !== 'function') return null;
+            return [...cache.values()].map(normaliserCanal);
+        },
+
+        /**
+         * Rôles d'un serveur, normalisés (`parDefaut` compris).
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerRoles(guildeId) {
+            let guilde;
+            try {
+                guilde = await guildeDiscord(guildeId);
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+            const cache = guilde?.roles?.cache;
+            if (!cache || typeof cache.values !== 'function') return null;
+            return [...cache.values()].map(normaliserRole);
+        },
+
+        /**
+         * Emojis personnalisés d'un serveur.
+         *
+         * `identifiant` est la forme ÉCRITE dans un message — `<:nom:id>` ou
+         * `<a:nom:id>` — et c'est elle que `reaction_roles.emoji` stocke. Rendre
+         * l'identifiant nu ferait choisir au dashboard une valeur que le bot ne
+         * retrouverait jamais au moment du clic.
+         *
+         * @returns {Promise<Array<{id, nom, anime, identifiant, url}>|null>}
+         */
+        async listerEmojis(guildeId) {
+            let guilde;
+            try {
+                guilde = await guildeDiscord(guildeId);
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+            const cache = guilde?.emojis?.cache;
+            if (!cache || typeof cache.values !== 'function') return null;
+            return [...cache.values()].map(emoji => ({
+                id: emoji.id,
+                nom: emoji.name,
+                anime: Boolean(emoji.animated),
+                identifiant: `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>`,
+                url: typeof emoji.imageURL === 'function' ? emoji.imageURL({ size: TAILLE_EMOJI }) : null,
+            }));
+        },
+
+        /**
+         * Membres d'un serveur, normalisés.
+         *
+         * ⚠️ Coûteux, et à n'appeler que pour les lectures qui ont besoin de la
+         * LISTE — en pratique les destinataires d'une notification de violation.
+         * Un sélecteur ne doit pas passer par ici.
+         *
+         * Une énumération refusée ne rend PAS `null` : le serveur est visible,
+         * seule la liste complète manque. On retombe sur le cache déjà chargé,
+         * qui contient au moins les personnes actives. Rendre `null` ferait
+         * compter ce serveur comme « non atteint » alors qu'il l'est.
+         *
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerMembres(guildeId) {
+            let guilde;
+            try {
+                guilde = await guildeDiscord(guildeId);
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+            if (!guilde?.members) return null;
+            try {
+                const membres = await guilde.members.fetch();
+                return [...membres.values()].map(normaliserMembre);
+            } catch {
+                const cache = guilde.members.cache;
+                const valeurs = cache && typeof cache.values === 'function' ? [...cache.values()] : [];
+                return valeurs.map(normaliserMembre);
+            }
         },
 
         /**

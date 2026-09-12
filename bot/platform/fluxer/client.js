@@ -47,6 +47,11 @@ const { EventEmitter } = require('events');
 const BASE_REST_DEFAUT = 'https://api.fluxer.app/v1';
 const URL_PASSERELLE_DEFAUT = 'wss://gateway.fluxer.app/?v=1';
 
+// Base du proxy média — avatars et emojis. Voir la note « À VÉRIFIER EN
+// RECETTE » de `context.js` : la valeur canonique se lit dans `endpoints.media`
+// du document de découverte d'instance, et n'est pas publiée en dur.
+const BASE_MEDIA_DEFAUT = 'https://media.fluxer.app';
+
 // Opcodes de `gateway/opcodes-and-close-codes.md`, § Opcodes.
 const OP = Object.freeze({
     DISPATCH: 0,
@@ -712,6 +717,10 @@ function creerClient({ env = process.env, fetch: fetchImpl, WebSocketImpl, journ
     client.etat = etat;
     client.passerelle = passerelle;
     client.user = null;
+    // Résolue UNE FOIS, depuis l'env injecté et non `process.env` : c'est ce qui
+    // rend `FLUXER_MEDIA_BASE` honorée par une instance auto-hébergée comme par
+    // un test, et ce qui évite une lecture d'environnement par emoji rendu.
+    client.baseMedia = env.FLUXER_MEDIA_BASE || BASE_MEDIA_DEFAUT;
     // Pont de transition pour `bot/index.js` uniquement. Les serveurs vivent
     // dans `etat.guildes` ; `guilds.cache` en est une vue, pas une seconde
     // source. À retirer au lot 7.
@@ -803,6 +812,7 @@ module.exports = {
     EXPLICATIONS_FERMETURE,
     BASE_REST_DEFAUT,
     URL_PASSERELLE_DEFAUT,
+    BASE_MEDIA_DEFAUT,
     MEMBRES_PAR_GUILDE,
     MESSAGES_CACHE,
 };

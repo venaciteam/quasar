@@ -278,9 +278,8 @@ test('le contrat neutre ne charge pas discord.js non plus', () => {
 
 test('api/ ne lit le client natif que par api/services/plateforme.js', () => {
     // Le lot 7 a fait passer `createApi` du client natif à l'ADAPTATEUR. La
-    // clé `discordClient` n'existe plus, et les quelques lectures qui n'ont pas
-    // encore de méthode au contrat sont rassemblées dans un seul fichier, où
-    // elles se comptent (cf. son en-tête).
+    // clé `discordClient` n'existe plus, et les lectures natives restantes sont
+    // rassemblées dans un seul fichier, où elles se comptent (cf. son en-tête).
     const dossierApi = path.join(RACINE, 'api');
     const fautifs = [];
     for (const relatif of sources(dossierApi)) {
@@ -294,6 +293,46 @@ test('api/ ne lit le client natif que par api/services/plateforme.js', () => {
         'Passez par api/services/plateforme.js : il expose le client REST normalisé, '
         + 'les capacités, et regroupe les lectures natives restantes avec leur marqueur.',
     );
+});
+
+test('la dernière lecture native de api/ se compte, et n\'a qu\'un appelant', () => {
+    // Le cran de serrage du lot 0.8. `plateforme.js` gardait QUATRE replis
+    // natifs — salons, rôles, emojis, membres — qui rendaient une liste vide
+    // hors Discord : les sélecteurs du dashboard y étaient muets. Le contrat les
+    // publie désormais, et il ne reste qu'UNE lecture native.
+    //
+    // On ne peut pas interdire la dernière : l'AutoMod n'a aucun équivalent hors
+    // Discord (DA §2.2) et lui inventer un vocabulaire portable serait pire. On
+    // borne donc ce qui reste — sa taille, et son nombre d'appelants.
+    const code = codeSeul(fs.readFileSync(path.join(RACINE, 'api/services/plateforme.js'), 'utf8'));
+
+    const lectures = code.match(/\.client\s*\?\.\s*guilds|\.client\.guilds/g) || [];
+    assert.equal(
+        lectures.length, 1,
+        'api/services/plateforme.js ne doit garder qu\'UNE lecture du client natif (guildeNative, '
+        + 'pour l\'AutoMod). Toute autre a désormais une méthode au contrat : listerCanaux, '
+        + 'listerRoles, listerEmojis, listerMembres.',
+    );
+    assert.match(code, /function guildeNative/, 'la lecture restante doit être celle de guildeNative');
+
+    // `TRANSITION` ne doit plus y figurer : les replis qui le portaient sont
+    // tombés. Le marqueur n'est pas décoratif — c'est la liste de travail du
+    // chantier, et une entrée qui survit à son correctif la rend fausse.
+    assert.equal(
+        /TRANSITION/.test(code), false,
+        'api/services/plateforme.js ne porte plus de repli : son marqueur TRANSITION doit tomber avec eux.',
+    );
+    assert.equal(
+        /TRANSITION/.test(codeSeul(fs.readFileSync(path.join(RACINE, 'api/services/panneau.js'), 'utf8'))), false,
+        'api/services/panneau.js pose désormais par adaptateur.poserPanneau : plus de rendu Discord local.',
+    );
+
+    // Un seul appelant, nommé. Si un second apparaît, c'est le signal qu'il
+    // faut une méthode au contrat plutôt qu'une seconde dérogation.
+    const appelants = sources(path.join(RACINE, 'api'))
+        .filter(relatif => relatif !== 'api/services/plateforme.js')
+        .filter(relatif => /guildeNative/.test(codeSeul(fs.readFileSync(path.join(RACINE, relatif), 'utf8'))));
+    assert.deepEqual(appelants, ['api/routes/automod.js']);
 });
 
 test('le routage des clics ne connaît plus aucun préfixe historique', () => {

@@ -10,10 +10,9 @@
 //   1. une doublure de test peut être un objet vide — c'est ce que passent
 //      `http-cache`, `error-body`, `feedback-relay` et les quatre autres — et
 //      chaque route n'a pas à écrire sa propre garde ;
-//   2. les quelques lectures que le CONTRAT ne couvre pas encore sont
-//      rassemblées ici, chacune marquée `TRANSITION` et nommant la méthode qui
-//      la lèvera. Semées dans quinze routes, elles seraient introuvables ; ici,
-//      elles se comptent.
+//   2. une seule lecture NATIVE subsiste — `guildeNative`, pour l'AutoMod, qui
+//      n'a aucun équivalent portable — et elle est ici, où elle se compte.
+//      Semée dans quinze routes, elle serait introuvable.
 //
 //  ⚠️ Rien de ce fichier n'importe `discord.js`, et rien ne doit le faire : il
 //  est chargé dans un processus Fluxer comme dans un processus Discord.
@@ -26,11 +25,6 @@ const { creerCapacites } = require('../../bot/platform/capabilities');
 // masquera ce qu'il ne sait pas offrir plutôt que de proposer un bouton qui
 // échoue. Ne concerne en pratique que les tests, qui montent l'API sans bot.
 const CAPACITES_INCONNUES = creerCapacites({});
-
-// Bit ADMINISTRATOR, identique côté Discord et côté Fluxer (1 << 3). Écrit ici
-// plutôt qu'importé de `PermissionFlagsBits` : ce fichier n'a pas le droit de
-// charger discord.js, et `permissions.has()` accepte un BigInt.
-const BIT_ADMINISTRATEUR = 1n << 3n;
 
 
 /** Adaptateur de la requête, ou `null` si l'API tourne sans bot (tests). */
@@ -101,31 +95,34 @@ function description(adaptateurActif) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Lectures que le contrat ne couvre pas encore
+//  Inventaires d'un serveur
 //
-//  ⚠️ TRANSITION. Les quatre fonctions ci-dessous passent par `adaptateur.api`
-//  dès que la méthode existe, et retombent sinon sur le client natif. Sur
-//  Discord, la seconde voie est celle d'avant le chantier — comportement
-//  strictement identique. Sur Fluxer, l'objet de serveur n'a pas cette forme :
-//  les chaînes optionnelles rendent alors une liste VIDE, ce qui dégrade un
-//  sélecteur au lieu de faire tomber une page.
+//  Les quatre lecteurs ci-dessous étaient des REPLIS : ils lisaient le cache
+//  discord.js quand le contrat ne publiait pas la méthode, et rendaient une
+//  liste VIDE sur toute autre plateforme. Côté Fluxer, les sélecteurs de salons,
+//  de rôles et d'emojis du dashboard étaient donc vides — sans erreur, sans
+//  journal, et sans rien qui distingue « ce serveur n'a pas d'emoji » de « je ne
+//  sais pas les lire ».
 //
-//  Méthodes manquantes, avec leur signature proposée (cf. compte-rendu) :
-//    api.listerCanaux(guildeId)  -> Promise<object[]|null>  canaux normalisés
-//    api.listerRoles(guildeId)   -> Promise<object[]|null>  rôles normalisés
-//    api.listerEmojis(guildeId)  -> Promise<object[]|null>  { id, nom, anime, identifiant, url }
-//    api.listerMembres(guildeId) -> Promise<object[]|null>  membres normalisés
+//  Le contrat les publie désormais (lot 0.8) et ces fonctions se réduisent à un
+//  appel. Ce qu'elles gardent est la traduction d'un `null` :
 //
-//  Le jour où elles sont livrées, le repli tombe et ces fonctions se réduisent
-//  à un appel.
+//      null  ->  « je ne vois pas ce serveur »
+//      []    ->  « il n'a rien »
+//
+//  Les trois sélecteurs aplatissent les deux cas, parce qu'un sélecteur vide est
+//  la seule chose qu'ils sachent afficher. `listerMembres`, lui, les distingue :
+//  la notification de violation (RGPD art. 33) doit pouvoir dire à la
+//  propriétaire combien de serveurs n'ont PAS été atteints, et compter un
+//  serveur illisible comme « zéro destinataire » serait un mensonge.
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * Serveur NATIF vu par le client de la plateforme, ou `undefined`.
  *
- * Voie de repli des quatre lecteurs ci-dessous — et voie NOMINALE d'un seul
- * appelant : `api/routes/automod.js`. L'AutoMod natif n'a aucun équivalent hors
- * Discord (DA §2.2), `bot/utils/automodSync.js` est une exception nommée du test
+ * ⚠️ Dernière lecture native de `api/`, et voie NOMINALE d'un seul appelant :
+ * `api/routes/automod.js`. L'AutoMod natif n'a aucun équivalent hors Discord
+ * (DA §2.2), `bot/utils/automodSync.js` est une exception nommée du test
  * d'étanchéité, et cette route est gardée par `capacites.automod`. Lui faire
  * traverser un contrat neutre reviendrait à inventer un vocabulaire portable
  * pour une fonctionnalité qui ne l'est pas.
@@ -140,67 +137,28 @@ function guildeNative(req, guildeId) {
  */
 async function listerCanaux(req, guildeId) {
     const client = apiPlateforme(req);
-    if (client && typeof client.listerCanaux === 'function') {
-        return (await client.listerCanaux(String(guildeId))) || [];
-    }
-    // TRANSITION : en attente de `api.listerCanaux` (voir l'en-tête de section).
-    const guilde = guildeNative(req, guildeId);
-    const cache = guilde?.channels?.cache;
-    if (!cache || typeof cache.values !== 'function') return [];
-    return [...cache.values()].map(c => ({
-        id: c.id,
-        nom: c.name,
-        typeNatif: c.type,
-        parentId: c.parentId ?? null,
-        position: c.position,
-    }));
+    if (!client) return [];
+    return (await client.listerCanaux(String(guildeId))) || [];
 }
 
 /**
- * Rôles d'un serveur : `{ id, nom, couleur, position, gere }`.
+ * Rôles d'un serveur : `{ id, nom, couleur, position, gere, parDefaut }`.
  * @returns {Promise<object[]>} liste vide si le serveur n'est pas joignable.
  */
 async function listerRoles(req, guildeId) {
     const client = apiPlateforme(req);
-    if (client && typeof client.listerRoles === 'function') {
-        return (await client.listerRoles(String(guildeId))) || [];
-    }
-    // TRANSITION : en attente de `api.listerRoles`.
-    const guilde = guildeNative(req, guildeId);
-    const cache = guilde?.roles?.cache;
-    if (!cache || typeof cache.values !== 'function') return [];
-    return [...cache.values()].map(r => ({
-        id: r.id,
-        nom: r.name,
-        couleur: r.hexColor,
-        position: r.position,
-        gere: Boolean(r.managed),
-        // @everyone porte l'identifiant du serveur : c'est une connaissance de
-        // plateforme, la route ne la reconstruit pas elle-même.
-        parDefaut: r.id === guilde.id,
-    }));
+    if (!client) return [];
+    return (await client.listerRoles(String(guildeId))) || [];
 }
 
 /**
- * Emojis personnalisés d'un serveur.
+ * Emojis personnalisés d'un serveur : `{ id, nom, anime, identifiant, url }`.
  * @returns {Promise<object[]>} liste vide si le serveur n'est pas joignable.
  */
 async function listerEmojis(req, guildeId) {
     const client = apiPlateforme(req);
-    if (client && typeof client.listerEmojis === 'function') {
-        return (await client.listerEmojis(String(guildeId))) || [];
-    }
-    // TRANSITION : en attente de `api.listerEmojis`.
-    const guilde = guildeNative(req, guildeId);
-    const cache = guilde?.emojis?.cache;
-    if (!cache || typeof cache.map !== 'function') return [];
-    return cache.map(e => ({
-        id: e.id,
-        nom: e.name,
-        anime: Boolean(e.animated),
-        identifiant: `<${e.animated ? 'a' : ''}:${e.name}:${e.id}>`,
-        url: typeof e.imageURL === 'function' ? e.imageURL({ size: 32 }) : null,
-    }));
+    if (!client) return [];
+    return (await client.listerEmojis(String(guildeId))) || [];
 }
 
 /**
@@ -214,35 +172,9 @@ async function listerEmojis(req, guildeId) {
  */
 async function listerMembres(req, guildeId) {
     const client = apiPlateforme(req);
-    if (client && typeof client.listerMembres === 'function') {
-        const membres = await client.listerMembres(String(guildeId));
-        return { joignable: membres !== null, membres: membres || [] };
-    }
-
-    // TRANSITION : en attente de `api.listerMembres`.
-    const guilde = guildeNative(req, guildeId);
-    if (!guilde) return { joignable: false, membres: [] };
-
-    const versNeutre = (m) => ({
-        id: m.id,
-        estBot: Boolean(m.user?.bot),
-        estAdmin: Boolean(m.permissions?.has?.(BIT_ADMINISTRATEUR)),
-        nom: m.displayName || m.user?.tag || m.id,
-    });
-
-    try {
-        // `fetch()` peuple le cache avec tous les membres (intent GuildMembers
-        // actif). Négligeable à l'échelle actuelle ; au-delà, voir la note de
-        // scalabilité du compte-rendu de la conformité.
-        const membres = await guilde.members.fetch();
-        return { joignable: true, membres: [...membres.values()].map(versNeutre) };
-    } catch {
-        // Énumération impossible : on retombe sur le cache déjà chargé plutôt
-        // que de rendre une liste vide.
-        const cache = guilde.members?.cache;
-        const valeurs = cache && typeof cache.values === 'function' ? [...cache.values()] : [];
-        return { joignable: true, membres: valeurs.map(versNeutre) };
-    }
+    if (!client) return { joignable: false, membres: [] };
+    const membres = await client.listerMembres(String(guildeId));
+    return { joignable: membres !== null, membres: membres || [] };
 }
 
 module.exports = {
@@ -259,5 +191,4 @@ module.exports = {
     listerMembres,
     guildeNative,
     CAPACITES_INCONNUES,
-    BIT_ADMINISTRATEUR,
 };

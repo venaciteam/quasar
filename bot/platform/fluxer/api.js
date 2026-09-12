@@ -30,6 +30,7 @@ const { versTypesFluxer } = require('./channels');
 const { rendreContenu, rendreChoix, corpsPanneau } = require('./render');
 const {
     normaliserMembre, normaliserUtilisateur, normaliserRole, normaliserCanal, normaliserGuilde,
+    baseMedia,
 } = require('./context');
 const { normaliserMessage } = require('./events');
 const { dateDuSnowflake } = require('./snowflake');
@@ -61,6 +62,20 @@ const TAILLE_LOT_SUPPRESSION = 100;
 // Permission exigée du BOT pour chaque action de sanction, lue dans
 // permissions.mdx. C'est la moitié « permission » de
 // `verifierMembreSanctionnable` ; l'autre moitié est la hiérarchie des rôles.
+// Taille des vignettes d'emoji servies au sélecteur du dashboard. Le proxy média
+// « snaps to the ladder » et 32 en fait partie (media-proxy/transformations.md).
+const TAILLE_EMOJI = 32;
+
+// Pagination des membres. « limit? | integer | (1-1000, default 1) » : le
+// maximum documenté, pour faire le moins d'appels possible sur une route
+// limitée à 40 requêtes / 10 s.
+const TAILLE_PAGE_MEMBRES = 1000;
+
+// Plafond du balayage. 50 000 membres sur une requête de dashboard, c'est déjà
+// bien au-delà de l'usage réel ; au-delà, on rend une liste PARTIELLE en le
+// disant plutôt que de tenir une requête HTTP ouverte indéfiniment.
+const PAGES_MAX_MEMBRES = 50;
+
 const PERMISSION_PAR_SANCTION = Object.freeze({
     timeout: 'MODERATE_MEMBERS',
     kick: 'KICK_MEMBERS',
@@ -306,6 +321,9 @@ function creerApi(client) {
     const rest = () => client.rest;
     const etat = () => client.etat;
     const moiId = () => client.user?.id ?? null;
+    // Base du proxy média, résolue par le client depuis l'env INJECTÉ. Le repli
+    // sur `baseMedia()` ne sert qu'aux doublures qui n'en fabriquent pas.
+    const media = () => client.baseMedia || baseMedia();
 
     /** Membre brut, du cache si possible, de l'API sinon. */
     async function membreBrut(guildeId, membreId) {
@@ -324,7 +342,9 @@ function creerApi(client) {
     }
 
     /** Normalise un membre AVEC l'état local, pour que ses permissions existent. */
-    const normMembre = (membre, guildeId) => normaliserMembre(membre, { etat: etat(), guildeId });
+    const normMembre = (membre, guildeId) => normaliserMembre(membre, {
+        etat: etat(), guildeId, baseMedia: media(),
+    });
 
     /**
      * Overwrite courant d'une cible, en BigInt.
@@ -900,6 +920,162 @@ function creerApi(client) {
             return { aPermission: (nom) => aPermission(masque, nom) };
         },
 
+        // ─── Inventaires d'un serveur ────────────────────────────────────────
+        //
+        //  Alimentent les SÉLECTEURS du dashboard, et la liste des destinataires
+        //  d'une notification de violation (RGPD art. 33). Tous rendent `null`
+        //  pour « je ne vois pas ce serveur » et `[]` pour « il n'a rien » : un
+        //  sélecteur vide et un sélecteur indisponible n'appellent pas le même
+        //  message, et pour l'article 33 c'est `null` qui permet de dire combien
+        //  de serveurs n'ont PAS été atteints.
+        //
+        //  ⚠️ L'état local est privilégié quand il porte la réponse — les
+        //  salons, les rôles et les emojis arrivent dans la rafale de
+        //  GUILD_CREATE et sont tenus à jour par les événements. Le REST est le
+        //  repli, pas la voie nominale : un dashboard ouvert sur dix serveurs
+        //  ferait sinon dix appels par chargement de page, sur des routes
+        //  limitées à 40 requêtes / 10 s.
+
+        /**
+         * Salons d'un serveur, normalisés (`position` comprise).
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerCanaux(guildeId) {
+            const connus = etat().guilde(guildeId)?.canaux;
+            if (connus?.size) return [...connus.values()].map(normaliserCanal);
+            try {
+                const canaux = await rest().get(`/guilds/${guildeId}/channels`);
+                for (const canal of canaux || []) etat().poserCanal({ guild_id: String(guildeId), ...canal });
+                return (canaux || []).map(c => normaliserCanal({ guild_id: String(guildeId), ...c }));
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+        },
+
+        /**
+         * Rôles d'un serveur, normalisés (`parDefaut` compris).
+         *
+         * « Returns every guild role object in the guild, in descending position
+         * order » (http-api/permissions.mdx) : la route rend TOUT en une fois,
+         * il n'y a pas de pagination à mener.
+         *
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerRoles(guildeId) {
+            const connus = etat().roles(guildeId);
+            if (connus?.size) return [...connus.values()].map(r => normaliserRole(r, { guildeId }));
+            try {
+                const roles = await rest().get(`/guilds/${guildeId}/roles`);
+                for (const role of roles || []) etat().poserRole(guildeId, role);
+                return (roles || []).map(r => normaliserRole(r, { guildeId }));
+            } catch (err) {
+                return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+            }
+        },
+
+        /**
+         * Emojis personnalisés d'un serveur.
+         *
+         * `identifiant` est la forme ÉCRITE dans un message — `<:nom:id>` ou
+         * `<a:nom:id>` — et c'est elle que `reaction_roles.emoji` stocke. Rendre
+         * l'identifiant nu ferait choisir au dashboard une valeur que le bot ne
+         * retrouverait jamais au moment du clic.
+         *
+         * `url` passe par le proxy média : `GET /emojis/{emoji_id}.{ext}`
+         * (media-proxy/routes.mdx). ⚠️ « Fluxer issues emoji paths without an
+         * `a_` prefix, so an emoji request defaults to static output and needs
+         * `animated=true` for animation » — sans ce paramètre, un emoji animé
+         * s'afficherait figé dans le sélecteur.
+         *
+         * @returns {Promise<Array<{id, nom, anime, identifiant, url}>|null>}
+         */
+        async listerEmojis(guildeId) {
+            let emojis = etat().guilde(guildeId)?.proprietes?.emojis;
+            if (!Array.isArray(emojis)) {
+                try {
+                    emojis = await rest().get(`/guilds/${guildeId}/emojis`);
+                } catch (err) {
+                    return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+                }
+            }
+            const base = media();
+            return (emojis || []).map(emoji => ({
+                id: emoji.id,
+                nom: emoji.name,
+                anime: Boolean(emoji.animated),
+                identifiant: `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>`,
+                url: `${base}/emojis/${emoji.id}.webp?size=${TAILLE_EMOJI}`
+                    + (emoji.animated ? '&animated=true' : ''),
+            }));
+        },
+
+        /**
+         * Membres d'un serveur, normalisés.
+         *
+         * ⚠️ Coûteux, et à n'appeler que pour les lectures qui ont besoin de la
+         * LISTE — en pratique les destinataires d'une notification de violation.
+         * Un sélecteur ne doit pas passer par ici.
+         *
+         * La route est PAGINÉE, et son défaut est un piège : « limit? | integer |
+         * The maximum number of members to return (1-1000, default 1) », avec la
+         * note « A caller that wants a batch states limit explicitly, because the
+         * default returns one member. » Omettre `limit` rendrait donc UN membre,
+         * et la notification de violation ne partirait qu'au propriétaire — sans
+         * la moindre erreur.
+         *
+         * Le curseur `after` est exclusif et il n'existe aucune forme
+         * descendante : on remonte les identifiants croissants jusqu'à ce qu'une
+         * page soit incomplète. Le plafond total existe pour que le balayage d'un
+         * très grand serveur ne bloque pas une requête de dashboard ; il est
+         * signalé plutôt que silencieux.
+         *
+         * @returns {Promise<object[]|null>} `null` si le serveur est illisible.
+         */
+        async listerMembres(guildeId) {
+            const membres = [];
+            let apres = null;
+
+            for (let page = 0; page < PAGES_MAX_MEMBRES; page += 1) {
+                const query = { limit: String(TAILLE_PAGE_MEMBRES) };
+                if (apres) query.after = apres;
+
+                let lot;
+                try {
+                    lot = await rest().get(`/guilds/${guildeId}/members`, { query });
+                } catch (err) {
+                    // Une panne au MILIEU d'un balayage ne doit pas faire perdre
+                    // les pages déjà lues : un destinataire de moins vaut mieux
+                    // qu'un serveur compté comme non atteint. Seul un échec sur
+                    // la PREMIÈRE page rend `null`.
+                    if (membres.length > 0) {
+                        console.error(
+                            `[Quasar] Énumération des membres de ${guildeId} interrompue après `
+                            + `${membres.length} : ${err?.codeNeutre || err?.code || err?.message}.`
+                        );
+                        return membres;
+                    }
+                    return absenceOuLeve(err, [CODES_NEUTRES.guilde_inconnue, CODES_NEUTRES.introuvable]);
+                }
+
+                if (!Array.isArray(lot) || lot.length === 0) return membres;
+                for (const membre of lot) {
+                    etat().poserMembre(guildeId, membre);
+                    membres.push(normMembre(membre, guildeId));
+                }
+                // Page incomplète : c'est la dernière, la route n'a pas de
+                // drapeau « encore » à lire.
+                if (lot.length < TAILLE_PAGE_MEMBRES) return membres;
+                apres = lot[lot.length - 1]?.user?.id ?? null;
+                if (!apres) return membres;
+            }
+
+            console.warn(
+                `[Quasar] Énumération des membres de ${guildeId} arrêtée au plafond `
+                + `(${PAGES_MAX_MEMBRES * TAILLE_PAGE_MEMBRES}). La liste rendue est PARTIELLE.`
+            );
+            return membres;
+        },
+
         /**
          * Membres actuellement connectés à un salon vocal.
          *
@@ -1102,6 +1278,9 @@ module.exports = {
     comparerRangs,
     CLES_CORPS_REST,
     CLES_MENTIONS_REST,
+    TAILLE_EMOJI,
+    TAILLE_PAGE_MEMBRES,
+    PAGES_MAX_MEMBRES,
     dateDuSnowflake,
     AGE_MAX_SUPPRESSION_LOT_MS,
     TAILLE_LOT_SUPPRESSION,

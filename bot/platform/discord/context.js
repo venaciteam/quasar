@@ -184,6 +184,20 @@ function couleurRole(role) {
  * handler `roleCree` ne sait pas dans quel serveur écrire son journal — le
  * payload neutre ne porte que le rôle.
  */
+/**
+ * Le rôle est-il @everyone ?
+ *
+ * Il porte le même snowflake que son serveur — vrai côté Discord comme côté
+ * Fluxer (« The everyone role has the same snowflake as its guild »,
+ * http-api/permissions.mdx). On compare à l'identifiant du serveur quand on le
+ * connaît ; sinon on répond « non », parce qu'un « je ne sais pas » qui
+ * deviendrait « oui » ferait disparaître un rôle ordinaire des sélecteurs.
+ */
+function estRoleParDefaut(role) {
+    const guildeId = role.guildId ?? role.guild_id ?? role.guild?.id ?? null;
+    return Boolean(guildeId) && String(role.id) === String(guildeId);
+}
+
 function normaliserRole(role) {
     if (!role) return null;
     return {
@@ -194,6 +208,11 @@ function normaliserRole(role) {
         gere: Boolean(role.managed),
         couleur: couleurRole(role),
         guildeId: role.guildId ?? role.guild_id ?? role.guild?.id ?? null,
+        // @everyone porte l'identifiant du SERVEUR, sur les deux plateformes.
+        // C'est une connaissance de plateforme : un sélecteur de rôles du
+        // dashboard ne doit pas avoir à la reconstruire pour exclure le rôle
+        // par défaut — il l'exclurait à moitié, ou pas du tout.
+        parDefaut: estRoleParDefaut(role),
     };
 }
 
@@ -211,6 +230,10 @@ function normaliserCanal(canal) {
         typeNatif: canal.type,
         guildeId: canal.guildId ?? canal.guild_id ?? canal.guild?.id ?? null,
         parentId: canal.parentId ?? canal.parent_id ?? null,
+        // Rang d'affichage. Porté par le NORMALISEUR et non reconstruit par
+        // l'appelant : un sélecteur de salons trié dans le désordre est le
+        // symptôme le plus visible d'un dashboard, et le plus muet.
+        position: canal.rawPosition ?? canal.position ?? null,
         mention: `<#${canal.id}>`,
     };
 }
@@ -1029,6 +1052,7 @@ module.exports = {
     normaliserUtilisateur,
     normaliserMembre,
     normaliserRole,
+    estRoleParDefaut,
     couleurRole,
     etiquetteUtilisateur,
     fabriqueAvatar,

@@ -38,7 +38,8 @@ const {
 const { surEvenement, chargerEvenements, creerContexteEvenement, EVENEMENTS, NOMS_EVENEMENTS } = require('./events');
 const { chargerPanneaux } = require('../panneaux');
 const {
-    creerContextePanneau, normaliserUtilisateur, normaliserMembre, normaliserCanal, normaliserRole,
+    creerContextePanneau, poserPanneau,
+    normaliserUtilisateur, normaliserMembre, normaliserCanal, normaliserRole,
 } = require('./context');
 const { BITS } = require('./permissions');
 const { cleEmoji, resoudreEmoji } = require('./events');
@@ -274,6 +275,32 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
          */
         verifierAccesCommandePersonnalisee(ligne, membre, options) {
             return verifierAccesCommandePersonnalisee(ligne, membre, options);
+        },
+
+        /**
+         * Pose un panneau persistant, depuis un appelant qui n'a QUE
+         * l'adaptateur sous la main — une route du dashboard, typiquement.
+         *
+         * Sur l'adaptateur et non sur `api`, pour la même raison que
+         * `enregistrerCommandes` : ce n'est pas un appel REST générique, c'est
+         * la pose d'un objet dont le ROUTAGE appartient à la plateforme.
+         *
+         * ⚠️ Délègue à la fonction interne que `ctx.poserPanneau` appelle déjà —
+         * elle n'est pas réécrite. Un panneau posé par le dashboard doit être
+         * STRICTEMENT le même que celui d'une commande : même corps, même
+         * identifiant de composant, même persistance. Deux constructions
+         * séparées produiraient un panneau qui s'affiche parfaitement et ne
+         * répond jamais.
+         *
+         * @param {string} canalId
+         * @param {string|object} contenuOuEmbed  chaîne, embed neutre, ou corps
+         *   composé `{ contenu, embeds, fichiers }`
+         * @param {Array} choix
+         * @param {{panneau: string, guildeId?: string}} options
+         * @returns {Promise<{canalId: string, messageId: string|null}>}
+         */
+        poserPanneau(canalId, contenuOuEmbed, choix, options) {
+            return poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, options);
         },
 
         /** @see bot/platform/fluxer/events.js pour la table et les payloads. */

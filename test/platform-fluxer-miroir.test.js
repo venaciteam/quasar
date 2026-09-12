@@ -503,3 +503,217 @@ test('api.modifierPanneau exige les mêmes arguments des deux côtés', async ()
         );
     }
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  Lot 0.8 — les cinq méthodes que le dashboard contournait
+//
+//  Les quatre `lister*` alimentaient des sélecteurs qui étaient VIDES côté
+//  Fluxer, et la liste des destinataires d'une notification de violation, qui
+//  s'y réduisait au seul propriétaire. Ce n'est pas une commodité d'interface :
+//  l'article 33 impose de notifier les personnes concernées, et un destinataire
+//  manquant est un manquement.
+// ═══════════════════════════════════════════════════════════════
+
+/** Les quatre lecteurs distinguent-ils « rien » de « je ne sais pas » ? */
+const LECTEURS = ['listerCanaux', 'listerRoles', 'listerEmojis', 'listerMembres'];
+
+test('les cinq méthodes du lot 0.8 existent des deux côtés', () => {
+    const [discord, fluxer] = adaptateurs();
+    for (const methode of LECTEURS) {
+        assert.equal(typeof discord.api[methode], 'function', `Discord : ${methode}`);
+        assert.equal(typeof fluxer.api[methode], 'function', `Fluxer : ${methode}`);
+    }
+    assert.equal(typeof discord.poserPanneau, 'function');
+    assert.equal(typeof fluxer.poserPanneau, 'function');
+    assert.equal(discord.poserPanneau.length, fluxer.poserPanneau.length);
+});
+
+test('un serveur illisible rend null, jamais une liste vide', async () => {
+    // C'est LA distinction du lot. `[]` veut dire « ce serveur n'a rien » ;
+    // `null` veut dire « je ne le vois pas ». Les confondre ferait compter un
+    // serveur inaccessible comme « zéro destinataire à notifier ».
+    const clientMuet = {
+        on() {}, once() {}, off() {}, rest: {}, channels: { cache: new Map() },
+        guilds: { cache: new Map(), fetch: async () => { const e = new Error('Unknown Guild'); e.code = 10004; throw e; } },
+    };
+    const discord = creerAdaptateurDiscord({ client: clientMuet, env: {} });
+    for (const methode of LECTEURS) {
+        assert.equal(await discord.api[methode]('inexistant'), null, `Discord : ${methode}`);
+    }
+
+    const fluxer = creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } });
+    const absente = async () => { const e = new Error('inconnu'); e.code = 'UNKNOWN_GUILD'; throw e; };
+    fluxer.client.rest = { get: absente, post: absente, patch: absente, put: absente, delete: absente };
+    for (const methode of LECTEURS) {
+        assert.equal(await fluxer.api[methode]('inexistant'), null, `Fluxer : ${methode}`);
+    }
+});
+
+test('les inventaires Fluxer rendent la forme que le dashboard consomme', async () => {
+    const GUILDE = '900000000000000000';
+    const fluxer = creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice', FLUXER_MEDIA_BASE: 'https://media.test' } });
+    fluxer.client.etat.poserGuilde({
+        id: GUILDE,
+        properties: {
+            id: GUILDE, name: 'Venacity', owner_id: '4',
+            emojis: [{ id: '55', name: 'quasar', animated: true }, { id: '56', name: 'fixe', animated: false }],
+        },
+        roles: [
+            { id: GUILDE, name: '@everyone', position: 0, permissions: '0', color: 0 },
+            { id: '77', name: 'Modo', position: 3, permissions: '0', color: 3447003 },
+        ],
+        channels: [
+            { id: '300', name: 'general', type: 0, guild_id: GUILDE, position: 1, parent_id: '200' },
+            { id: '400', name: 'Vocal', type: 2, guild_id: GUILDE, position: 2, parent_id: null },
+        ],
+        members: [], voice_states: [],
+    });
+
+    const canaux = await fluxer.api.listerCanaux(GUILDE);
+    assert.deepEqual(canaux.map(c => [c.nom, c.type, c.typeNatif, c.position]), [
+        ['general', 'texte', 0, 1], ['Vocal', 'vocal', 2, 2],
+    ]);
+    assert.equal(canaux[0].parentId, '200', 'le sélecteur groupe les salons par catégorie');
+
+    const roles = await fluxer.api.listerRoles(GUILDE);
+    const everyone = roles.find(r => r.id === GUILDE);
+    assert.equal(everyone.parDefaut, true, '@everyone doit être exclu du sélecteur, il porte l\'id du serveur');
+    assert.equal(roles.find(r => r.id === '77').parDefaut, false);
+    assert.equal(roles.find(r => r.id === '77').couleur, '#3498db');
+
+    const emojis = await fluxer.api.listerEmojis(GUILDE);
+    assert.equal(emojis[0].identifiant, '<a:quasar:55>', 'c\'est la forme STOCKÉE en base, pas l\'identifiant nu');
+    assert.equal(emojis[1].identifiant, '<:fixe:56>');
+    assert.match(emojis[0].url, /^https:\/\/media\.test\/emojis\/55\.webp\?size=32&animated=true$/);
+    assert.ok(!emojis[1].url.includes('animated'), 'un emoji fixe ne demande pas l\'animation');
+});
+
+test('listerMembres suit la pagination de Fluxer, et son défaut piégeux', async () => {
+    // « limit? | (1-1000, default 1) » — « A caller that wants a batch states
+    // limit explicitly, because the default returns one member. » Omettre
+    // `limit` rendrait UN membre, et la notification de violation ne partirait
+    // qu'au propriétaire, sans la moindre erreur.
+    const GUILDE = '900000000000000000';
+    const fluxer = creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } });
+    fluxer.client.etat.poserGuilde({
+        id: GUILDE, properties: { id: GUILDE, name: 'V', owner_id: '4' },
+        roles: [{ id: GUILDE, name: '@everyone', position: 0, permissions: '0' }],
+        channels: [], members: [], voice_states: [],
+    });
+
+    const appels = [];
+    const membre = (i) => ({ user: { id: String(1000 + i), username: `u${i}` }, roles: [], joined_at: '2026-01-01T00:00:00.000Z' });
+    fluxer.client.rest = {
+        async get(chemin, options) {
+            appels.push(options?.query);
+            // Première page pleine, seconde partielle : c'est ainsi que la
+            // route signale la fin, elle n'a pas de drapeau « encore ».
+            if (!options?.query?.after) return Array.from({ length: 1000 }, (_, i) => membre(i));
+            return [membre(1000), membre(1001)];
+        },
+    };
+
+    const membres = await fluxer.api.listerMembres(GUILDE);
+    assert.equal(membres.length, 1002);
+    assert.equal(appels.length, 2);
+    assert.equal(appels[0].limit, '1000', 'le défaut de la route est 1 : il DOIT être déclaré');
+    assert.equal(appels[1].after, '1999', 'le curseur est exclusif, et part du dernier identifiant lu');
+    // Les membres sont normalisés : c'est cette forme que lit la notification.
+    assert.equal(membres[0].id, '1000');
+    assert.equal(typeof membres[0].estAdmin, 'boolean');
+    assert.equal(typeof membres[0].estBot, 'boolean');
+});
+
+test('une panne EN COURS de balayage ne perd pas les pages déjà lues', async () => {
+    // Un destinataire de moins vaut mieux qu'un serveur compté comme non
+    // atteint : `null` ferait dire à la propriétaire qu'elle n'a pas pu
+    // notifier un serveur qu'elle voit parfaitement.
+    const GUILDE = '900000000000000000';
+    const fluxer = creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } });
+    fluxer.client.etat.poserGuilde({
+        id: GUILDE, properties: { id: GUILDE, name: 'V', owner_id: '4' },
+        roles: [], channels: [], members: [], voice_states: [],
+    });
+
+    let page = 0;
+    fluxer.client.rest = {
+        async get() {
+            if (page++ === 0) {
+                return Array.from({ length: 1000 }, (_, i) => ({ user: { id: String(2000 + i) }, roles: [] }));
+            }
+            throw new Error('coupure réseau');
+        },
+    };
+    const membres = await fluxer.api.listerMembres(GUILDE);
+    assert.equal(membres.length, 1000, 'les 1000 premiers restent des destinataires');
+});
+
+test('adaptateur.poserPanneau délègue à la MÊME fonction que ctx.poserPanneau', async () => {
+    // Un panneau posé depuis le dashboard doit être strictement celui d'une
+    // commande : même corps, même identifiant de composant, même persistance.
+    // Deux constructions séparées produiraient un panneau qui s'affiche
+    // parfaitement et ne répond jamais.
+    const poses = [];
+    const brancher = (adaptateur) => {
+        adaptateur.api.envoyerMessage = async (canalId, contenu) => {
+            poses.push({ plateforme: adaptateur.nom, canalId, contenu });
+            return { id: 'm1', canalId };
+        };
+        adaptateur.api.ajouterReaction = async () => null;
+        adaptateur.enregistrerPanneauPersistant = () => {};
+        return adaptateur;
+    };
+
+    const embedNeutre = { titre: 'Tickets', description: 'Ouvrez un ticket.' };
+    const choix = [{ cle: 'ouvrir', libelle: 'Ouvrir', emoji: '🎫', style: 'primaire' }];
+
+    for (const adaptateur of [
+        brancher(creerAdaptateurDiscord({ client: clientDiscord(), env: {} })),
+        brancher(creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } })),
+    ]) {
+        const resultat = await adaptateur.poserPanneau('3', embedNeutre, choix, {
+            panneau: 'ticket', guildeId: '9',
+        });
+        assert.deepEqual(resultat, { canalId: '3', messageId: 'm1' }, `${adaptateur.nom} : coordonnées rendues`);
+    }
+
+    assert.equal(poses.length, 2);
+    // Côté Discord, le choix devient un bouton dont le customId porte le
+    // routage ; côté Fluxer, une réaction et une légende. Ce qui doit être
+    // identique, c'est que LE NOM DU PANNEAU y soit — c'est lui qui route.
+    const discord = poses.find(p => p.plateforme === 'discord');
+    assert.match(JSON.stringify(discord.contenu), /ticket:ouvrir/);
+    const fluxer = poses.find(p => p.plateforme === 'fluxer');
+    assert.match(fluxer.contenu.description, /🎫 \*\*Ouvrir\*\*/);
+
+    // Et un nom de panneau ambigu est refusé des deux côtés, AVANT tout envoi.
+    for (const adaptateur of [
+        creerAdaptateurDiscord({ client: clientDiscord(), env: {} }),
+        creerAdaptateurFluxer({ env: { FLUXER_TOKEN: 'factice' } }),
+    ]) {
+        await assert.rejects(
+            () => adaptateur.poserPanneau('3', embedNeutre, choix, { panneau: 'a:b' }),
+            /nom de panneau invalide/,
+        );
+    }
+});
+
+test('le salon et le rôle normalisés portent position et parDefaut des deux côtés', () => {
+    // Deux ajouts au contrat, sans lesquels le dashboard reconstruirait
+    // lui-même ce que la plateforme sait : un sélecteur trié dans le désordre,
+    // ou un @everyone proposé comme un rôle ordinaire.
+    const canalD = contexteDiscord.normaliserCanal({ id: '3', name: 'g', type: 0, guildId: '9', position: 7 });
+    const canalF = contexteFluxer.normaliserCanal({ id: '3', name: 'g', type: 0, guild_id: '9', position: 7 });
+    assert.equal(canalD.position, 7);
+    assert.equal(canalF.position, 7);
+
+    const everyoneD = contexteDiscord.normaliserRole({ id: '9', name: '@everyone', guildId: '9' });
+    const everyoneF = contexteFluxer.normaliserRole({ id: '9', name: '@everyone' }, { guildeId: '9' });
+    assert.equal(everyoneD.parDefaut, true);
+    assert.equal(everyoneF.parDefaut, true);
+
+    // Un rôle sans serveur connu n'est PAS @everyone : un « je ne sais pas » qui
+    // deviendrait « oui » ferait disparaître un rôle ordinaire du sélecteur.
+    assert.equal(contexteDiscord.normaliserRole({ id: '9', name: 'X' }).parDefaut, false);
+    assert.equal(contexteFluxer.normaliserRole({ id: '9', name: 'X' }).parDefaut, false);
+});

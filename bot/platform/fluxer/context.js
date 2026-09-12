@@ -205,6 +205,19 @@ function couleurRole(role) {
  * `guildeId` est porté PAR LE RÔLE, comme côté Discord : c'est aussi la forme de
  * `GUILD_ROLE_CREATE`, dont le payload porte `guild_id` à côté du rôle.
  */
+/**
+ * Le rôle est-il @everyone ?
+ *
+ * Il porte le même snowflake que son serveur : « The everyone role has the same
+ * snowflake as its guild and is named @everyone » (permissions.mdx). Sans
+ * identifiant de serveur connu on répond « non » — un « je ne sais pas » qui
+ * deviendrait « oui » ferait disparaître un rôle ordinaire des sélecteurs.
+ */
+function estRoleParDefaut(role, guildeId = null) {
+    const serveur = role.guildId ?? role.guild_id ?? role.guild?.id ?? guildeId ?? null;
+    return Boolean(serveur) && String(role.id) === String(serveur);
+}
+
 function normaliserRole(role, { guildeId = null } = {}) {
     if (!role) return null;
     return {
@@ -215,6 +228,9 @@ function normaliserRole(role, { guildeId = null } = {}) {
         gere: Boolean(role.managed),
         couleur: couleurRole(role),
         guildeId: role.guildId ?? role.guild_id ?? role.guild?.id ?? guildeId ?? null,
+        // « The everyone role has the same snowflake as its guild »
+        // (http-api/permissions.mdx). Même règle que côté Discord.
+        parDefaut: estRoleParDefaut(role, guildeId),
     };
 }
 
@@ -230,6 +246,10 @@ function normaliserCanal(canal) {
         typeNatif: canal.type,
         guildeId: canal.guildId ?? canal.guild_id ?? canal.guild?.id ?? null,
         parentId: canal.parentId ?? canal.parent_id ?? null,
+        // « position? | integer | The sort position, present only for a guild
+        // channel », et « A channel that stores no position reports 0 »
+        // (http-api/channels.mdx).
+        position: canal.rawPosition ?? canal.position ?? null,
         mention: `<#${canal.id}>`,
     };
 }
@@ -1155,6 +1175,7 @@ module.exports = {
     normaliserUtilisateur,
     normaliserMembre,
     normaliserRole,
+    estRoleParDefaut,
     couleurRole,
     etiquetteUtilisateur,
     fabriqueAvatar,

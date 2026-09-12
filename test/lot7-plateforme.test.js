@@ -366,43 +366,60 @@ test('api/services/plateforme — la portée est celle que bot/utils/errors.js r
 // ─── Non-régression des sélecteurs du dashboard ────────────────────────────
 //
 // Les trois listes que consomment une douzaine de pages (salons, rôles, emojis)
-// gardent LEUR FORME D'ORIGINE — `name`, `color`, `type`, `identifier`. Le
-// contrat ne publie pas encore de lecteur pour elles : `api/services/plateforme.js`
-// retombe sur le client natif, et c'est ce repli qu'on éprouve ici. Le jour où
-// `api.listerCanaux` et consorts existent, ces mêmes assertions doivent tenir.
+// gardent LEUR FORME D'ORIGINE — `name`, `color`, `type`, `identifier`.
+//
+// Elles étaient servies par un REPLI qui lisait le cache discord.js, et qui
+// rendait une liste vide sur toute autre plateforme : les sélecteurs étaient
+// muets côté Fluxer. Le contrat publie désormais `api.listerCanaux`,
+// `listerRoles` et `listerEmojis` (lot 0.8), et c'est le VRAI adaptateur qu'on
+// éprouve ici — pas une doublure de son repli. Les assertions, elles, n'ont pas
+// bougé d'un caractère : c'est tout l'intérêt.
 
-/** Adaptateur avec un client discord.js réduit à ce que le repli lit. */
-function faireAdaptateurNatif() {
+/** Adaptateur Discord RÉEL, sur un client discord.js réduit à ce qu'il lit. */
+function faireAdaptateurAvecInventaires() {
     const guilde = {
         id: GUILDE,
         channels: {
             cache: new Map([
-                ['750000000000000001', { id: '750000000000000001', name: 'general', type: 0, position: 1, parentId: null }],
-                ['750000000000000002', { id: '750000000000000002', name: 'vocal', type: 2, position: 0, parentId: null }],
+                ['750000000000000001', { id: '750000000000000001', name: 'general', type: 0, position: 1, parentId: null, guildId: GUILDE }],
+                ['750000000000000002', { id: '750000000000000002', name: 'vocal', type: 2, position: 0, parentId: null, guildId: GUILDE }],
                 // Type hors sélecteur (forum) : il ne doit pas remonter.
-                ['750000000000000003', { id: '750000000000000003', name: 'forum', type: 15, position: 2, parentId: null }],
+                ['750000000000000003', { id: '750000000000000003', name: 'forum', type: 15, position: 2, parentId: null, guildId: GUILDE }],
             ]),
         },
         roles: {
             cache: new Map([
-                [GUILDE, { id: GUILDE, name: '@everyone', hexColor: '#000000', position: 0, managed: false }],
-                ['760000000000000001', { id: '760000000000000001', name: 'Modération', hexColor: '#ff0000', position: 5, managed: false }],
-                ['760000000000000002', { id: '760000000000000002', name: 'Bot intégré', hexColor: '#00ff00', position: 3, managed: true }],
+                // @everyone porte l'identifiant du SERVEUR : c'est ce que
+                // `normaliserRole` lit pour poser `parDefaut`, et c'est ce qui
+                // l'exclut du sélecteur.
+                [GUILDE, { id: GUILDE, name: '@everyone', hexColor: '#000000', position: 0, managed: false, guild: { id: GUILDE } }],
+                ['760000000000000001', { id: '760000000000000001', name: 'Modération', hexColor: '#ff0000', position: 5, managed: false, guild: { id: GUILDE } }],
+                ['760000000000000002', { id: '760000000000000002', name: 'Bot intégré', hexColor: '#00ff00', position: 3, managed: true, guild: { id: GUILDE } }],
             ]),
         },
         emojis: {
-            cache: {
-                map: (fn) => [{ id: '770000000000000001', name: 'quasar', animated: false, imageURL: () => 'https://cdn.discordapp.com/emojis/770000000000000001.png' }].map(fn),
-            },
+            cache: new Map([
+                ['770000000000000001', {
+                    id: '770000000000000001', name: 'quasar', animated: false,
+                    imageURL: () => 'https://cdn.discordapp.com/emojis/770000000000000001.png',
+                }],
+            ]),
         },
     };
-    const adaptateur = faireAdaptateur();
-    adaptateur.client = { guilds: { cache: new Map([[GUILDE, guilde]]) } };
-    return adaptateur;
+
+    const creerAdaptateurDiscord = require('../bot/platform/discord');
+    return creerAdaptateurDiscord({
+        client: {
+            on() {}, once() {}, off() {}, rest: {},
+            channels: { cache: new Map() },
+            guilds: { cache: new Map([[GUILDE, guilde]]) },
+        },
+        env: {},
+    });
 }
 
 test('sélecteurs — les salons gardent la forme que le front consomme', async () => {
-    const base = await monter(faireAdaptateurNatif());
+    const base = await monter(faireAdaptateurAvecInventaires());
     const res = await requete(base, `/api/guilds/${GUILDE}/channels`, { jeton: jetonAdmin });
 
     assert.equal(res.status, 200);
@@ -413,7 +430,7 @@ test('sélecteurs — les salons gardent la forme que le front consomme', async 
 });
 
 test('sélecteurs — les rôles excluent @everyone et les rôles gérés', async () => {
-    const base = await monter(faireAdaptateurNatif());
+    const base = await monter(faireAdaptateurAvecInventaires());
     const res = await requete(base, `/api/guilds/${GUILDE}/roles`, { jeton: jetonAdmin });
 
     assert.equal(res.status, 200);
@@ -423,7 +440,7 @@ test('sélecteurs — les rôles excluent @everyone et les rôles gérés', asyn
 });
 
 test('sélecteurs — les emojis gardent leur identifiant prêt à coller', async () => {
-    const base = await monter(faireAdaptateurNatif());
+    const base = await monter(faireAdaptateurAvecInventaires());
     const res = await requete(base, `/api/guilds/${GUILDE}/emojis`, { jeton: jetonAdmin });
 
     assert.equal(res.status, 200);
