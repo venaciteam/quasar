@@ -1,7 +1,6 @@
-// ⚠️ NON MIGRÉ AU LOT 3. Ce fichier n'est qu'un jeu de réglages : tout le corps
-// de /welcome vit dans la fabrique, et c'est elle qui bute sur le contrat —
-// `{username}`, `{membercount}` et l'avatar du membre n'y existent pas. Le
-// détail, et les signatures proposées, sont en tête de bot/utils/configCommand.js.
+// Jeu de réglages de /welcome. Tout le corps de la commande — descripteur,
+// sous-commandes, écritures en base, réponses — vit dans la fabrique, partagée
+// avec /leave (cf. bot/utils/configCommand.js).
 const { createConfigCommand } = require('../utils/configCommand');
 
 module.exports = createConfigCommand({
@@ -16,5 +15,5 @@ module.exports = createConfigCommand({
     enabledCol: 'welcome_enabled',
     defaultEmbedTitle: 'Bienvenue sur {server} !',
     defaultEmbedDesc: '{user} arrive — membre numéro **{membercount}**.',
-    defaultTestMsg: (member) => `👋 Bienvenue ${member} sur **${member.guild.name}** !`
+    defaultTestMsg: (membre, guilde) => `👋 Bienvenue ${membre.mention} sur **${guilde.nom}** !`
 });

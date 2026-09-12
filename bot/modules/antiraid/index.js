@@ -34,34 +34,33 @@
 //   3. NE JAMAIS AGIR SUR UNE CONFIGURATION QU'ON NE COMPREND PAS. Seuil hors
 //      bornes, sanctions illisibles : j'alerte et je m'abstiens.
 //
-//  ─── Migration multiplateforme : PARTIELLE, et ce qui la bloque ────────────
+//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
 //
-//  Les embeds sont neutres et `discord.js` n'est plus importé ici. Le module
-//  reste pourtant nourri d'objets discord.js (`member`, `member.guild`), et
-//  `handleMemberJoin` GARDE sa signature historique, pour trois manques du
-//  contrat neutre qui ne se contournent pas :
+//  Les deux manques qui bloquaient ce module sont comblés : le membre normalisé
+//  porte `compteCreeLe` (création du COMPTE, distincte de `rejointLe`) et la
+//  guilde normalisée porte `membreCount`. `handleMemberJoin` accepte donc les
+//  deux mondes, comme `punishments.js` et `logger.js` :
 //
-//   1. DATE DE CRÉATION DU COMPTE. `handleAccountAge` lit
-//      `member.user.createdTimestamp`. Le membre normalisé porte `rejointLe`
-//      (arrivée sur le serveur) mais pas la création du compte, et la déduire du
-//      snowflake exigerait l'époque de la plateforme — donc de connaître la
-//      plateforme. Sans ce champ, la moitié « âge du compte » de l'anti-raid
-//      disparaît en silence.
-//   2. NOMBRE DE MEMBRES. `sendWaveAlert` affiche `guild.memberCount`. La guilde
-//      normalisée ne le porte pas : l'alerte de vague perdrait ce repère.
-//   3. MODE PANIQUE. `panic.enterPanic` a besoin d'écritures de serveur que le
-//      client REST normalisé n'expose pas du tout (voir l'en-tête de panic.js).
+//    voie neutre     — `handleMemberJoin(membre, portee)`, où `portee` est
+//                      `{ guildeId, guilde, api, moi }`. C'est ce que passe
+//                      `bot/events/guildMemberAdd.js` migré.
+//    voie historique — `handleMemberJoin(member)` avec un membre discord.js,
+//                      qui porte son `.guild`. Marquée
+//                      `// TRANSITION : format historique, à retirer au lot de
+//                      consolidation`.
 //
-//  ⚠️ CONSÉQUENCE POUR LE LOT « ACCUEIL » : `bot/events/guildMemberAdd.js`
-//  appelle `handleMemberJoin(member)` avec un membre discord.js. Migrer cet
-//  événement en `membreRejoint` lui ferait passer un membre NORMALISÉ, qui n'a
-//  pas de `.guild` : `handleMemberJoin` sortirait alors sur `{ removed: false }`
-//  à chaque arrivée, sans erreur ni journal — l'anti-raid s'éteindrait en
-//  silence. Les deux migrations doivent être faites ENSEMBLE, une fois les trois
-//  manques ci-dessus comblés.
+//  ⚠️ UNE SEULE DÉPENDANCE RESTE OUVERTE : le MODE PANIQUE. `panic.enterPanic`
+//  reçoit ce que cette fonction a reçu — une portée sur la voie neutre, une
+//  guilde discord.js sur la voie historique. Le contrat porte désormais ce qu'il
+//  lui faut (`api.mettreInvitationsEnPause`, `api.obtenirEtatInvitations`,
+//  `api.listerGuildes`), mais `panic.js` appartient à un autre lot : tant qu'il
+//  n'accepte pas la portée, une vague détectée par la voie neutre verra son mode
+//  panique échouer — visiblement, dans le champ « Mode panique » de l'alerte,
+//  jamais en silence. Voir le compte-rendu du lot 3.
 // ═══════════════════════════════════════════════════════════════
 
 const { embed } = require('../../platform/embed');
+const { resoudrePorteeNeutre } = require('../../utils/errors');
 const { applyPunishments, sendAutomodLog, SOURCE_LABELS } = require('../../utils/punishments');
 const { getConfig, invalidateConfig, LIMITS } = require('./config');
 const { registerJoin, MAX_PUNISHED_PER_WAVE } = require('./window');
@@ -108,15 +107,17 @@ function describeResults(results) {
 /**
  * Alerte de vague. Elle part MÊME en mode alerte seule : un module qui détecte
  * sans rien dire ne se distingue pas d'un module en panne.
+ *
+ * @param {object} scope  sortie de `resoudreScope`
  */
-async function sendWaveAlert(guild, config, { size, punishedCount, outcome, panicResult }) {
+async function sendWaveAlert(scope, config, { size, punishedCount, outcome, panicResult }) {
     const champs = [
         { nom: 'Arrivées', valeur: `${size} en moins de ${config.windowSeconds} s`, enLigne: true },
         { nom: 'Déclencheur', valeur: SOURCE_LABELS[SOURCE], enLigne: true },
-        // ⚠️ Manque du contrat : la guilde normalisée ne porte pas le nombre de
-        // membres. C'est l'une des trois raisons pour lesquelles ce module reçoit
-        // encore une guilde discord.js (cf. en-tête).
-        { nom: 'Membres du serveur', valeur: `${guild.memberCount ?? '?'}`, enLigne: true },
+        // Effectif du serveur : `membreCount` sur la guilde normalisée,
+        // `memberCount` sur la guilde discord.js. Le repli « ? » existait déjà —
+        // une alerte de vague ne doit pas être retenue faute d'un repère.
+        { nom: 'Membres du serveur', valeur: `${scope.membreCount ?? '?'}`, enLigne: true },
     ];
 
     if (config.alertOnly) {
@@ -146,7 +147,7 @@ async function sendWaveAlert(guild, config, { size, punishedCount, outcome, pani
         champs.push({ nom: 'Mode panique', valeur: 'Désactivé sur ce serveur (durée réglée à 0).' });
     }
 
-    await sendAutomodLog(guild, embed({
+    await sendAutomodLog(scope.cible, embed({
         titre: '🚨 Vague d\'arrivées détectée',
         couleur: 0xe74c3c,
         champs,
@@ -155,8 +156,8 @@ async function sendWaveAlert(guild, config, { size, punishedCount, outcome, pani
 }
 
 /** Alerte d'un compte trop récent, quand aucune sanction n'est configurée. */
-async function sendAccountAgeAlert(guild, config, member, ageHours) {
-    await sendAutomodLog(guild, embed({
+async function sendAccountAgeAlert(scope, config, member, ageHours) {
+    await sendAutomodLog(scope.cible, embed({
         titre: '⚠️ Compte trop récent',
         couleur: 0xf1c40f,
         champs: [
@@ -179,13 +180,18 @@ async function sendAccountAgeAlert(guild, config, member, ageHours) {
  * route, et lancer cent promesses d'un coup ne ferait qu'enfler la file
  * d'attente et la mémoire au moment exact où il faut être léger.
  */
-async function punishBatch(batch, { guild, config, reason, currentMemberId }) {
+async function punishBatch(batch, { scope, config, reason, currentMemberId }) {
     const results = [];
     let removedCurrent = false;
 
+    // `portee` ou `guild` selon la voie : `applyPunishments` accepte les deux et
+    // donne la priorité à la première. Les nommer ici, une fois, évite de
+    // tester la voie à chaque tour de boucle.
+    const voie = scope.neutre ? { portee: scope.cible } : { guild: scope.cible };
+
     for (const target of batch) {
         const outcome = await applyPunishments(config.punishments, {
-            guild,
+            ...voie,
             member: target,
             // `userId` est toujours transmis : un compte de raid a souvent déjà
             // quitté le serveur quand la sanction tombe, et le socle sait encore
@@ -193,7 +199,7 @@ async function punishBatch(batch, { guild, config, reason, currentMemberId }) {
             userId: target?.id,
             reason,
             source: SOURCE,
-            moderatorId: guild.client?.user?.id,
+            moderatorId: scope.moiId,
             logChannelId: config.logChannelId,
             responseMessage: config.responseMessage,
         });
@@ -211,44 +217,86 @@ async function punishBatch(batch, { guild, config, reason, currentMemberId }) {
 // ─── Point d'entrée ─────────────────────────────────────────────────────────
 
 /**
+ * Réduit ce qu'on a reçu à ce dont ce module a besoin, quelle que soit la voie.
+ *
+ * Le critère est celui du reste du dépôt : une portée neutre se reconnaît à son
+ * client REST (`resoudrePorteeNeutre`), tout le reste retombe sur la voie
+ * historique. L'inverse enverrait un objet inattendu vers le contrat neutre.
+ *
+ * @returns {null|{cible: object, neutre: boolean, guildeId: string,
+ *                 membreCount: number|null, moiId: string|null}}
+ */
+function resoudreScope(membre, portee) {
+    const neutre = resoudrePorteeNeutre(portee);
+    if (neutre) {
+        if (!neutre.guildeId) return null;
+        return {
+            cible: portee,
+            neutre: true,
+            guildeId: neutre.guildeId,
+            membreCount: portee.guilde?.membreCount ?? null,
+            moiId: neutre.moiId,
+        };
+    }
+
+    // TRANSITION : format historique, à retirer au lot de consolidation
+    const guild = membre?.guild;
+    if (!guild?.id) return null;
+    return {
+        cible: guild,
+        neutre: false,
+        guildeId: guild.id,
+        membreCount: guild.memberCount ?? null,
+        moiId: guild.client?.user?.id ?? null,
+    };
+}
+
+/**
  * Évalue une arrivée. Ne lève JAMAIS.
  *
- * @param {import('discord.js').GuildMember} member
+ * @param {object} membre  membre NORMALISÉ (voie neutre) ou `GuildMember`
+ *        discord.js (voie historique)
+ * @param {object} [portee] VOIE NEUTRE : `{ guildeId, guilde, api, moi }`.
+ *        Son absence bascule sur `membre.guild`.
  * @returns {Promise<{ removed: boolean }>} `removed` : le membre n'est plus sur
- *          le serveur du fait de l'anti-raid — l'événement `guildMemberAdd`
- *          s'arrête alors avant le message de bienvenue et les autorôles.
+ *          le serveur du fait de l'anti-raid — l'événement d'arrivée s'arrête
+ *          alors avant le message de bienvenue et les autorôles.
  */
-async function handleMemberJoin(member) {
+async function handleMemberJoin(membre, portee = null) {
     try {
-        const guild = member?.guild;
-        if (!guild || !member.id) return { removed: false };
+        const scope = resoudreScope(membre, portee);
+        if (!scope || !membre?.id) return { removed: false };
 
         // Un bot ne peut être ajouté que par quelqu'un ayant « Gérer le
         // serveur » : ce n'est pas une arrivée subie, et l'expulser à cause
         // d'une vague ou d'un âge de compte serait absurde. Il ne compte donc
         // pas non plus dans la fenêtre.
-        if (member.user?.bot) return { removed: false };
+        //
+        // `estBot` sur le membre normalisé ; `??` et non `||` : le champ neutre
+        // vaut `false` pour une personne, et le confondre avec « absent » ferait
+        // relire la forme historique pour rien.
+        if (membre.estBot ?? membre.user?.bot) return { removed: false };
 
-        const config = getConfig(guild.id);
+        const config = getConfig(scope.guildeId);
         if (!config || !config.enabled) return { removed: false };
 
         if (config.problems.length) {
-            reportProblems(guild.id, config.problems);
+            reportProblems(scope.guildeId, config.problems);
             return { removed: false };
         }
 
         const now = Date.now();
-        const wave = registerJoin(guild.id, member, { joinCount: config.joinCount, windowMs: config.windowMs }, now);
+        const wave = registerJoin(scope.guildeId, membre, { joinCount: config.joinCount, windowMs: config.windowMs }, now);
 
         if (wave.status === 'triggered') {
-            return await handleWave(guild, config, member, wave);
+            return await handleWave(scope, config, membre, wave);
         }
         if (wave.status === 'ongoing') {
             // La vague est déjà annoncée : on sanctionne l'arrivant sans
             // republier une alerte par personne.
             if (config.alertOnly) return { removed: false };
             const { removedCurrent } = await punishBatch(wave.batch, {
-                guild, config, currentMemberId: member.id,
+                scope, config, currentMemberId: membre.id,
                 reason: buildWaveReason(config),
             });
             return { removed: removedCurrent };
@@ -257,7 +305,7 @@ async function handleMemberJoin(member) {
             return { removed: false };
         }
 
-        return await handleAccountAge(guild, config, member, now);
+        return await handleAccountAge(scope, config, membre, now);
     } catch (err) {
         // Filet ultime. Une erreur d'anti-raid ne doit ni remonter en rejet non
         // capturé — l'API et le bot partagent le même processus — ni empêcher le
@@ -271,14 +319,14 @@ function buildWaveReason(config) {
     return `Anti-raid : ${config.joinCount} arrivées ou plus en moins de ${config.windowSeconds} secondes`;
 }
 
-async function handleWave(guild, config, member, wave) {
+async function handleWave(scope, config, member, wave) {
     const reason = buildWaveReason(config);
 
     let results = [];
     let removedCurrent = false;
     if (!config.alertOnly) {
         ({ results, removedCurrent } = await punishBatch(wave.batch, {
-            guild, config, reason, currentMemberId: member.id,
+            scope, config, reason, currentMemberId: member.id,
         }));
     }
 
@@ -291,14 +339,20 @@ async function handleWave(guild, config, member, wave) {
     // réversible sur le serveur, pas une sanction contre une personne, et c'est
     // souvent la seule mesure qu'un serveur veut au départ. Sa durée réglée à 0
     // le désactive.
-    const panicResult = await panic.enterPanic(guild, {
+    //
+    // ⚠️ `panic.js` appartient à un autre lot. On lui transmet la cible TELLE
+    // QU'ON L'A REÇUE — portée neutre ou guilde discord.js —, sans rien
+    // adapter : le jour où il devient bi-format comme `punishments.js`, il n'y a
+    // rien à changer ici. En attendant, une vague détectée par la voie neutre
+    // verra son mode panique refusé, et le dira dans l'alerte ci-dessous.
+    const panicResult = await panic.enterPanic(scope.cible, {
         durationSeconds: config.panicSeconds,
         reason,
         triggeredBy: 'detection',
         logChannelId: config.logChannelId,
     }).catch(err => ({ ok: false, error: err?.message || 'Erreur inconnue.' }));
 
-    await sendWaveAlert(guild, config, {
+    await sendWaveAlert(scope, config, {
         size: wave.size,
         punishedCount: wave.batch.length,
         outcome: describeResults(results),
@@ -308,10 +362,14 @@ async function handleWave(guild, config, member, wave) {
     return { removed: removedCurrent };
 }
 
-async function handleAccountAge(guild, config, member, now) {
+async function handleAccountAge(scope, config, member, now) {
     if (!config.minAccountAgeMs) return { removed: false };
 
-    const createdAt = member.user?.createdTimestamp;
+    // Date de création du COMPTE, à ne pas confondre avec l'arrivée sur le
+    // serveur. `compteCreeLe` sur le membre normalisé (l'adaptateur la déduit du
+    // snowflake au besoin, la convention lui appartient) ;
+    // `user.createdTimestamp` sur la voie historique.
+    const createdAt = member.compteCreeLe ?? member.user?.createdTimestamp;
     // Horodatage absent (cache partiel, structure incomplète) : on ne devine
     // pas un âge, et surtout on ne sanctionne pas sur une supposition.
     if (!Number.isFinite(createdAt)) return { removed: false };
@@ -323,12 +381,12 @@ async function handleAccountAge(guild, config, member, now) {
     const reason = `Anti-raid : compte créé il y a ${ageHours} h, minimum exigé ${config.accountAgeHours} h`;
 
     if (config.alertOnly) {
-        await sendAccountAgeAlert(guild, config, member, ageHours);
+        await sendAccountAgeAlert(scope, config, member, ageHours);
         return { removed: false };
     }
 
     const { removedCurrent } = await punishBatch([member], {
-        guild, config, reason, currentMemberId: member.id,
+        scope, config, reason, currentMemberId: member.id,
     });
     return { removed: removedCurrent };
 }

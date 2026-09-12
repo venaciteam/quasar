@@ -1,50 +1,46 @@
-// ⚠️ NON MIGRÉ AU LOT 3.
-//
-// Mêmes manques que guildMemberAdd.js, dont ce handler est le symétrique :
-// l'avatar du membre, `user.tag` et `membreCount` sont absents du payload neutre
-// de `membreParti`, et `{username}` n'a pas d'équivalent exact dans `membre.nom`.
-// Pas d'anti-raid ici, en revanche : ce fichier se débloquera dès que le contrat
-// portera ces trois champs. Signatures proposées dans le compte-rendu du lot 3.
-const { EmbedBuilder } = require('discord.js');
-const { getDb } = require('../../api/services/database');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { resolveVariables, buildEmbed } = require('../utils/welcomeMessage');
 const { sendLog } = require('../utils/logger');
 
-module.exports = {
-    name: 'guildMemberRemove',
-    once: false,
-    async execute(member) {
-        const db = getDb();
-        const config = db.prepare('SELECT * FROM welcome_config WHERE guild_id = ?').get(member.guild.id);
+// Même taille qu'à l'arrivée : les deux lignes de journal se lisent côte à côte.
+const TAILLE_AVATAR_LOG = 64;
+
+module.exports = definirEvenement({
+    nom: 'membreParti',
+
+    async executer(ctx, membre, guilde) {
+        const portee = { guildeId: guilde?.id ?? null, guilde, api: ctx.api, moi: ctx.moi };
+        const db = ctx.db;
+        const config = db.prepare('SELECT * FROM welcome_config WHERE guild_id = ?').get(guilde.id);
 
         // Log membre quitte
-        const logEmbed = new EmbedBuilder()
-            .setTitle('📤 Membre parti')
-            .setColor(0xe74c3c)
-            .setThumbnail(member.user.displayAvatarURL({ size: 64 }))
-            .addFields(
-                { name: 'Membre', value: `${member.user.tag}`, inline: true },
-                { name: 'Membres', value: `${member.guild.memberCount}`, inline: true }
-            )
-            .setTimestamp();
-        await sendLog(member.guild, 'member_leave', logEmbed);
+        await sendLog(portee, 'member_leave', embed({
+            titre: '📤 Membre parti',
+            couleur: 0xe74c3c,
+            vignette: membre.avatar(TAILLE_AVATAR_LOG),
+            champs: [
+                { nom: 'Membre', valeur: `${membre.etiquette}`, enLigne: true },
+                { nom: 'Membres', valeur: `${guilde.membreCount}`, enLigne: true },
+            ],
+            horodatage: true,
+        }));
 
         if (!config || !config.leave_enabled || !config.leave_channel) return;
 
-        const channel = member.guild.channels.cache.get(config.leave_channel);
-        if (!channel) return;
-
-        const embed = buildEmbed(config.leave_embed, member);
-        const content = config.leave_message ? resolveVariables(config.leave_message, member) : null;
+        const apercu = buildEmbed(config.leave_embed, membre, guilde);
+        const contenu = config.leave_message ? resolveVariables(config.leave_message, membre, guilde) : null;
 
         try {
-            if (embed) {
-                await channel.send({ content: content || undefined, embeds: [embed] });
-            } else if (content) {
-                await channel.send({ content });
+            // Comme à l'arrivée : le salon n'est plus relu dans un cache avant
+            // l'envoi, un salon supprimé ressort donc en erreur attrapée ici.
+            if (apercu) {
+                await ctx.api.envoyerMessage(config.leave_channel, { contenu: contenu || undefined, embeds: [apercu] });
+            } else if (contenu) {
+                await ctx.api.envoyerMessage(config.leave_channel, contenu);
             }
         } catch (e) {
             console.error('[Quasar] Erreur message leave:', e.message);
         }
-    }
-};
+    },
+});

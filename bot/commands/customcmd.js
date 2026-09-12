@@ -575,11 +575,19 @@ function versErreurNeutre({ title, cause, action }) {
 }
 
 // ⚠️ Les quatre fonctions qui suivent enregistrent et retirent une commande
-// d'application auprès de Discord. Le contrat neutre n'a AUCUN équivalent, et
-// pour une bonne raison : Fluxer n'a pas d'interactions, donc pas de commandes à
-// enregistrer. Elles restent donc en discord.js brut, et sont appelées telles
-// quelles par api/routes/customcmds.js — hors périmètre du lot 3. Voir le
-// compte-rendu : la signature proposée est `adaptateur.deployerCommandeServeur`.
+// d'application auprès de Discord. Le contrat les porte désormais —
+// `adaptateur.deployerCommandeServeur()` et `adaptateur.retirerCommandeServeur()`,
+// inertes là où `capacites.interactions` est faux — mais elles restent
+// INATTEIGNABLES d'ici, et ce n'est pas un oubli de migration :
+//
+//   • le contexte d'une commande n'expose ni l'adaptateur ni ces deux méthodes ;
+//   • `api/routes/customcmds.js`, qui appelle les mêmes fonctions, ne reçoit ni
+//     adaptateur ni client — `createApi()` ne reçoit que le client natif.
+//
+// `resolvePlatform()` n'est pas une issue : il INSTANCIE un adaptateur, donc un
+// second client discord.js. Elles gardent donc leur client REST monté sur les
+// variables d'environnement, seule voie qui fonctionne des deux côtés. Les deux
+// signatures manquantes sont consignées au compte-rendu du lot 3.
 
 /** Client REST Discord, construit à la demande (le token n'est lu qu'à l'appel). */
 // TRANSITION : format historique, à retirer au lot de consolidation
