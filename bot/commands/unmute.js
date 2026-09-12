@@ -1,58 +1,59 @@
-// ⚠️ NON MIGRÉE AU LOT 1 — il manque un champ au contrat neutre.
-//
-// Le garde « ce membre n'est pas exclu » lit `communicationDisabledUntilTimestamp`,
-// que `normaliserMembre` (bot/platform/discord/context.js) n'expose pas. Sans un
-// `timeoutJusqua` au membre normalisé, la commande annoncerait une levée
-// d'exclusion là où il n'y en avait aucune. Voir le compte-rendu du lot 1.
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { userError } = require('../utils/errors');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('unmute')
-        .setDescription('Unmute un membre')
-        .addUserOption(opt => opt.setName('membre').setDescription('Le membre à unmute').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+module.exports = definirCommande({
+    nom: 'unmute',
+    description: 'Unmute un membre',
+    permission: 'MODERATE_MEMBERS',
+    permissionsBot: ['MODERATE_MEMBERS'],
 
-    async execute(interaction) {
-        const target = interaction.options.getUser('membre');
-        const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+    options: [
+        { nom: 'membre', type: 'utilisateur', requis: true, description: 'Le membre à unmute' },
+    ],
 
-        if (!member) {
-            return userError(interaction, {
-                title: 'Membre introuvable',
+    async executer(ctx) {
+        const cible = ctx.options.get('membre');
+        const membre = await ctx.api.obtenirMembre(ctx.guildeId, cible.id);
+
+        if (!membre) {
+            return ctx.erreurUtilisateur({
+                titre: 'Membre introuvable',
                 cause: 'Cette personne n\'est plus sur le serveur.',
                 action: 'Vérifiez qu\'elle en est toujours membre.',
             });
         }
 
-        if (!member.communicationDisabledUntilTimestamp) {
-            return userError(interaction, {
-                title: 'Ce membre n\'est pas exclu',
+        // `timeoutJusqua` porte l'échéance de l'exclusion, ou null. Sans ce
+        // garde, la commande annoncerait une levée là où il n'y avait rien à
+        // lever — l'exclusion a souvent simplement expiré.
+        if (!membre.timeoutJusqua) {
+            return ctx.erreurUtilisateur({
+                titre: 'Ce membre n\'est pas exclu',
                 cause: 'Aucune exclusion temporaire n\'est en cours pour cette personne — elle a peut-être déjà expiré.',
                 action: 'Aucune action nécessaire.',
             });
         }
 
         try {
-            await member.timeout(null);
-        } catch (e) {
-            return userError(interaction, {
-                title: 'Je ne peux pas lever cette exclusion',
+            // Une échéance nulle LÈVE l'exclusion : c'est la même méthode que
+            // pour la poser, dans l'autre sens.
+            await ctx.api.appliquerTimeout(ctx.guildeId, cible.id, null);
+        } catch {
+            return ctx.erreurUtilisateur({
+                titre: 'Je ne peux pas lever cette exclusion',
                 cause: 'Soit il me manque la permission **Exclure temporairement des membres**, soit ce membre a un rôle situé au-dessus du mien.',
                 action: 'Vérifiez mes permissions, et placez mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
             });
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle('🔊 Unmute')
-            .setColor(0x2ecc71)
-            .addFields(
-                { name: 'Membre', value: `${target} (${target.tag})`, inline: true },
-                { name: 'Unmute par', value: `${interaction.user}`, inline: true }
-            )
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
-    }
-};
+        await ctx.repondre(embed({
+            titre: '🔊 Unmute',
+            couleur: 0x2ecc71,
+            champs: [
+                { nom: 'Membre', valeur: `${cible.mention} (${cible.etiquette})`, enLigne: true },
+                { nom: 'Unmute par', valeur: ctx.auteur.mention, enLigne: true },
+            ],
+            horodatage: true,
+        }));
+    },
+});

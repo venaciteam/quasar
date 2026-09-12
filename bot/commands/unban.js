@@ -1,49 +1,53 @@
-// ⚠️ NON MIGRÉE AU LOT 1 — il manque une pièce au contrat neutre.
-//
-// L'embed de confirmation affiche l'étiquette de la personne débannie
-// (`ban.user.tag`), lue par `guild.bans.fetch()`. Le client REST normalisé
-// (DA §4.3) ne sait pas lire un bannissement : il sait seulement en poser un et
-// le lever. Sans `api.obtenirBannissement(guildeId, utilisateurId)`, la
-// migration perdrait ce champ — donc l'information qui permet de vérifier qu'on
-// a bien débanni la bonne personne. Voir le compte-rendu du lot 1.
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { reportIncident, userError } = require('../utils/errors');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
+const { CODES_NEUTRES, codeNeutre } = require('../platform/erreurs');
+const { reportIncident } = require('../utils/errors');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('unban')
-        .setDescription('Débannir un utilisateur')
-        .addStringOption(opt => opt.setName('id').setDescription('L\'ID de l\'utilisateur à débannir').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+module.exports = definirCommande({
+    nom: 'unban',
+    description: 'Débannir un utilisateur',
+    permission: 'BAN_MEMBERS',
+    permissionsBot: ['BAN_MEMBERS'],
 
-    async execute(interaction) {
-        const userId = interaction.options.getString('id');
+    options: [
+        { nom: 'id', type: 'texte', requis: true, description: 'L\'ID de l\'utilisateur à débannir' },
+    ],
+
+    async executer(ctx) {
+        const userId = ctx.options.get('id');
 
         try {
-            const ban = await interaction.guild.bans.fetch(userId);
-            await interaction.guild.members.unban(userId);
+            // Le bannissement est LU avant d'être levé : c'est lui qui porte
+            // l'étiquette affichée en retour, seule façon de vérifier qu'on a
+            // bien débanni la personne visée et pas un identifiant voisin.
+            const bannissement = await ctx.api.obtenirBannissement(ctx.guildeId, userId);
+            if (!bannissement) return pasBanni(ctx);
 
-            const embed = new EmbedBuilder()
-                .setTitle('✅ Débannissement')
-                .setColor(0x2ecc71)
-                .addFields(
-                    { name: 'Utilisateur', value: `${ban.user.tag} (${userId})`, inline: true },
-                    { name: 'Débanni par', value: `${interaction.user}`, inline: true }
-                )
-                .setTimestamp();
+            await ctx.api.debannirMembre(ctx.guildeId, userId);
 
-            await interaction.reply({ embeds: [embed] });
+            await ctx.repondre(embed({
+                titre: '✅ Débannissement',
+                couleur: 0x2ecc71,
+                champs: [
+                    { nom: 'Utilisateur', valeur: `${bannissement.utilisateur.etiquette} (${userId})`, enLigne: true },
+                    { nom: 'Débanni par', valeur: ctx.auteur.mention, enLigne: true },
+                ],
+                horodatage: true,
+            }));
         } catch (e) {
-            // Discord renvoie 10026 (Unknown Ban) quand l'identifiant n'est pas banni :
-            // c'est le cas courant, pas un incident. Le reste est un vrai problème.
-            if (e?.code === 10026) {
-                return userError(interaction, {
-                    title: 'Cette personne n\'est pas bannie',
-                    cause: 'Aucun bannissement en cours ne correspond à cet identifiant sur ce serveur.',
-                    action: 'Vérifiez l\'identifiant dans Paramètres du serveur → Bannissements. Il s\'agit de l\'identifiant Discord, pas du pseudo.',
-                });
-            }
-            return reportIncident(interaction, e, { command: '/unban' });
+            // « Déjà fait » est le cas courant, pas un incident : quelqu'un a levé
+            // le bannissement entre la lecture et la levée. Le reste est un vrai
+            // problème.
+            if (codeNeutre(e) === CODES_NEUTRES.deja_fait) return pasBanni(ctx);
+            return reportIncident(ctx, e, { command: '/unban' });
         }
-    }
-};
+    },
+});
+
+function pasBanni(ctx) {
+    return ctx.erreurUtilisateur({
+        titre: 'Cette personne n\'est pas bannie',
+        cause: 'Aucun bannissement en cours ne correspond à cet identifiant sur ce serveur.',
+        action: 'Vérifiez l\'identifiant dans Paramètres du serveur → Bannissements. Il s\'agit de l\'identifiant Discord, pas du pseudo.',
+    });
+}

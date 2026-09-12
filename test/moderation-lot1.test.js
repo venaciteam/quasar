@@ -2,7 +2,7 @@
 //
 // Ce que ce fichier doit tenir, dans cet ordre d'importance :
 //
-//  1. LE JSON DÉPLOYÉ NE BOUGE PAS. Les neuf commandes migrées tournent sur une
+//  1. LE JSON DÉPLOYÉ NE BOUGE PAS. Les douze commandes migrées tournent sur une
 //     instance en production. Les références ci-dessous ont été relevées sur les
 //     `SlashCommandBuilder` d'origine AVANT migration (`git show dev:<fichier>`,
 //     puis `data.toJSON()`), et sont écrites en dur : les recalculer depuis le
@@ -81,12 +81,8 @@ function faireContexte(descripteur, valeurs = {}, { api = {} } = {}) {
     const suites = [];
     const erreurs = [];
     const appels = [];
+    const differe = [];
     const declarees = new Set((descripteur.options || []).map(o => o.nom));
-
-    const tracer = (nom, resultat) => (...args) => {
-        appels.push([nom, ...args]);
-        return typeof resultat === 'function' ? resultat(...args) : resultat;
-    };
 
     const ctx = {
         plateforme: 'discord',
@@ -103,6 +99,7 @@ function faireContexte(descripteur, valeurs = {}, { api = {} } = {}) {
         suites,
         erreurs,
         appels,
+        differe,
         options: {
             get(nom) {
                 if (!declarees.has(nom)) throw new Error(`Option « ${nom} » non déclarée par /${descripteur.nom}.`);
@@ -114,12 +111,19 @@ function faireContexte(descripteur, valeurs = {}, { api = {} } = {}) {
             async obtenirMembre() { return { id: CIBLE, roles: [] }; },
             async verifierMembreSanctionnable() { return null; },
             async obtenirCanal(id) { return { id, parentId: null }; },
-            async envoyerMessage(...a) { return tracer('envoyerMessage')(...a); },
-            async exclureMembre(...a) { return tracer('exclureMembre')(...a); },
-            async bannirMembre(...a) { return tracer('bannirMembre')(...a); },
-            async appliquerTimeout(...a) { return tracer('appliquerTimeout')(...a); },
+            async envoyerMessage() {},
+            async exclureMembre() {},
+            async bannirMembre() {},
+            async appliquerTimeout() {},
+            async debannirMembre() {},
+            async obtenirBannissement() { return { utilisateur: utilisateur(CIBLE), raison: 'Raid' }; },
+            async listerMessages() { return []; },
+            async supprimerMessagesEnLot(canalId, ids) { return { supprimes: ids.length, ignores: 0 }; },
             ...api,
         },
+        // `differer` enregistre l'ordre d'appel : c'est ce qui prouve que /clear
+        // acquitte AVANT de travailler, et pas après.
+        async differer(options = {}) { differe.push(options); appels.push(['differer', options]); },
         async repondre(contenu, options = {}) { reponses.push({ contenu, options }); },
         async suivre(contenu) { suites.push(contenu); },
         erreurUtilisateur(spec) { erreurs.push(spec); },
@@ -235,6 +239,40 @@ const REFERENCES = {
         default_member_permissions: '8',
         type: 1,
     },
+    unban: {
+        options: [
+            { type: 3, name: 'id', description: 'L\'ID de l\'utilisateur à débannir', required: true },
+        ],
+        name: 'unban',
+        description: 'Débannir un utilisateur',
+        default_member_permissions: '4',
+        type: 1,
+    },
+    unmute: {
+        options: [
+            { name: 'membre', description: 'Le membre à unmute', required: true, type: 6 },
+        ],
+        name: 'unmute',
+        description: 'Unmute un membre',
+        default_member_permissions: '1099511627776',
+        type: 1,
+    },
+    clear: {
+        options: [
+            {
+                max_value: 100, min_value: 1, type: 4, name: 'nombre',
+                description: 'Nombre de messages à supprimer (1-100)', required: true,
+            },
+            {
+                name: 'membre', description: 'Supprimer uniquement les messages de ce membre',
+                required: false, type: 6,
+            },
+        ],
+        name: 'clear',
+        description: 'Supprimer des messages',
+        default_member_permissions: '8192',
+        type: 1,
+    },
 };
 
 for (const [nom, reference] of Object.entries(REFERENCES)) {
@@ -251,7 +289,11 @@ test('chaque commande migrée déclare les permissions dont le BOT a besoin', ()
     // base et répondre.
     const attendu = {
         warn: [], warns: [], unwarn: [], sanctions: [],
-        kick: ['KICK_MEMBERS'], ban: ['BAN_MEMBERS'], mute: ['MODERATE_MEMBERS'],
+        kick: ['KICK_MEMBERS'], ban: ['BAN_MEMBERS'], unban: ['BAN_MEMBERS'],
+        mute: ['MODERATE_MEMBERS'], unmute: ['MODERATE_MEMBERS'],
+        // Lire l'historique est aussi nécessaire que supprimer : sans
+        // READ_MESSAGE_HISTORY, il n'y a rien à passer à la suppression en lot.
+        clear: ['MANAGE_MESSAGES', 'READ_MESSAGE_HISTORY'],
         log: [], unlog: [],
     };
     for (const [nom, permissions] of Object.entries(attendu)) {
@@ -269,11 +311,19 @@ test('les commandes de modération migrées sont bien reconnues comme neutres', 
     for (const nom of Object.keys(REFERENCES)) {
         assert.equal(parNom.get(nom)?.neutre, true, `/${nom} doit être un descripteur neutre`);
     }
-    // Les trois que le contrat ne permet pas encore de migrer (voir le
-    // compte-rendu du lot 1) restent au format historique, et le chargeur doit
-    // continuer de les accepter.
-    for (const nom of ['unban', 'unmute', 'clear']) {
-        assert.equal(parNom.get(nom)?.neutre, false, `/${nom} n'est pas encore migrable`);
+});
+
+test('les trois événements de modération sont des descripteurs neutres', () => {
+    const { estDescripteurEvenement } = require('../bot/platform/events');
+    const attendu = {
+        messageDelete: 'messageSupprime',
+        messageUpdate: 'messageModifie',
+        guildMemberUpdate: 'membreModifie',
+    };
+    for (const [fichier, nomNeutre] of Object.entries(attendu)) {
+        const mod = require(`../bot/events/${fichier}`);
+        assert.equal(estDescripteurEvenement(mod), true, `${fichier} n'est pas un descripteur neutre`);
+        assert.equal(mod.nom, nomNeutre);
     }
 });
 
@@ -282,6 +332,8 @@ test('plus aucune commande de modération migrée n\'importe discord.js', () => 
     const racine = path.join(__dirname, '..', 'bot');
     const fichiers = [
         ...Object.keys(REFERENCES).map(n => path.join(racine, 'commands', `${n}.js`)),
+        ...['messageDelete', 'messageUpdate', 'guildMemberUpdate']
+            .map(n => path.join(racine, 'events', `${n}.js`)),
         path.join(racine, 'utils', 'warnEscalation.js'),
         path.join(racine, 'utils', 'modlog.js'),
     ];
@@ -583,8 +635,343 @@ test('/unwarn retire un avertissement, et refuse deux fois le même', async () =
     assert.equal(inconnu.erreurs[0].titre, 'Avertissement introuvable');
 });
 
+test('/unban — le bannissement est LU avant d\'être levé, et son absence est une erreur d\'usage', async () => {
+    const descripteur = require('../bot/commands/unban');
+
+    const ctx = faireContexte(descripteur, { id: CIBLE });
+    await descripteur.executer(ctx);
+
+    assert.deepEqual(dernierEmbed(ctx), {
+        title: '✅ Débannissement',
+        color: 0x2ecc71,
+        fields: [
+            { name: 'Utilisateur', value: `jean#0 (${CIBLE})`, inline: true },
+            { name: 'Débanni par', value: `<@${MODO}>`, inline: true },
+        ],
+    });
+    // La lecture précède la levée : sans elle, l'embed ne pourrait pas nommer la
+    // personne, et on ne saurait pas qu'on a visé le bon identifiant.
+    const ordre = ctx.appels.map(([nom]) => nom);
+    assert.ok(ordre.indexOf('obtenirBannissement') < ordre.indexOf('debannirMembre'));
+    assert.deepEqual(ctx.appels.find(([nom]) => nom === 'debannirMembre'), ['debannirMembre', GUILDE, CIBLE]);
+
+    // Aucun bannissement : `obtenirBannissement` rend null, et rien n'est levé.
+    const libre = faireContexte(descripteur, { id: CIBLE }, {
+        api: { async obtenirBannissement() { return null; } },
+    });
+    await descripteur.executer(libre);
+    assert.equal(libre.erreurs[0].titre, 'Cette personne n\'est pas bannie');
+    assert.equal(libre.appels.some(([nom]) => nom === 'debannirMembre'), false);
+
+    // Course : quelqu'un lève le bannissement entre la lecture et la levée. Ce
+    // n'est pas un incident, c'est le même message.
+    const course = faireContexte(descripteur, { id: CIBLE }, {
+        api: { async debannirMembre() { throw erreurApi(10026); } },
+    });
+    await descripteur.executer(course);
+    assert.equal(course.erreurs[0].titre, 'Cette personne n\'est pas bannie');
+});
+
+test('/unmute — le garde « pas exclu » lit timeoutJusqua, la levée passe une échéance nulle', async () => {
+    const descripteur = require('../bot/commands/unmute');
+
+    const ctx = faireContexte(descripteur, { membre: utilisateur(CIBLE) }, {
+        api: { async obtenirMembre() { return { id: CIBLE, roles: [], timeoutJusqua: Date.now() + 60000 }; } },
+    });
+    await descripteur.executer(ctx);
+
+    assert.deepEqual(ctx.appels.find(([nom]) => nom === 'appliquerTimeout'),
+        ['appliquerTimeout', GUILDE, CIBLE, null]);
+    assert.deepEqual(dernierEmbed(ctx), {
+        title: '🔊 Unmute',
+        color: 0x2ecc71,
+        fields: [
+            { name: 'Membre', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Unmute par', value: `<@${MODO}>`, inline: true },
+        ],
+    });
+
+    // Aucune exclusion en cours : annoncer une levée laisserait croire à une
+    // action qui n'a pas eu lieu.
+    const libre = faireContexte(descripteur, { membre: utilisateur(CIBLE) }, {
+        api: { async obtenirMembre() { return { id: CIBLE, roles: [], timeoutJusqua: null }; } },
+    });
+    await descripteur.executer(libre);
+    assert.equal(libre.erreurs[0].titre, 'Ce membre n\'est pas exclu');
+    assert.equal(libre.appels.some(([nom]) => nom === 'appliquerTimeout'), false);
+
+    const parti = faireContexte(descripteur, { membre: utilisateur(CIBLE) }, {
+        api: { async obtenirMembre() { return null; } },
+    });
+    await descripteur.executer(parti);
+    assert.equal(parti.erreurs[0].titre, 'Membre introuvable');
+
+    const refuse = faireContexte(descripteur, { membre: utilisateur(CIBLE) }, {
+        api: {
+            async obtenirMembre() { return { id: CIBLE, roles: [], timeoutJusqua: Date.now() + 60000 }; },
+            async appliquerTimeout() { throw erreurApi(50013); },
+        },
+    });
+    await descripteur.executer(refuse);
+    assert.equal(refuse.erreurs[0].titre, 'Je ne peux pas lever cette exclusion');
+});
+
+test('/clear — l\'interaction est acquittée AVANT le travail, et en éphémère', async () => {
+    const descripteur = require('../bot/commands/clear');
+    const ctx = faireContexte(descripteur, { nombre: 5 }, {
+        api: {
+            async listerMessages(canalId, options) {
+                return Array.from({ length: options.limite }, (_, i) => ({ id: `M${i}`, auteur: utilisateur(CIBLE) }));
+            },
+        },
+    });
+
+    await descripteur.executer(ctx);
+
+    // C'est tout l'objet de `ctx.differer` : lire cent messages puis les
+    // supprimer dépasse les trois secondes que la plateforme laisse pour
+    // répondre. Sans lui, la purge aurait lieu et la commande paraîtrait cassée.
+    assert.deepEqual(ctx.differe, [{ ephemere: true }]);
+    assert.equal(ctx.appels[0][0], 'differer', 'l\'acquittement doit précéder tout appel');
+
+    assert.deepEqual(ctx.appels.find(([nom]) => nom === 'listerMessages'),
+        ['listerMessages', SALON, { limite: 5 }]);
+    assert.deepEqual(ctx.reponses.at(-1), {
+        contenu: '🗑️ **5** message(s) supprimé(s).',
+        options: {},
+    });
+});
+
+test('/clear — la purge ciblée relit 100 messages, filtre, puis tronque au nombre demandé', async () => {
+    const descripteur = require('../bot/commands/clear');
+    const ctx = faireContexte(descripteur, { nombre: 2, membre: utilisateur(CIBLE) }, {
+        api: {
+            async listerMessages() {
+                return [
+                    { id: 'M1', auteur: utilisateur(CIBLE) },
+                    { id: 'M2', auteur: utilisateur(MODO) },
+                    { id: 'M3', auteur: utilisateur(CIBLE) },
+                    { id: 'M4', auteur: utilisateur(CIBLE) },
+                ];
+            },
+        },
+    });
+
+    await descripteur.executer(ctx);
+
+    assert.deepEqual(ctx.appels.find(([nom]) => nom === 'listerMessages'),
+        ['listerMessages', SALON, { limite: 100 }]);
+    // Les messages des autres sont écartés, et on s'arrête au nombre demandé.
+    assert.deepEqual(ctx.appels.find(([nom]) => nom === 'supprimerMessagesEnLot'),
+        ['supprimerMessagesEnLot', SALON, ['M1', 'M3']]);
+    assert.equal(ctx.reponses.at(-1).contenu, `🗑️ **2** message(s) de <@${CIBLE}> supprimé(s).`);
+
+    // Personne n'a rien écrit : erreur d'usage, aucune suppression tentée.
+    const vide = faireContexte(descripteur, { nombre: 5, membre: utilisateur(CIBLE) }, {
+        api: { async listerMessages() { return [{ id: 'M1', auteur: utilisateur(MODO) }]; } },
+    });
+    await descripteur.executer(vide);
+    assert.equal(vide.erreurs[0].titre, 'Aucun message à supprimer');
+    assert.equal(vide.appels.some(([nom]) => nom === 'supprimerMessagesEnLot'), false);
+});
+
+test('/clear — un échec réel reste un incident, avec son code', async () => {
+    const descripteur = require('../bot/commands/clear');
+    const ctx = faireContexte(descripteur, { nombre: 5 }, {
+        api: { async listerMessages() { throw erreurApi(50013); } },
+    });
+
+    const journal = [];
+    const original = console.error;
+    console.error = (...a) => journal.push(a.join(' '));
+    try {
+        await descripteur.executer(ctx);
+    } finally {
+        console.error = original;
+    }
+    assert.match(journal.join('\n'), /\/clear/);
+});
+
 // ═══════════════════════════════════════════════════════════════
-//  3. sendModLog, bi-format
+//  3. Événements de journalisation
+// ═══════════════════════════════════════════════════════════════
+
+/** Active les types de log non-modération, désactivés par défaut. */
+function avecLogsActives(types, faire) {
+    const config = { logChannel: SALON_LOG, enabledLogs: Object.fromEntries(types.map(t => [t, true])) };
+    const ecrire = (c) => db.prepare('UPDATE modules SET config = ? WHERE guild_id = ? AND module_name = \'moderation\'')
+        .run(JSON.stringify(c), GUILDE);
+    ecrire(config);
+    return Promise.resolve(faire()).finally(() => ecrire({ logChannel: SALON_LOG }));
+}
+
+/** Contexte d'événement : volontairement plus pauvre que celui d'une commande. */
+function faireContexteEvenement() {
+    const envois = [];
+    return {
+        envois,
+        ctx: {
+            plateforme: 'discord',
+            capacites: { interactions: true },
+            moi: { id: BOT },
+            api: { async envoyerMessage(canalId, contenu) { envois.push([canalId, contenu]); } },
+            db,
+        },
+    };
+}
+
+test('messageSupprime — l\'embed liste les pièces jointes, seule trace qu\'il en reste', async () => {
+    const { normaliserMessage } = require('../bot/platform/discord/events');
+    const handler = require('../bot/events/messageDelete');
+    const { ctx, envois } = faireContexteEvenement();
+
+    // Payload construit par le NORMALISEUR réel, et non à la main : c'est la
+    // forme exacte que le handler recevra en production.
+    const message = normaliserMessage({
+        id: 'M1',
+        channelId: SALON,
+        guildId: GUILDE,
+        content: 'Message effacé',
+        author: { id: CIBLE, username: 'jean', tag: 'jean#0' },
+        attachments: [{ id: 'A1', filename: 'preuve.png', url: 'https://cdn/preuve.png', size: 42 }],
+    });
+
+    await avecLogsActives(['msg_delete'], () => handler.executer(ctx, message));
+
+    assert.equal(envois.length, 1);
+    assert.equal(envois[0][0], SALON_LOG);
+    assert.deepEqual(embedEnvoye(envois[0][1]), {
+        title: '🗑️ Message supprimé',
+        color: 0xe74c3c,
+        fields: [
+            { name: 'Auteur', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Channel', value: `<#${SALON}>`, inline: true },
+            { name: 'Contenu', value: 'Message effacé', inline: false },
+            { name: '📎 Pièces jointes', value: 'preuve.png', inline: false },
+        ],
+    });
+});
+
+test('messageSupprime — bot, message partiel et hors serveur restent ignorés', async () => {
+    const { normaliserMessage } = require('../bot/platform/discord/events');
+    const handler = require('../bot/events/messageDelete');
+
+    const cas = [
+        normaliserMessage({ id: 'M1', channelId: SALON, guildId: GUILDE, author: { id: BOT, bot: true } }),
+        normaliserMessage({ id: 'M2', channelId: SALON, guildId: GUILDE, partial: true }),
+        normaliserMessage({ id: 'M3', channelId: SALON }), // message privé : pas de serveur
+    ];
+
+    await avecLogsActives(['msg_delete'], async () => {
+        for (const message of cas) {
+            const { ctx, envois } = faireContexteEvenement();
+            await handler.executer(ctx, message);
+            assert.deepEqual(envois, [], `message ${message.id} journalisé à tort`);
+        }
+    });
+});
+
+test('messageModifie — l\'embed porte le lien du message, et une simple prévisualisation est ignorée', async () => {
+    const { normaliserMessage } = require('../bot/platform/discord/events');
+    const handler = require('../bot/events/messageUpdate');
+    const { ctx, envois } = faireContexteEvenement();
+
+    const base = { id: 'M1', channelId: SALON, guildId: GUILDE, author: { id: CIBLE, username: 'jean', tag: 'jean#0' } };
+    const avant = normaliserMessage({ ...base, content: 'avant' });
+    const apres = normaliserMessage({ ...base, content: 'après' });
+
+    await avecLogsActives(['msg_edit'], () => handler.executer(ctx, avant, apres));
+
+    assert.deepEqual(embedEnvoye(envois[0][1]), {
+        title: '✏️ Message modifié',
+        color: 0x3498db,
+        // Sans le lien, on lit un avant/après sans pouvoir aller voir le fil.
+        url: `https://discord.com/channels/${GUILDE}/${SALON}/M1`,
+        fields: [
+            { name: 'Auteur', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Channel', value: `<#${SALON}>`, inline: true },
+            { name: 'Avant', value: 'avant', inline: false },
+            { name: 'Après', value: 'après', inline: false },
+        ],
+    });
+
+    // Contenu identique : c'est l'aperçu d'un lien qui se déplie, pas une édition.
+    const apercu = faireContexteEvenement();
+    await avecLogsActives(['msg_edit'], () => handler.executer(apercu.ctx, avant, normaliserMessage({ ...base, content: 'avant' })));
+    assert.deepEqual(apercu.envois, []);
+});
+
+test('membreModifie — le serveur vient du troisième argument, et les rôles des identifiants', async () => {
+    const { EVENEMENTS } = require('../bot/platform/discord/events');
+    const handler = require('../bot/events/guildMemberUpdate');
+    const [, normaliser] = EVENEMENTS.membreModifie;
+
+    const membre = (nickname, roles) => ({
+        id: CIBLE,
+        nickname,
+        roles: { cache: new Map(roles.map(r => [r, { id: r }])) },
+        user: { id: CIBLE, username: 'jean', tag: 'jean#0', bot: false },
+        guild: { id: GUILDE, name: 'Serveur de test', ownerId: PROPRIETAIRE },
+        displayAvatarURL: ({ size }) => `https://cdn/avatar.png?size=${size}`,
+        permissions: { has: () => false },
+    });
+
+    const { ctx, envois } = faireContexteEvenement();
+    // Pseudo ET rôles changent d'un coup : les deux journaux doivent partir.
+    const payload = normaliser(membre('Jean', ['R1', 'R2']), membre('Jeanne', ['R2', 'R3']));
+
+    await avecLogsActives(['member_nick', 'member_roles'], () => handler.executer(ctx, ...payload));
+
+    assert.equal(envois.length, 3, 'pseudo, rôle ajouté et rôle retiré');
+    // Le serveur ne figure pas dans le membre normalisé : sans le troisième
+    // argument du payload, aucun de ces trois journaux ne saurait où aller.
+    for (const [canalId] of envois) assert.equal(canalId, SALON_LOG);
+
+    assert.deepEqual(embedEnvoye(envois[0][1]), {
+        title: '✏️ Changement de pseudo',
+        color: 0x3498db,
+        thumbnail: { url: 'https://cdn/avatar.png?size=64' },
+        fields: [
+            { name: 'Membre', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Avant', value: 'Jean', inline: true },
+            { name: 'Après', value: 'Jeanne', inline: true },
+        ],
+    });
+    assert.deepEqual(embedEnvoye(envois[1][1]), {
+        title: '🎭 Rôle(s) ajouté(s)',
+        color: 0x2ecc71,
+        thumbnail: { url: 'https://cdn/avatar.png?size=64' },
+        fields: [
+            { name: 'Membre', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Rôle(s)', value: '<@&R3>', inline: true },
+        ],
+    });
+    assert.deepEqual(embedEnvoye(envois[2][1]), {
+        title: '🎭 Rôle(s) retiré(s)',
+        color: 0xe74c3c,
+        thumbnail: { url: 'https://cdn/avatar.png?size=64' },
+        fields: [
+            { name: 'Membre', value: `<@${CIBLE}> (jean#0)`, inline: true },
+            { name: 'Rôle(s)', value: '<@&R1>', inline: true },
+        ],
+    });
+
+    // Un bot n'est jamais journalisé, et un changement sans effet ne produit rien.
+    const bot = faireContexteEvenement();
+    const membreBot = membre('X', ['R1']);
+    membreBot.user.bot = true;
+    await avecLogsActives(['member_nick', 'member_roles'],
+        () => handler.executer(bot.ctx, ...normaliser(membreBot, membreBot)));
+    assert.deepEqual(bot.envois, []);
+
+    const inchange = faireContexteEvenement();
+    await avecLogsActives(['member_nick', 'member_roles'],
+        () => handler.executer(inchange.ctx, ...normaliser(membre('Jean', ['R1']), membre('Jean', ['R1']))));
+    assert.deepEqual(inchange.envois, []);
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  4. sendModLog, bi-format
 // ═══════════════════════════════════════════════════════════════
 
 /** Guilde discord.js réduite, avec capture de ce qui part dans le salon de logs. */
@@ -661,7 +1048,7 @@ test('sendModLog — sans type de log, rien n\'est envoyé nulle part', async ()
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  4. Codes d'erreur neutres dans punishments.js
+//  5. Codes d'erreur neutres et pré-contrôles dans punishments.js
 // ═══════════════════════════════════════════════════════════════
 
 test('describeError raisonne sur le code NEUTRE, pas sur le numéro Discord', () => {
@@ -725,6 +1112,145 @@ test('describeError garde les phrases d\'origine pour une erreur NON marquée', 
     assert.equal(resultat.error, 'Permission manquante côté bot.');
 });
 
+test('la voie neutre refuse une sanction AVANT de la tenter, comme la voie historique', async () => {
+    // Sans ce pré-contrôle, la sanction partait, la plateforme la refusait, et
+    // `describeError` rendait « Permission manquante côté bot. » — ce qui envoie
+    // vérifier les permissions alors que le problème est la hiérarchie des rôles
+    // une fois sur deux.
+    const { applyPunishments } = require('../bot/utils/punishments');
+
+    const portee = (refus) => ({
+        guildeId: GUILDE,
+        moi: { id: BOT },
+        api: {
+            async envoyerMessage() {},
+            async verifierMembreSanctionnable() { return refus; },
+            async obtenirMembre() { return { id: BOT, aPermission: () => true }; },
+            async appliquerTimeout() { throw new Error('ne doit pas être tenté'); },
+            async exclureMembre() { throw new Error('ne doit pas être tenté'); },
+            async bannirMembre() { throw new Error('ne doit pas être tenté'); },
+        },
+    });
+
+    const attendu = {
+        timeout: 'Hiérarchie des rôles ou permission « Exclure temporairement » manquante.',
+        kick: 'Hiérarchie des rôles ou permission « Expulser des membres » manquante.',
+        ban: 'Hiérarchie des rôles ou permission « Bannir des membres » manquante.',
+    };
+
+    for (const [action, message] of Object.entries(attendu)) {
+        for (const refus of ['hierarchie', 'permission']) {
+            const [resultat] = await applyPunishments([{ action, durationMs: 60000 }], {
+                portee: portee(refus),
+                member: { id: CIBLE },
+                reason: 'test',
+                source: 'automod',
+                moderatorId: BOT,
+            });
+            assert.equal(resultat.ok, false, `${action} / ${refus}`);
+            // Une seule phrase pour les deux causes : c'est ce que la voie
+            // historique annonce, et le changer changerait ce que lit une
+            // personne qui modère.
+            assert.equal(resultat.error, message, `${action} / ${refus}`);
+        }
+    }
+});
+
+test('le pré-contrôle neutre n\'invente jamais un refus', async () => {
+    const { applyPunishments } = require('../bot/utils/punishments');
+    const tentees = [];
+
+    // Trois façons de ne pas savoir, aucune n'est un refus :
+    //   • réponse indéterminable (membre illisible, identité du bot hors cache) ;
+    //   • appel en panne ;
+    //   • portée qui n'expose pas la méthode — une portée n'est reconnue qu'à son
+    //     `api.envoyerMessage`, et l'appel lèverait alors de façon SYNCHRONE,
+    //     hors de portée d'un `.catch()`, pour ressortir en
+    //     « verifierMembreSanctionnable is not a function ».
+    const verificateurs = [
+        async () => null,
+        async () => { throw new Error('API injoignable'); },
+        undefined,
+    ];
+
+    for (const verifier of verificateurs) {
+        const api = {
+            async envoyerMessage() {},
+            async exclureMembre(...a) { tentees.push(a); },
+        };
+        if (verifier) api.verifierMembreSanctionnable = verifier;
+
+        const [resultat] = await applyPunishments([{ action: 'kick' }], {
+            portee: { guildeId: GUILDE, moi: { id: BOT }, api },
+            member: { id: CIBLE },
+            reason: 'test',
+            source: 'automod',
+            moderatorId: BOT,
+        });
+        assert.equal(resultat.ok, true, `verificateur ${String(verifier)}`);
+    }
+    assert.equal(tentees.length, verificateurs.length, 'chaque sanction devait être tentée');
+});
+
+test('un membre déjà parti reste bannissable : pas de contrôle de hiérarchie sur personne', async () => {
+    // Cas le plus fréquent en anti-raid. `verifierMembreSanctionnable` ne doit
+    // même pas être appelé : il n'y a plus de membre à situer dans la hiérarchie.
+    const { applyPunishments } = require('../bot/utils/punishments');
+    const bannis = [];
+
+    const [resultat] = await applyPunishments([{ action: 'ban' }], {
+        portee: {
+            guildeId: GUILDE,
+            moi: { id: BOT },
+            api: {
+                async envoyerMessage() {},
+                async verifierMembreSanctionnable() { throw new Error('ne doit pas être appelé'); },
+                async obtenirMembre() { return { id: BOT, aPermission: () => true }; },
+                async bannirMembre(...a) { bannis.push(a); },
+            },
+        },
+        member: null,
+        userId: CIBLE,
+        reason: 'test',
+        source: 'antiraid',
+        moderatorId: BOT,
+    });
+
+    assert.equal(resultat.ok, true);
+    assert.equal(bannis.length, 1);
+});
+
+test('la voie historique garde ses propres pré-contrôles, inchangés', async () => {
+    // `moderatable` / `kickable` / `bannable` restent la source de vérité tant
+    // qu'anti-raid, automod et honeypot passent une `Guild` discord.js.
+    const { applyPunishments } = require('../bot/utils/punishments');
+    const guild = {
+        id: GUILDE,
+        ownerId: PROPRIETAIRE,
+        client: { user: { id: BOT } },
+        channels: { cache: new Map() },
+        members: { me: { permissions: { has: () => true } } },
+    };
+
+    const [expulsion] = await applyPunishments([{ action: 'kick' }], {
+        guild,
+        member: { id: CIBLE, kickable: false },
+        reason: 'test',
+        source: 'automod',
+        moderatorId: BOT,
+    });
+    assert.equal(expulsion.error, 'Hiérarchie des rôles ou permission « Expulser des membres » manquante.');
+
+    const [exclusion] = await applyPunishments([{ action: 'timeout', durationMs: 60000 }], {
+        guild,
+        member: { id: CIBLE, moderatable: false },
+        reason: 'test',
+        source: 'automod',
+        moderatorId: BOT,
+    });
+    assert.equal(exclusion.error, 'Hiérarchie des rôles ou permission « Exclure temporairement » manquante.');
+});
+
 test('le balayeur de bannissements temporaires lit les codes neutres', async () => {
     const { sweepExpiredBans } = require('../bot/utils/punishments');
     const expire = Math.floor(Date.now() / 1000) - 60;
@@ -758,7 +1284,7 @@ test('le balayeur de bannissements temporaires lit les codes neutres', async () 
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  5. Escalade des avertissements, au contrat neutre
+//  6. Escalade des avertissements, au contrat neutre
 // ═══════════════════════════════════════════════════════════════
 
 test('runWarnEscalation applique le palier par la PORTÉE, jamais par une guilde', async () => {
@@ -851,7 +1377,7 @@ test('runWarnEscalation — sans portée exploitable, aucune sanction n\'est ten
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  6. Le code neutre reste neutre
+//  7. Le code neutre reste neutre
 // ═══════════════════════════════════════════════════════════════
 
 test('les codes d\'erreur neutres attendus par ce lot existent bien au contrat', () => {

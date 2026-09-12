@@ -35,14 +35,17 @@
 //                      passée dans le champ `portee`, et le client REST
 //                      normalisé pour toutes les écritures.
 //
-//  Trois contrôles préventifs de la voie historique n'ont PAS d'équivalent dans
-//  le contrat neutre et sont donc absents de la voie neutre — ils y sont
-//  remplacés par la traduction de l'erreur d'API, qui dit la même chose mais
-//  après coup :
-//    • `member.moderatable` / `kickable` / `bannable` (hiérarchie des rôles) ;
-//    • `guild.ownerId` (`api.obtenirGuilde` ne rend que `{ id, nom }`) ;
-//    • rien ne distingue « bot retiré du serveur » d'une panne réseau.
-//  Voir le compte-rendu du lot 0.3 : ces manques appartiennent à l'orchestratrice.
+//  Les trois contrôles préventifs qui manquaient à la voie neutre y sont
+//  désormais, et ce n'est pas un détail de confort : un refus annoncé AVANT la
+//  tentative nomme la correction à faire (remonter le rôle du bot, cocher une
+//  permission), là où un refus traduit après coup dit seulement « permission
+//  manquante » et envoie chercher au mauvais endroit une fois sur deux.
+//    • hiérarchie des rôles -> `api.verifierMembreSanctionnable(guildeId,
+//      membreId, 'timeout' | 'kick' | 'ban')`, équivalent de `member.moderatable`
+//      / `kickable` / `bannable` ;
+//    • propriétaire du serveur -> `proprietaireId`, porté par la portée neutre ;
+//    • bot retiré du serveur -> code neutre `guilde_inconnue`, qui se distingue
+//      d'une panne réseau (`inconnu`).
 // ═══════════════════════════════════════════════════════════════
 
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
@@ -557,6 +560,47 @@ function stringifyPunishments(list) {
  *
  * @returns {Promise<string|null>} motif du refus, ou null
  */
+// Motif d'un refus structurel, par sanction. Une seule phrase pour les DEUX
+// causes — hiérarchie et permission — parce que c'est ce que la voie historique
+// annonce depuis toujours (`member.moderatable` confond déjà les deux), et que
+// les séparer changerait ce que lit une personne qui modère.
+const REFUS_PAR_SANCTION = Object.freeze({
+    timeout: 'Hiérarchie des rôles ou permission « Exclure temporairement » manquante.',
+    kick: 'Hiérarchie des rôles ou permission « Expulser des membres » manquante.',
+    ban: 'Hiérarchie des rôles ou permission « Bannir des membres » manquante.',
+});
+
+/**
+ * Pré-contrôle neutre d'une sanction, équivalent de `member.moderatable` /
+ * `kickable` / `bannable`.
+ *
+ * Rend `null` dès que la réponse est indéterminable, et c'est la règle qui
+ * compte : inventer un refus empêcherait une sanction légitime, alors qu'en
+ * laissant passer c'est la plateforme qui tranche — et son erreur est traduite.
+ * Trois cas y mènent, et aucun n'est un refus :
+ *   • `verifierMembreSanctionnable` rend `null` (membre illisible, identité du
+ *     bot hors cache) ;
+ *   • l'appel échoue (API injoignable) ;
+ *   • la portée reçue n'expose PAS la méthode. Une portée n'est reconnue qu'à
+ *     son `api.envoyerMessage` (`resoudrePorteeNeutre`) : rien ne garantit le
+ *     reste du client REST, et un appel à une méthode absente lèverait de façon
+ *     SYNCHRONE — donc hors de portée d'un `.catch()` — pour ressortir en
+ *     « verifierMembreSanctionnable is not a function » à la place du motif réel.
+ *
+ * @param {'timeout'|'kick'|'ban'} sanction
+ * @returns {Promise<string|null>} motif du refus, ou null
+ */
+async function refusSanctionNeutre(portee, guildeId, membreId, sanction) {
+    if (!membreId || typeof portee.api?.verifierMembreSanctionnable !== 'function') return null;
+    let refus;
+    try {
+        refus = await portee.api.verifierMembreSanctionnable(guildeId, membreId, sanction);
+    } catch {
+        return null;
+    }
+    return refus ? REFUS_PAR_SANCTION[sanction] : null;
+}
+
 async function refusPermissionBanNeutre(portee, guildeId) {
     if (!portee.moiId) return null;
     const moi = await portee.api.obtenirMembre(guildeId, portee.moiId).catch(() => null);
@@ -619,12 +663,11 @@ async function applyOne(action, durationMs, state) {
         case 'tempmute':
         case 'mute': {
             if (!member) return { action, ok: false, error: 'Ce membre n\'est plus sur le serveur.' };
-            // `moderatable` n'existe que sur un membre discord.js : le contrat
-            // neutre n'expose pas la hiérarchie des rôles. Sur la voie neutre, le
-            // refus vient de la plateforme et `describeError` le traduit.
-            if (!portee && !member.moderatable) {
-                return { action, ok: false, error: 'Hiérarchie des rôles ou permission « Exclure temporairement » manquante.' };
-            }
+            const refusTimeout = portee
+                ? await refusSanctionNeutre(portee, guildeId, member.id, 'timeout')
+                // TRANSITION : format historique, à retirer au lot de consolidation
+                : (member.moderatable ? null : REFUS_PAR_SANCTION.timeout);
+            if (refusTimeout) return { action, ok: false, error: refusTimeout };
 
             const asked = action === 'mute' ? MAX_TIMEOUT_MS : durationMs;
             const applied = Math.min(asked, MAX_TIMEOUT_MS);
@@ -661,10 +704,11 @@ async function applyOne(action, durationMs, state) {
 
         case 'kick': {
             if (!member) return { action, ok: false, error: 'Ce membre n\'est plus sur le serveur.' };
-            // Même raison que pour `moderatable` ci-dessus.
-            if (!portee && !member.kickable) {
-                return { action, ok: false, error: 'Hiérarchie des rôles ou permission « Expulser des membres » manquante.' };
-            }
+            const refusKick = portee
+                ? await refusSanctionNeutre(portee, guildeId, member.id, 'kick')
+                // TRANSITION : format historique, à retirer au lot de consolidation
+                : (member.kickable ? null : REFUS_PAR_SANCTION.kick);
+            if (refusKick) return { action, ok: false, error: refusKick };
             try {
                 if (portee) await portee.api.exclureMembre(guildeId, member.id, reason);
                 // TRANSITION : format historique, à retirer au lot de consolidation
@@ -684,10 +728,16 @@ async function applyOne(action, durationMs, state) {
         case 'tempban':
         case 'ban': {
             // Un membre déjà parti reste bannissable par son identifiant : c'est
-            // même le cas le plus fréquent en anti-raid.
-            if (!portee && member && !member.bannable) {
-                return { action, ok: false, error: 'Hiérarchie des rôles ou permission « Bannir des membres » manquante.' };
-            }
+            // même le cas le plus fréquent en anti-raid. La hiérarchie ne se
+            // contrôle donc QUE s'il est encore là ; la permission du bot, elle,
+            // se contrôle dans tous les cas, juste en dessous.
+            const refusHierarchie = member
+                ? (portee
+                    ? await refusSanctionNeutre(portee, guildeId, member.id, 'ban')
+                    // TRANSITION : format historique, à retirer au lot de consolidation
+                    : (member.bannable ? null : REFUS_PAR_SANCTION.ban))
+                : null;
+            if (refusHierarchie) return { action, ok: false, error: refusHierarchie };
 
             const refusBan = portee
                 ? await refusPermissionBanNeutre(portee, guildeId)

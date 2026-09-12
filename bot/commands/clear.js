@@ -1,69 +1,60 @@
-// ⚠️ NON MIGRÉE AU LOT 1 — il manque une primitive au contrat neutre.
-//
-// La commande ACQUITTE l'interaction avant de travailler (`deferReply`), et ce
-// n'est pas un détail : lire cent messages puis les supprimer en lot dépasse
-// régulièrement les trois secondes que Discord laisse pour répondre. Le contexte
-// neutre n'a pas d'équivalent — ni `ctx.differer()`, ni rien qui acquitte sans
-// contenu. Migrer sans lui rendrait la commande muette sous limitation de débit,
-// alors que les messages, eux, auraient bien été supprimés.
-//
-// Le reste est prêt : `api.listerMessages` et `api.supprimerMessagesEnLot`
-// couvrent exactement ce que fait ce fichier, écart des plus de 14 jours compris.
-// Voir le compte-rendu du lot 1.
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { reportIncident, userError } = require('../utils/errors');
+const { definirCommande } = require('../platform/commands');
+const { reportIncident } = require('../utils/errors');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('clear')
-        .setDescription('Supprimer des messages')
-        .addIntegerOption(opt => opt.setName('nombre').setDescription('Nombre de messages à supprimer (1-100)').setMinValue(1).setMaxValue(100).setRequired(true))
-        .addUserOption(opt => opt.setName('membre').setDescription('Supprimer uniquement les messages de ce membre').setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+// Profondeur de recherche quand la purge vise une personne : on relit les cent
+// derniers messages du salon, puis on filtre. C'est le maximum d'une page
+// d'historique, et le message d'erreur le dit quand rien n'en ressort.
+const PROFONDEUR_RECHERCHE = 100;
 
-    async execute(interaction) {
-        const amount = interaction.options.getInteger('nombre');
-        const targetUser = interaction.options.getUser('membre');
+module.exports = definirCommande({
+    nom: 'clear',
+    description: 'Supprimer des messages',
+    permission: 'MANAGE_MESSAGES',
+    // Lire l'historique est aussi nécessaire que supprimer : sans
+    // READ_MESSAGE_HISTORY, il n'y a rien à passer à la suppression en lot.
+    permissionsBot: ['MANAGE_MESSAGES', 'READ_MESSAGE_HISTORY'],
 
-        await interaction.deferReply({ ephemeral: true });
+    options: [
+        { nom: 'nombre', type: 'entier', requis: true, min: 1, max: 100, description: 'Nombre de messages à supprimer (1-100)' },
+        { nom: 'membre', type: 'utilisateur', requis: false, description: 'Supprimer uniquement les messages de ce membre' },
+    ],
+
+    async executer(ctx) {
+        const amount = ctx.options.get('nombre');
+        const cible = ctx.options.get('membre');
+
+        // Acquittement AVANT le travail : relire cent messages puis les
+        // supprimer en lot dépasse régulièrement les trois secondes que la
+        // plateforme laisse pour répondre.
+        await ctx.differer({ ephemere: true });
 
         try {
-            if (targetUser) {
+            if (cible) {
                 // Récupérer les messages et filtrer par utilisateur
-                const messages = await interaction.channel.messages.fetch({ limit: 100 });
-                const userMessages = messages
-                    .filter(m => m.author.id === targetUser.id)
-                    .first(amount);
+                const messages = await ctx.api.listerMessages(ctx.canalId, { limite: PROFONDEUR_RECHERCHE });
+                const siens = messages.filter(m => m.auteur?.id === cible.id).slice(0, amount);
 
-                if (userMessages.length === 0) {
-                    return userError(interaction, {
-                        title: 'Aucun message à supprimer',
-                        cause: `Je n'ai trouvé aucun message de ${targetUser} parmi les 100 derniers messages de ce salon.`,
-                        action: 'Cette personne n\'a peut-être rien écrit récemment ici. La recherche ne remonte pas au-delà de 100 messages.',
+                if (siens.length === 0) {
+                    return ctx.erreurUtilisateur({
+                        titre: 'Aucun message à supprimer',
+                        cause: `Je n'ai trouvé aucun message de ${cible.mention} parmi les ${PROFONDEUR_RECHERCHE} derniers messages de ce salon.`,
+                        action: `Cette personne n'a peut-être rien écrit récemment ici. La recherche ne remonte pas au-delà de ${PROFONDEUR_RECHERCHE} messages.`,
                     });
                 }
 
-                const deleted = await interaction.channel.bulkDelete(userMessages, true);
-                await interaction.editReply({
-                    content: `🗑️ **${deleted.size}** message(s) de ${targetUser} supprimé(s).`
-                });
+                // `supprimerMessagesEnLot` écarte lui-même les messages de plus
+                // de 14 jours, que la plateforme refuse en lot — et rejette
+                // sinon le lot ENTIER. `supprimes` ne compte donc que ce qui est
+                // réellement parti, comme le faisait le filtre d'avant.
+                const { supprimes } = await ctx.api.supprimerMessagesEnLot(ctx.canalId, siens.map(m => m.id));
+                await ctx.repondre(`🗑️ **${supprimes}** message(s) de ${cible.mention} supprimé(s).`);
             } else {
-                const deleted = await interaction.channel.bulkDelete(amount, true);
-                await interaction.editReply({
-                    content: `🗑️ **${deleted.size}** message(s) supprimé(s).`
-                });
+                const messages = await ctx.api.listerMessages(ctx.canalId, { limite: amount });
+                const { supprimes } = await ctx.api.supprimerMessagesEnLot(ctx.canalId, messages.map(m => m.id));
+                await ctx.repondre(`🗑️ **${supprimes}** message(s) supprimé(s).`);
             }
         } catch (e) {
-            // 50034 : Discord interdit la suppression groupée au-delà de 14 jours.
-            // C'est une limite de la plateforme, pas un bug — inutile d'alarmer.
-            if (e?.code === 50034) {
-                return userError(interaction, {
-                    title: 'Messages trop anciens',
-                    cause: 'Discord interdit la suppression groupée des messages de plus de 14 jours.',
-                    action: 'Supprimez-les manuellement, ou relancez la commande avec un nombre plus petit pour ne viser que les messages récents.',
-                });
-            }
-            return reportIncident(interaction, e, { command: '/clear' });
+            return reportIncident(ctx, e, { command: '/clear' });
         }
-    }
-};
+    },
+});
