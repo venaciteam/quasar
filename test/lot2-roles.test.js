@@ -157,6 +157,8 @@ test('les événements du lot 2 sont branchés sur le bon nom neutre', () => {
         channelDelete: 'canalSupprime',
         messageReactionAdd: 'reactionAjoutee',
         messageReactionRemove: 'reactionRetiree',
+        roleCreate: 'roleCree',
+        roleDelete: 'roleSupprime',
     };
     for (const [fichier, nomNeutre] of Object.entries(attendu)) {
         const mod = require(`../bot/events/${fichier}`);
@@ -306,4 +308,217 @@ test('describeForApi accepte encore le rôle discord.js de l\'API du dashboard',
     // afficherait « « undefined » est au-dessus… ».
     assert.match(describeForApi('hierarchy', { id: '1', name: 'Modération' }), /« Modération » est au-dessus/);
     assert.match(describeForApi('hierarchy', { id: '1', nom: 'Modération' }), /« Modération » est au-dessus/);
+});
+
+// ── 5. Les événements de rôle écrivent l'embed d'avant, au champ près ────────
+
+/** Serveur dont la journalisation « server_role » est active. */
+function serveurJournalise(guildeId) {
+    const db = getDb();
+    db.prepare('INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)').run(guildeId);
+    db.prepare(`
+        INSERT INTO modules (guild_id, module_name, enabled, config) VALUES (?, 'moderation', 1, ?)
+        ON CONFLICT(guild_id, module_name) DO UPDATE SET config = excluded.config
+    `).run(guildeId, JSON.stringify({ logChannel: 'salon-log', enabledLogs: { server_role: true } }));
+}
+
+/** Contexte d'événement qui capture ce qui part vers le salon de journalisation. */
+function contexteJournal() {
+    const envois = [];
+    return {
+        envois,
+        ctx: {
+            plateforme: 'discord',
+            capacites: {},
+            db: getDb(),
+            api: {
+                async envoyerMessage(canalId, contenu) { envois.push([canalId, contenu]); },
+            },
+        },
+    };
+}
+
+/** Rôle normalisé, tel que l'adaptateur le rend au handler. */
+function faireRole(guildeId, spec) {
+    const { normaliserRole } = require('../bot/platform/discord/context');
+    return normaliserRole({ guildId: guildeId, ...spec });
+}
+
+test('un rôle créé produit le MÊME corps d\'embed qu\'avant migration', async () => {
+    // Référence relevée sur la v4.10.0 : `.setTitle().setColor().addFields(Nom,
+    // Couleur).setTimestamp()`. La couleur est le champ que la migration
+    // pouvait perdre — `normaliserRole` ne la portait pas au premier rendu du
+    // lot, et un « undefined » y serait passé sans qu'aucun test ne le voie.
+    const { rendreEmbed } = require('../bot/platform/discord/render');
+    serveurJournalise('guilde-role-1');
+    const { ctx, envois } = contexteJournal();
+
+    await require('../bot/events/roleCreate').executer(
+        ctx,
+        faireRole('guilde-role-1', { id: 'r1', name: 'Modération', color: 0x2ecc71, position: 3 }),
+    );
+
+    assert.equal(envois.length, 1);
+    const [canalId, contenu] = envois[0];
+    assert.equal(canalId, 'salon-log');
+
+    const { timestamp, ...corps } = rendreEmbed(contenu).toJSON();
+    assert.deepEqual(corps, {
+        title: '🎭 Rôle créé',
+        color: 0x2ecc71,
+        fields: [
+            { name: 'Nom', value: 'Modération', inline: true },
+            // Minuscules et « # » en tête : la forme exacte de `hexColor`.
+            { name: 'Couleur', value: '#2ecc71', inline: true },
+        ],
+    });
+    assert.ok(Number.isFinite(Date.parse(timestamp)), 'horodatage manquant');
+});
+
+test('un rôle supprimé produit le MÊME corps d\'embed qu\'avant migration', async () => {
+    const { rendreEmbed } = require('../bot/platform/discord/render');
+    serveurJournalise('guilde-role-2');
+    const { ctx, envois } = contexteJournal();
+
+    // Rôle sans couleur : `hexColor` valait « #000000 », pas une chaîne vide.
+    await require('../bot/events/roleDelete').executer(
+        ctx,
+        faireRole('guilde-role-2', { id: 'r2', name: 'Ancien', color: 0, position: 1, managed: true }),
+    );
+
+    const { timestamp, ...corps } = rendreEmbed(envois[0][1]).toJSON();
+    assert.deepEqual(corps, {
+        title: '🎭 Rôle supprimé',
+        color: 0xe74c3c,
+        fields: [
+            { name: 'Nom', value: 'Ancien', inline: true },
+            { name: 'Couleur', value: '#000000', inline: true },
+        ],
+    });
+    assert.ok(Number.isFinite(Date.parse(timestamp)));
+});
+
+test('un rôle géré par une intégration n\'est journalisé qu\'à sa suppression', async () => {
+    // Asymétrie d'origine : `roleCreate` écarte les rôles de bots, `roleDelete`
+    // non. Les aligner serait une correction, pas une migration.
+    serveurJournalise('guilde-role-3');
+
+    const creation = contexteJournal();
+    await require('../bot/events/roleCreate').executer(
+        creation.ctx,
+        faireRole('guilde-role-3', { id: 'r3', name: 'Bot Machin', color: 0, managed: true }),
+    );
+    assert.deepEqual(creation.envois, []);
+
+    const suppression = contexteJournal();
+    await require('../bot/events/roleDelete').executer(
+        suppression.ctx,
+        faireRole('guilde-role-3', { id: 'r3', name: 'Bot Machin', color: 0, managed: true }),
+    );
+    assert.equal(suppression.envois.length, 1);
+});
+
+test('sans journalisation active, un événement de rôle n\'écrit rien', async () => {
+    // La portée est construite à partir de `role.guildeId` : s'il manquait,
+    // `sendLog` chercherait la configuration d'un serveur `null` et se tairait —
+    // panne silencieuse exacte que le premier rendu du lot ne pouvait pas éviter.
+    const { ctx, envois } = contexteJournal();
+    await require('../bot/events/roleCreate').executer(
+        ctx,
+        faireRole('guilde-sans-logs', { id: 'r4', name: 'Rôle', color: 0 }),
+    );
+    assert.deepEqual(envois, []);
+});
+
+// ── 6. Le rafraîchissement ne repose que les réactions manquantes ───────────
+
+/** Contexte de commande minimal pour `/reactionrole add`. */
+function contexteAjout(options, reactionsDuMessage) {
+    const appels = [];
+    return {
+        appels,
+        ctx: {
+            plateforme: 'discord',
+            capacites: {},
+            guildeId: 'guilde-refresh',
+            db: getDb(),
+            options: { get: (nom) => options[nom] ?? null },
+            async repondre() {},
+            async suivre(contenu) { appels.push(['suivre', contenu]); },
+            erreurUtilisateur(spec) { appels.push(['erreurUtilisateur', spec.titre]); },
+            api: {
+                async verifierRoleAttribuable() { return null; },
+                async obtenirMessage(canalId, messageId) {
+                    const { normaliserMessage } = require('../bot/platform/discord/events');
+                    return normaliserMessage({
+                        id: messageId,
+                        channelId: canalId,
+                        guildId: 'guilde-refresh',
+                        reactions: reactionsDuMessage,
+                    });
+                },
+                async modifierMessage(...args) { appels.push(['modifierMessage', args[0], args[1]]); },
+                async ajouterReaction(...args) { appels.push(['ajouterReaction', ...args]); },
+            },
+        },
+    };
+}
+
+const sousCommande = (nom) => require('../bot/commands/reactionrole').sousCommandes.find(s => s.nom === nom);
+
+test('un panneau déjà réagi par le bot n\'émet AUCUN ajouterReaction', async () => {
+    // C'est le comportement d'origine (`if (!existing || !existing.me)`), et
+    // c'est ce qui évite un PUT par entrée à chaque `/reactionrole add`, sur une
+    // route que Discord limite sévèrement en débit.
+    const db = getDb();
+    db.prepare('INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)').run('guilde-refresh');
+    const { lastInsertRowid: panelId } = db.prepare(
+        'INSERT INTO reaction_panels (guild_id, channel_id, message_id, title, mode) VALUES (?,?,?,?,?)',
+    ).run('guilde-refresh', 'salon-refresh', 'msg-refresh', 'Panneau', 'multiple');
+    db.prepare('INSERT INTO reaction_roles (panel_id, emoji, role_id) VALUES (?,?,?)')
+        .run(panelId, '🎮', 'role-jeux');
+
+    // Le bot a déjà posé « 🎮 » ET l'emoji personnalisé ajouté ci-dessous.
+    const { ctx, appels } = contexteAjout(
+        { panel_id: panelId, emoji: '<a:boum:77>', role: { id: 'role-boum', nom: 'Boum', mention: '<@&role-boum>' } },
+        [
+            { emoji: { id: null, name: '🎮' }, count: 1, me: true },
+            { emoji: { id: '77', name: 'boum', animated: true }, count: 1, me: true },
+        ],
+    );
+
+    await sousCommande('add').executer(ctx);
+
+    assert.deepEqual(appels.filter(a => a[0] === 'ajouterReaction'), [],
+        'aucune réaction ne doit être reposée quand le bot les a déjà toutes');
+    assert.equal(appels.filter(a => a[0] === 'modifierMessage').length, 1, 'le panneau est tout de même réécrit');
+});
+
+test('seules les réactions absentes ou posées par un tiers sont reposées', async () => {
+    const db = getDb();
+    db.prepare('INSERT OR IGNORE INTO guilds (guild_id) VALUES (?)').run('guilde-refresh');
+    const { lastInsertRowid: panelId } = db.prepare(
+        'INSERT INTO reaction_panels (guild_id, channel_id, message_id, title, mode) VALUES (?,?,?,?,?)',
+    ).run('guilde-refresh', 'salon-refresh', 'msg-partiel', 'Panneau', 'multiple');
+    db.prepare('INSERT INTO reaction_roles (panel_id, emoji, role_id) VALUES (?,?,?)').run(panelId, '🎮', 'role-jeux');
+    db.prepare('INSERT INTO reaction_roles (panel_id, emoji, role_id) VALUES (?,?,?)').run(panelId, '📚', 'role-lecture');
+
+    const { ctx, appels } = contexteAjout(
+        { panel_id: panelId, emoji: '<:quasar:55>', role: { id: 'role-q', nom: 'Q', mention: '<@&role-q>' } },
+        [
+            // Posée par le bot : rien à faire.
+            { emoji: { id: null, name: '🎮' }, count: 1, me: true },
+            // Présente mais posée par un membre : le bot doit la reposer, sans
+            // quoi elle disparaîtrait du panneau le jour où il la retire.
+            { emoji: { id: null, name: '📚' }, count: 1, me: false },
+            // « <:quasar:55> » n'est pas encore sur le message du tout.
+        ],
+    );
+
+    await sousCommande('add').executer(ctx);
+
+    assert.deepEqual(
+        appels.filter(a => a[0] === 'ajouterReaction').map(a => a[3]),
+        ['📚', '<:quasar:55>'],
+    );
 });

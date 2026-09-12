@@ -237,13 +237,14 @@ async function rafraichirPanneau(ctx, panel, panelId, quoiDeFait) {
 }
 
 /**
- * Réécrit le message du panneau à partir de la base, et repose ses réactions.
+ * Réécrit le message du panneau à partir de la base, et repose les réactions
+ * MANQUANTES.
  *
- * ⚠️ Les réactions sont reposées SANS vérifier celles déjà présentes : le
- * message normalisé du contrat neutre ne porte pas ses réactions (cf. compte
- * rendu du lot 2). `ajouterReaction` est idempotent — l'état final est
- * identique, à l'ordre près qui reste celui de la première pose — mais un
- * rafraîchissement coûte désormais un appel par entrée au lieu de zéro.
+ * « Manquantes » au sens de `parMoi` : une réaction posée par un membre et non
+ * par le bot doit être reposée, sans quoi elle disparaîtrait du panneau le jour
+ * où ce membre la retire. C'est le critère d'origine, et `reactions[].parMoi`
+ * du message normalisé est ce qui permet de le conserver — reposer les emojis à
+ * l'aveugle coûterait un appel par entrée sur une route limitée en débit.
  */
 async function redessinerPanneau(api, channelId, messageId, panelId, db) {
     try {
@@ -276,7 +277,13 @@ async function redessinerPanneau(api, channelId, messageId, panelId, db) {
         // Dans l'ordre d'insertion : c'est lui qui décide de l'ordre d'affichage
         // des réactions sous le message.
         for (const entree of entrees) {
-            await api.ajouterReaction(channelId, messageId, entree.emoji).catch(() => {});
+            // `cle` est la forme stockée en base, produite par la même fonction
+            // que pour `reactionAjoutee` : la comparaison tient sur les emojis
+            // personnalisés comme sur les unicode.
+            const existante = message.reactions.find(r => r.emoji.cle === entree.emoji);
+            if (!existante || !existante.parMoi) {
+                await api.ajouterReaction(channelId, messageId, entree.emoji).catch(() => {});
+            }
         }
     } catch (e) {
         console.error('[Quasar] Erreur refresh panel:', e.message);
