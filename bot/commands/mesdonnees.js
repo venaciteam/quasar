@@ -142,9 +142,15 @@ module.exports = definirCommande({
                 `Plus de détails dans la politique de confidentialité publique de Venacity (${VENACITY_LEGAL_SITE}).`,
         });
 
-        // `sensible` n'existe pas sur `ctx.choose` : l'éphémère de Discord est
-        // réellement privé, donc rien ne change ici, mais c'est un manque du
-        // contrat pour une plateforme sans éphémère natif (voir compte-rendu).
+        // ⚠️ `sensible: true` n'est PAS une précaution de forme.
+        //
+        // Cet embed est l'inventaire des données personnelles d'une personne, et
+        // il affirme « Ces informations ne sont visibles que par vous ». Sur une
+        // plateforme sans éphémère natif, c'est ce drapeau — et lui seul — qui
+        // impose le message privé : sans lui, le panneau part dans le salon où
+        // la commande a été tapée, et la phrase devient un mensonge. Un
+        // commentaire affirmant ici que `sensible` n'existait pas sur
+        // `ctx.choose` a coûté exactement cette fuite.
         await ctx.choose(
             embed({
                 titre: '🔒 Les données que Quasar traite vous concernant',
@@ -161,11 +167,12 @@ module.exports = definirCommande({
                 emoji: '🗑️',
                 style: 'danger',
             }],
-            // Les coordonnées rendues ne sont PAS stockées dans `interaction_panels` :
-            // ce panneau est éphémère et propre à une personne, une ligne par appel
-            // ferait grossir la table sans que rien ne la relise jamais. Le handler
-            // reconstruit tout depuis le contexte du clic.
-            { persistant: true, panneau: PANNEAU, ephemere: true },
+            // Les coordonnées rendues ne sont PAS relues par cette commande : le
+            // handler du panneau reconstruit tout depuis le contexte du clic.
+            // La ligne `interaction_panels` que l'adaptateur écrit, elle, est
+            // indispensable au routage après un redémarrage — et elle part avec
+            // le salon ou le message du panneau.
+            { persistant: true, panneau: PANNEAU, ephemere: true, sensible: true },
         );
     },
 });

@@ -602,9 +602,14 @@ function creerNoyauContexte(source, { adaptateur, etiquette }) {
      * suppression est tolérante — si le message a déjà disparu (effacé à la
      * main, salon supprimé), il n'y a rien à signaler.
      */
-    function programmerSuppression(canalId, messageId) {
+    function programmerSuppression(canalId, messageId, { panneau = false } = {}) {
         if (!messageId) return;
         const minuteur = setTimeout(() => {
+            // Un panneau auto-supprimé doit AUSSI perdre sa ligne
+            // `interaction_panels` : elle pointerait sinon un message qui
+            // n'existe plus, et la table grossirait d'une entrée par appel sans
+            // que rien ne la relise jamais.
+            if (panneau) adaptateur.retirerPanneauPersistant({ canalId, messageId });
             adaptateur.api.supprimerMessage(canalId, messageId).catch(() => {});
         }, DELAI_AUTO_SUPPRESSION_MS);
         minuteur.unref?.();
@@ -919,25 +924,58 @@ function creerNoyauContexte(source, { adaptateur, etiquette }) {
             const panneau = options.panneau || etiquette;
             const { reactions, legende } = rendreChoix(choix, panneau);
 
-            // Un panneau persistant a un salon et une ligne en base : c'est
-            // exactement `poserPanneau`, appliqué au salon courant. Pas de
-            // seconde implémentation — les deux chemins doivent produire le même
-            // message et la même ligne, sans quoi un panneau posé par `/ticket
-            // setup` et un panneau posé par `ctx.choose` se routeraient
-            // différemment.
-            if (persistant) {
-                return { persistant: true, ...(await poserPanneau(
-                    adaptateur, source.canalId, message, choix, { panneau, guildeId: source.guildeId },
-                )) };
-            }
-
-            // Panneau éphémère. `{ ephemere: true }` retombe sur la stratégie de
-            // repli : sensible -> privé, sinon auto-suppression. Le panneau est
-            // alors posé LÀ où il est lisible, et c'est ce salon qu'on écoute.
+            // ⚠️ La DESTINATION est décidée AVANT toute branche, persistante
+            // comprise. C'est le correctif d'une fuite de données réelle : la
+            // branche persistante sortait ici en postant sur `source.canalId`
+            // sans condition, et `{ ephemere: true }` n'était jamais lu. Le
+            // panneau de `/mes-donnees` — l'inventaire des données personnelles
+            // d'un membre, avec la phrase « Ces informations ne sont visibles
+            // que par vous » — partait donc dans le salon public, et y restait :
+            // la branche persistante ne passait même pas par l'auto-suppression.
+            //
+            // Côté Discord, `ephemeral` est posé sur le payload avant la même
+            // branche : la faille n'existait que sur Fluxer, parce que c'est la
+            // seule plateforme où « éphémère » est une STRATÉGIE et non un
+            // drapeau. Une stratégie s'applique à tous les chemins, sans
+            // exception — et un chemin qui l'oublie ne se voit pas.
+            //
+            // Repli de la DA §6.3, dans cet ordre :
+            //   sensible          -> message privé ;
+            //   éphémère seul     -> salon courant, puis auto-suppression ;
+            //   ni l'un ni l'autre -> salon courant, message durable.
             let canal = source.canalId;
             if (options.ephemere && options.sensible) {
                 canal = await adaptateur.api.ouvrirMessagePrive(auteur.id);
             }
+
+            // Un panneau persistant a un salon et une ligne en base : c'est
+            // exactement `poserPanneau`, appliqué au salon retenu. Pas de
+            // seconde implémentation — les deux chemins doivent produire le même
+            // message et la même ligne, sans quoi un panneau posé par `/ticket
+            // setup` et un panneau posé par `ctx.choose` se routeraient
+            // différemment.
+            //
+            // ⚠️ Le salon retenu peut être un salon PRIVÉ, et le routage y
+            // fonctionne : la ligne `interaction_panels` porte le `guild_id` du
+            // serveur dont on parle — ce qui la rend purgeable au départ du
+            // serveur — et son `channel_id` est celui du message privé.
+            // `MESSAGE_REACTION_ADD` est dispatché dans un salon privé
+            // (gateway/events.md), et `routerPanneau` retrouve la ligne par
+            // (channel_id, message_id), sans jamais lire de serveur.
+            if (persistant) {
+                const pose = await poserPanneau(
+                    adaptateur, canal, message, choix, { panneau, guildeId: source.guildeId },
+                );
+                dernierPanneau = { canalId: pose.canalId, messageId: pose.messageId };
+                // Éphémère NON sensible : le panneau vit quinze secondes, et sa
+                // ligne part avec lui.
+                if (options.ephemere && !options.sensible) {
+                    programmerSuppression(canal, pose.messageId, { panneau: true });
+                }
+                return { persistant: true, ...pose };
+            }
+
+            // Panneau éphémère : l'écoute se fait dans le salon où il est posé.
 
             const poste = await adaptateur.api.envoyerMessage(canal, composerPanneau(message, legende));
             dernierPanneau = { canalId: canal, messageId: poste.id };

@@ -525,6 +525,42 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
             }
         },
 
+        /**
+         * Retire la ligne `interaction_panels` d'un panneau qui n'existe plus.
+         *
+         * C'est l'adaptateur qui ÉCRIT cette table, c'est donc lui qui la
+         * nettoie. Sans ce nettoyage, la table n'était purgée par rien : chaque
+         * salon vocal temporaire pose un panneau, donc une ligne, et le salon
+         * meurt sans que la ligne parte. La purge de rétention rattrape le
+         * départ d'un serveur ; elle ne rattrape pas la vie courante d'un
+         * serveur actif.
+         *
+         * Deux portées, selon ce qui a disparu :
+         *   { canalId, messageId } — un message précis ;
+         *   { canalId }            — tout le salon.
+         *
+         * Ne lève jamais : une ligne orpheline est un défaut d'hygiène, pas une
+         * panne, et faire échouer le traitement d'un CHANNEL_DELETE pour ça
+         * emporterait tout ce qui en dépend.
+         */
+        retirerPanneauPersistant({ canalId, messageId = null }) {
+            if (!canalId) return 0;
+            try {
+                const db = require('../../../api/services/database').getDb();
+                const resultat = messageId
+                    ? db.prepare('DELETE FROM interaction_panels WHERE channel_id = ? AND message_id = ?')
+                        .run(String(canalId), String(messageId))
+                    : db.prepare('DELETE FROM interaction_panels WHERE channel_id = ?').run(String(canalId));
+                return resultat.changes || 0;
+            } catch (err) {
+                console.error(
+                    `[Quasar] Panneau non retiré de interaction_panels (${err?.message || err}) : `
+                    + 'la ligne restera orpheline jusqu\'à la purge du serveur.'
+                );
+                return 0;
+            }
+        },
+
         /** Redistribution d'un événement de passerelle. Exposée pour les tests. */
         traiterDispatch,
     };
@@ -578,6 +614,25 @@ function creerAdaptateurFluxer({ client = null, env = process.env } = {}) {
                 }
             } catch (err) {
                 console.error('[Quasar] Filtre de collecteur en erreur :', err?.message || err);
+            }
+        }
+
+        // Hygiène de `interaction_panels` : un panneau dont le message ou le
+        // salon disparaît laisse une ligne qui ne pointe plus sur rien, et que
+        // `routerPanneau` relira à chaque réaction du salon. Fait AVANT les
+        // handlers métier et hors de toute condition de consommation : ce n'est
+        // pas un comportement, c'est de la tenue de registre.
+        if (type === 'CHANNEL_DELETE' && d?.id) {
+            adaptateur.retirerPanneauPersistant({ canalId: d.id });
+        }
+        if (type === 'MESSAGE_DELETE' && d?.channel_id && d?.id) {
+            adaptateur.retirerPanneauPersistant({ canalId: d.channel_id, messageId: d.id });
+        }
+        if (type === 'MESSAGE_DELETE_BULK' && d?.channel_id && Array.isArray(d.ids)) {
+            // Pas un événement neutre — le contrat n'en a pas — mais il efface
+            // bel et bien des messages, panneaux compris.
+            for (const id of d.ids) {
+                adaptateur.retirerPanneauPersistant({ canalId: d.channel_id, messageId: id });
             }
         }
 

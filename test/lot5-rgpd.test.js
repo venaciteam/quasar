@@ -267,7 +267,17 @@ test('le droit d\'accès énonce les mêmes catégories, dans le même ordre, mo
     }]);
     // Persistant : les clics doivent survivre à un redémarrage, comme le faisait
     // le routage par préfixe `mesdonnees_` de bot/index.js.
-    assert.deepEqual(options, { persistant: true, panneau: 'mesdonnees', ephemere: true });
+    //
+    // ⚠️ `sensible: true` n'est pas décoratif, et son absence a coûté une fuite
+    // réelle : sur une plateforme sans éphémère natif, c'est CE drapeau — et lui
+    // seul — qui impose le message privé. Sans lui, cet inventaire de données
+    // personnelles partait dans le salon où la commande était tapée, avec sa
+    // phrase « Ces informations ne sont visibles que par vous ». La
+    // non-régression du parcours complet est dans
+    // test/platform-fluxer-rgpd.test.js.
+    assert.deepEqual(options, {
+        persistant: true, panneau: 'mesdonnees', ephemere: true, sensible: true,
+    });
 });
 
 test('les compteurs réels remontent dans les catégories concernées', async () => {

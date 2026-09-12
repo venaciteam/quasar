@@ -27,6 +27,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -83,6 +84,37 @@ const FICHIERS_AUTORISES = Object.freeze({
  * qu'on ne veut pas migrer.
  */
 const TRANSITIONS_RETENUES_PAR_API = Object.freeze({});
+
+/**
+ * Membres du client natif qu'un adaptateur NON-Discord expose réellement.
+ *
+ * `bot/platform/fluxer/client.js` est un `EventEmitter` augmenté de ce strict
+ * minimum, parce que `bot/index.js` en a besoin pour démarrer : `user`,
+ * `guilds.cache`, `commands`, `isReady()` et `ws.ping`. Tout autre membre —
+ * `channels`, `emojis`, `rest`, `users` — n'existe que sur discord.js : le lire
+ * depuis `api/` rendrait `undefined` sur Fluxer, et une page blanche que rien
+ * n'explique.
+ *
+ * ⚠️ Cette liste n'est pas une permission d'y accéder : `api/` ne doit lire le
+ * client QUE par `api/services/plateforme.js`, ce que le contrôle vérifie par
+ * ailleurs. Elle borne ce que ce fichier-là peut lire.
+ */
+const MEMBRES_CLIENT_PORTABLES = new Set(['user', 'guilds', 'commands', 'isReady', 'ws']);
+
+/**
+ * Accès au client natif qu'un source contient, hors liste blanche.
+ *
+ * Extrait en fonction pour être VÉRIFIABLE : un contrôle d'étanchéité qui ne
+ * mord pas est pire que pas de contrôle — il rassure. Le test ci-dessous lui
+ * soumet des sources synthétiques et compare son verdict.
+ */
+function accesNatifsInterdits(code) {
+    const trouves = [];
+    for (const acces of code.matchAll(/\.client\s*\??\.\s*([A-Za-z_$][\w$]*)/g)) {
+        if (!MEMBRES_CLIENT_PORTABLES.has(acces[1])) trouves.push(`client.${acces[1]}`);
+    }
+    return trouves;
+}
 
 // ─── Balayage ───────────────────────────────────────────────────────────────
 
@@ -286,13 +318,74 @@ test('api/ ne lit le client natif que par api/services/plateforme.js', () => {
         if (relatif === 'api/services/plateforme.js') continue;
         const code = codeSeul(fs.readFileSync(path.join(RACINE, relatif), 'utf8'));
         if (/discordClient/.test(code)) fautifs.push(`${relatif} (discordClient)`);
-        if (/\.client\s*\?\.\s*guilds|\.client\.guilds/.test(code)) fautifs.push(`${relatif} (client.guilds)`);
+        // TOUT accès au client natif, et pas seulement `.guilds`. Le contrôle ne
+        // cherchait que `discordClient` et `client.guilds` : un
+        // `req.app.get('plateforme').client.channels.cache` passait donc sans
+        // bruit — et sur Fluxer il aurait rendu `undefined`, donc une page
+        // blanche que rien n'explique.
+        //
+        // La liste blanche est exactement ce que l'EventEmitter minimal de
+        // l'adaptateur Fluxer expose (bot/platform/fluxer/client.js) : au-delà,
+        // la lecture n'a de sens que sur discord.js.
+        for (const acces of accesNatifsInterdits(code)) fautifs.push(`${relatif} (${acces})`);
     }
     assert.deepEqual(
         fautifs, [],
         'Passez par api/services/plateforme.js : il expose le client REST normalisé, '
         + 'les capacités, et regroupe les lectures natives restantes avec leur marqueur.',
     );
+});
+
+test('le contrôle des accès natifs MORD — vérifié sur des sources injectées', () => {
+    // Un contrôle d'étanchéité qu'on n'éprouve pas finit par ne plus rien
+    // interdire : celui-ci ne cherchait que `discordClient` et `client.guilds`,
+    // et laissait donc passer `client.channels.cache` — exactement la forme qui
+    // rend `undefined` sur Fluxer. On lui soumet les deux familles, sur des
+    // sources écrites pour l'occasion et posées dans un dossier temporaire.
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-etancheite-'));
+    const ecrire = (nom, contenu) => {
+        const chemin = path.join(dossier, nom);
+        fs.writeFileSync(chemin, contenu);
+        return codeSeul(fs.readFileSync(chemin, 'utf8'));
+    };
+
+    try {
+        // ── Ce qui DOIT être refusé ──────────────────────────────────────────
+        assert.deepEqual(
+            accesNatifsInterdits(ecrire('fuite.js', [
+                "const salons = req.app.get('plateforme').client.channels.cache;",
+                'const emojis = adaptateur.client?.emojis.cache;',
+                'const rest = a.client.rest;',
+            ].join('\n'))),
+            ['client.channels', 'client.emojis', 'client.rest'],
+            'un accès natif non portable doit être signalé, nommé par son membre',
+        );
+
+        // ── Ce qui reste admis ───────────────────────────────────────────────
+        assert.deepEqual(
+            accesNatifsInterdits(ecrire('portable.js', [
+                'const moi = adaptateur.client.user;',
+                'const serveurs = adaptateur.client.guilds.cache;',
+                'const pret = adaptateur.client.isReady();',
+                'const latence = adaptateur.client.ws.ping;',
+                'const commandes = adaptateur.client.commands;',
+            ].join('\n'))),
+            [],
+            'les cinq membres que l\'adaptateur Fluxer expose réellement doivent passer',
+        );
+
+        // ── Et un commentaire qui PARLE du motif ne le déclenche pas ─────────
+        assert.deepEqual(
+            accesNatifsInterdits(ecrire('prose.js', [
+                '// Ne lisez jamais client.channels.cache ici : voir l\'en-tête.',
+                'const x = 1;',
+            ].join('\n'))),
+            [],
+            'ce fichier documente ce qu\'il interdit : il ne doit pas se refuser lui-même',
+        );
+    } finally {
+        fs.rmSync(dossier, { recursive: true, force: true });
+    }
 });
 
 test('la dernière lecture native de api/ se compte, et n\'a qu\'un appelant', () => {
