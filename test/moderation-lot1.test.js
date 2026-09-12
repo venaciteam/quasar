@@ -971,32 +971,40 @@ test('membreModifie — le serveur vient du troisième argument, et les rôles d
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  4. sendModLog, bi-format
+//  4. sendModLog, entièrement neutre
 // ═══════════════════════════════════════════════════════════════
 
-/** Guilde discord.js réduite, avec capture de ce qui part dans le salon de logs. */
-function faireGuilde({ salonPresent = true } = {}) {
+/**
+ * Portée d'écriture réduite, avec capture de ce qui part dans le salon de logs.
+ *
+ * La voie `Guild` discord.js a été retirée au lot 7 : son dernier appelant, le
+ * mode panique, reçoit désormais une portée de `api/routes/antiraid.js`. Un
+ * objet qui n'est pas une portée ne produit plus rien — c'est ce que vérifie le
+ * dernier test de cette section.
+ */
+function fairePorteeLog() {
     const envois = [];
-    const canal = { send: async (payload) => { envois.push(payload); return { id: 'msg1' }; } };
     return {
         envois,
-        guild: {
-            id: GUILDE,
-            channels: { cache: new Map(salonPresent ? [[SALON_LOG, canal]] : []) },
+        portee: {
+            guildeId: GUILDE,
+            api: { async envoyerMessage(canalId, contenu) { envois.push([canalId, contenu]); return { id: 'msg1' }; } },
         },
     };
 }
 
-test('sendModLog — voie historique : capture de référence inchangée', async () => {
-    const { guild, envois } = faireGuilde();
-    const construit = new EmbedBuilder().setTitle('🔨 Bannissement').setColor(0xe74c3c);
+test('sendModLog — un objet qui n\'est pas une portée n\'envoie rien', async () => {
+    // Ce que passait la voie historique : une `Guild` discord.js. Elle n'est plus
+    // reconnue, et le silence vaut mieux qu'une exception dans un journal.
+    const envois = [];
+    const guild = {
+        id: GUILDE,
+        channels: { cache: new Map([[SALON_LOG, { send: async (p) => { envois.push(p); } }]]) },
+    };
 
-    await sendModLog(guild, construit, 'mod_ban');
+    await sendModLog(guild, new EmbedBuilder().setTitle('🔨 Bannissement'), 'mod_ban');
 
-    assert.equal(envois.length, 1);
-    // Le builder traverse TEL QUEL : c'est ce dont dépend `sendAutomodLog` de
-    // punishments.js, seul appelant non migré de cette fonction.
-    assert.equal(envois[0].embeds[0], construit);
+    assert.deepEqual(envois, []);
 });
 
 test('sendModLog — voie neutre : le journal part par le client REST normalisé', async () => {
@@ -1013,13 +1021,9 @@ test('sendModLog — voie neutre : le journal part par le client REST normalisé
     assert.deepEqual(envois, [[SALON_LOG, neutre]]);
 });
 
-test('sendModLog — un type de log désactivé bloque les DEUX voies', async () => {
+test('sendModLog — un type de log désactivé bloque l\'envoi', async () => {
     db.prepare('UPDATE modules SET config = ? WHERE guild_id = ? AND module_name = \'moderation\'')
         .run(JSON.stringify({ logChannel: SALON_LOG, enabledLogs: { mod_warn: false } }), GUILDE);
-
-    const { guild, envois } = faireGuilde();
-    await sendModLog(guild, new EmbedBuilder(), 'mod_warn');
-    assert.deepEqual(envois, []);
 
     const neutres = [];
     await sendModLog(
@@ -1034,12 +1038,12 @@ test('sendModLog — un type de log désactivé bloque les DEUX voies', async ()
 });
 
 test('sendModLog — sans type de log, rien n\'est envoyé nulle part', async () => {
-    const { guild, envois } = faireGuilde();
+    const { portee, envois } = fairePorteeLog();
     const erreurs = [];
     const original = console.error;
     console.error = (...a) => erreurs.push(a.join(' '));
     try {
-        await sendModLog(guild, new EmbedBuilder(), undefined);
+        await sendModLog(portee, require('../bot/platform/embed').embed({ titre: 'x' }), undefined);
     } finally {
         console.error = original;
     }

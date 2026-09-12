@@ -1,21 +1,22 @@
 // ═══════════════════════════════════════════════════════════════
 //  Journal de modération
 //
-//  Bi-format, et RETENU par `api/**` (lot 7). Une seule chaîne y mène encore :
+//  Entierement neutre depuis le lot 7. La voie `Guild` discord.js n'avait qu'une
+//  chaine d'appel :
 //
 //    api/routes/antiraid.js  -> antiraid.enterPanic(guild) / liftPanic(guild)
 //    -> bot/modules/antiraid/panic.js (voie Guild)
 //    -> punishments.sendAutomodLog(guild, ...)
 //    -> sendModLog(guild, ...)
 //
-//  Le jour ou cette route recoit l'adaptateur au lieu du client, la voie
-//  historique tombe ici comme elle est deja tombee dans `bot/utils/logger.js`.
+//  La route passe desormais une portee neutre, et la voie historique est tombee
+//  sur toute la chaine — comme elle l'avait deja fait dans `bot/utils/logger.js`.
 //  La detection de portee vient de `bot/utils/errors.js`, seul endroit du depot
 //  ou elle est ecrite.
 // ═══════════════════════════════════════════════════════════════
 
 const { isLogEnabled, getLogConfig } = require('./logger');
-const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
+const { resoudrePorteeNeutre } = require('./errors');
 
 /**
  * Envoie un embed de modération dans le salon de logs du serveur.
@@ -26,12 +27,9 @@ const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
  * affiché mais ignoré est pire que pas de réglage du tout — on cherche longtemps
  * pourquoi « ça ne marche pas ».
  *
- * @param {object} cible   portée neutre (un `ctx`, ou `{ guildeId, api }`),
- *   reconnue à la présence d'un client REST normalisé ; ou `Guild` discord.js
- *   sur la voie retenue par `api/routes/antiraid.js` (cf. en-tête).
- * @param {object} contenu embed neutre, ou `EmbedBuilder`. Un embed neutre passé
- *   avec une `Guild` est rendu au vol : c'est exactement ce que fait le mode
- *   panique, dont les embeds sont neutres depuis le lot 5b.
+ * @param {object} cible   portée neutre (un `ctx`, un adaptateur, ou
+ *   `{ guildeId, api }`), reconnue à la présence d'un client REST normalisé.
+ * @param {object} contenu embed neutre
  * @param {string} logType — clé de LOG_CATEGORIES : mod_warn, mod_mute, mod_kick, mod_ban…
  */
 async function sendModLog(cible, contenu, logType) {
@@ -42,7 +40,8 @@ async function sendModLog(cible, contenu, logType) {
     }
 
     const portee = resoudrePorteeNeutre(cible);
-    const guildId = portee ? portee.guildeId : cible.id;
+    if (!portee) return;
+    const guildId = portee.guildeId;
 
     // Les types mod_* sont actifs par défaut (voir isLogEnabled) : le comportement
     // ne change donc pas pour un serveur qui n'a jamais touché à ces cases.
@@ -51,27 +50,11 @@ async function sendModLog(cible, contenu, logType) {
     const config = getLogConfig(guildId);
     if (!config.logChannel) return;
 
-    if (portee) {
-        // Pas d'équivalent du « salon absent du cache » qui fait renoncer la voie
-        // historique sans un mot : le client REST neutre ne tient pas de cache.
-        // Un salon supprimé produit donc une erreur, attrapée ici et journalisée
-        // exactement comme un échec d'envoi.
-        await portee.api.envoyerMessage(config.logChannel, contenu).catch(err => {
-            console.error(`[Quasar] Erreur envoi du log ${logType}:`, err.message);
-        });
-        return;
-    }
-
-    // ⚠️ VOIE NATIVE — une `Guild` discord.js — RETENUE par `api/**`, lot 7 :
-    //   api/routes/antiraid.js  -> antiraid.enterPanic(guild) / liftPanic(guild)
-    //   -> bot/modules/antiraid/panic.js (voie Guild)
-    //   -> punishments.sendAutomodLog(guild) -> ICI.
-    // C'est la seule chaîne qui y mène encore. Elle tombe le jour où la route du
-    // dashboard passe l'adaptateur au lieu du client.
-    const channel = cible.channels.cache.get(config.logChannel);
-    if (!channel) return;
-
-    await channel.send({ embeds: [versEmbedDiscord(contenu)] }).catch(err => {
+    // Pas d'équivalent du « salon absent du cache » qui faisait renoncer la voie
+    // historique sans un mot : le client REST neutre ne tient pas de cache. Un
+    // salon supprimé produit donc une erreur, attrapée ici et journalisée
+    // exactement comme un échec d'envoi.
+    await portee.api.envoyerMessage(config.logChannel, contenu).catch(err => {
         console.error(`[Quasar] Erreur envoi du log ${logType}:`, err.message);
     });
 }

@@ -828,11 +828,21 @@ function mountDashboard(app) {
 
 /**
  * App complète : bot + API + dashboard.
- * @param {import('discord.js').Client} discordClient
+ *
+ * ⚠️ Reçoit l'ADAPTATEUR de plateforme (DA §4), pas le client natif. C'est le
+ * point de bascule du lot 7 : les routes lisent le client REST normalisé
+ * (`adaptateur.api`) et les capacités déclarées, jamais `client.guilds.cache`.
+ * Le client natif reste accessible par `adaptateur.client`, et `api/` ne s'en
+ * sert plus que par `api/services/plateforme.js`, où chaque lecture restante
+ * est marquée et comptée.
+ *
+ * @param {object} adaptateur adaptateur de plateforme. Un objet vide est
+ *        accepté : c'est ce que passent les tests qui montent l'API sans bot,
+ *        et toutes les routes le traitent comme « bot non connecté ».
  * @param {'bot'|'public'} mode — en `public`, '/' sert la vitrine et la page de
  *        connexion du dashboard reste accessible sur /dashboard.
  */
-function createApi(discordClient, mode = 'bot') {
+function createApi(adaptateur, mode = 'bot') {
     // Les routes sont requises ici, et non en tête de module : leur chargement
     // tire toute la chaîne bot/BDD (better-sqlite3, discord.js). Le mode `site`
     // monte une app qui n'en a aucun besoin — il ne doit pas la payer au simple
@@ -869,6 +879,7 @@ function createApi(discordClient, mode = 'bot') {
     const antiraidRoutes = require('./routes/antiraid');
     const honeypotRoutes = require('./routes/honeypot');
     const deferRoutes = require('./routes/defer');
+    const plateformeRoutes = require('./routes/plateforme');
     const { isSuspended } = require('../bot/utils/suspension');
 
     const app = express();
@@ -885,8 +896,9 @@ function createApi(discordClient, mode = 'bot') {
     mountBodyParsers(app);
     app.use(cookieParser());
 
-    // Rendre le client Discord accessible aux routes
-    app.set('discordClient', discordClient);
+    // Rendre l'adaptateur accessible aux routes. Une seule clé : les routes
+    // passent par api/services/plateforme.js, qui sait la lire.
+    app.set('plateforme', adaptateur || null);
 
     mountNoStore(app);
     mountFeedbackRelay(app);
@@ -894,6 +906,9 @@ function createApi(discordClient, mode = 'bot') {
     // API routes
     app.use('/auth', authRoutes);
     app.use('/api/bot', botRoutes);
+    // Capacités de la plateforme active. Montée tôt et sans garde d'accès : la
+    // page de connexion la lit avant d'avoir le moindre jeton.
+    app.use('/api', plateformeRoutes);
 
     // Enforcement de la suspension (coupure ciblée, sous-lot E) : refuse toute
     // ÉCRITURE de configuration sur un serveur suspendu par la propriétaire.

@@ -24,13 +24,59 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb, SCOPE_COLUMNS } = require('../services/database');
-const {
-    LIMITS, TRIGGERS, ACTIONS, PRESETS,
-    checkPermissions, describeDiscordError, syncGuildRules,
-    countByTrigger, serializeRule, findRow, nowSeconds,
-} = require('../../bot/utils/automodSync');
+const plateforme = require('../services/plateforme');
 
 const router = express.Router({ mergeParams: true });
+
+// ═══════════════════════════════════════════════════════════════
+//  Chargement PARESSEUX du miroir AutoMod
+//
+//  `bot/utils/automodSync.js` est une exception nommée du test d'étanchéité :
+//  il importe discord.js parce qu'il pilote les règles NATIVES de Discord, qui
+//  n'ont aucun équivalent ailleurs (DA §2.2). Importé en tête de ce fichier, il
+//  faisait charger toute la bibliothèque au démarrage — y compris dans un
+//  processus Fluxer, qui n'a rien à en faire.
+//
+//  Les symboles sont donc résolus au premier appel, et seulement après le garde
+//  de capacité ci-dessous : sur une plateforme sans AutoMod, discord.js n'est
+//  jamais évalué par cette route.
+// ═══════════════════════════════════════════════════════════════
+
+let LIMITS;
+let TRIGGERS;
+let ACTIONS;
+let PRESETS;
+let checkPermissions;
+let describeDiscordError;
+let syncGuildRules;
+let countByTrigger;
+let serializeRule;
+let findRow;
+let nowSeconds;
+
+function chargerMiroirAutomod() {
+    if (LIMITS) return;
+    ({
+        LIMITS, TRIGGERS, ACTIONS, PRESETS,
+        checkPermissions, describeDiscordError, syncGuildRules,
+        countByTrigger, serializeRule, findRow, nowSeconds,
+    } = require('../../bot/utils/automodSync'));
+}
+
+// Garde de capacité, devant TOUTES les routes de ce module. 404 et non 403 : la
+// fonctionnalité n'existe pas sur cette plateforme, elle n'est pas refusée à
+// cette personne. Le dashboard masque déjà l'onglet ; ce garde ferme l'API, qui
+// est le seul contrat qui compte.
+router.use((req, res, next) => {
+    if (!plateforme.capacites(req).automod) {
+        return res.status(404).json({
+            error: 'Cette plateforme n\'a pas de modération automatique native : ce module n\'y existe pas.',
+            hint: 'Les autres protections de la page (escalade des avertissements, anti-raid, salon piège) fonctionnent normalement.',
+        });
+    }
+    chargerMiroirAutomod();
+    next();
+});
 
 const SNOWFLAKE = /^\d{17,20}$/;
 
@@ -48,8 +94,10 @@ const UNSUPPORTED_SCOPE_KEYS = SCOPE_KEYS.filter(k => !MANAGED_SCOPE_KEYS.includ
  * @returns {{ guild: object|null, error: { status: number, body: object }|null }}
  */
 function resolveGuild(req) {
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds?.cache?.get(req.params.guildId);
+    // Serveur NATIF, et c'est assumé : l'AutoMod de Discord n'a pas d'équivalent
+    // portable, et ce routeur est gardé par `capacites.automod`. Cf. la note de
+    // `plateforme.guildeNative`.
+    const guild = plateforme.guildeNative(req, req.params.guildId);
     if (!guild) {
         return {
             guild: null,

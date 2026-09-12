@@ -1,6 +1,6 @@
 const path = require('path');
 const { resolvePlatform } = require('./platform');
-const { getDb, effectiveAccessMode } = require('../api/services/database');
+const { getDb } = require('../api/services/database');
 const { buildMentionPayload } = require('../api/services/mentions');
 const { deployCommands } = require('./platform/discord/deploy');
 const { DISABLED_COMMAND_FILES } = require('./utils/disabledCommands');
@@ -10,119 +10,22 @@ const { isSuspended } = require('./utils/suspension');
 // ═══════════════════════════════════════════════════════════════
 //  Commandes personnalisées — contrôle d'accès
 //
-//  Une commande custom est déclenchable à volonté par n'importe qui, et elle
-//  rejoue désormais les mentions de son embed (@everyone compris) comme celles
+//  Une commande personnalisée est déclenchable à volonté par n'importe qui, et
+//  elle rejoue les mentions de son embed (@everyone compris) comme celles
 //  écrites dans sa réponse texte. C'est ce contrôle d'accès, et lui seul, qui
 //  empêche que `/faq` devienne un bouton « pinger tout le serveur » à
 //  disposition de tous. Il est donc appliqué côté bot, à l'exécution — jamais
 //  uniquement dans l'interface du dashboard.
 //
-//  Trois modes exclusifs, portés par la ligne `custom_commands` :
-//    'everyone' → tout le monde (défaut, et comportement historique)
-//    'admins'   → permission Administrateur de Discord, la même notion que
-//                 celle utilisée par /log, /unlog et le middleware
-//                 requireGuildAdmin du dashboard
-//    'role'     → les porteurs d'un rôle précis (access_role_id)
-//
-//  Dans tous les modes, un administrateur du serveur passe (cf. le
-//  contournement dans checkCustomCommandAccess) : « réservée au rôle X »
-//  signifie donc en pratique « rôle X ou administrateur ».
+//  ⚠️ La règle vit dans `bot/platform/accesCommandePersonnalisee.js` et est
+//  exposée par les deux adaptateurs sous `platform.verifierAccesCommandePersonnalisee`.
+//  Ce fichier en portait sa PROPRE copie, écrite pour discord.js, pendant que le
+//  parseur Fluxer en portait une seconde. Deux copies d'un contrôle d'accès
+//  divergent, et la divergence ne se voit pas : elle s'observe le jour où une
+//  commande restreinte répond à quelqu'un qui n'aurait pas dû pouvoir la lancer.
+//  Le bootstrap se contente donc de fournir ce que la règle demande — le membre
+//  NORMALISÉ et les rôles du serveur — et de traduire son refus en éphémère.
 // ═══════════════════════════════════════════════════════════════
-
-// Un membre peut arriver en objet discord.js (roles = gestionnaire avec cache)
-// ou en membre brut de l'API (roles = tableau d'IDs). Les deux sont gérés.
-function memberHasRole(member, roleId) {
-    const roles = member?.roles;
-    if (!roles) return false;
-    if (Array.isArray(roles)) return roles.includes(roleId);
-    return !!roles.cache?.has(roleId);
-}
-
-// Permission Administrateur du membre à l'origine de l'interaction. La
-// plateforme l'expose soit sur l'interaction, soit sur le membre ; si aucun jeu
-// de permissions exploitable n'est disponible, on répond « non » plutôt que de
-// transformer un « je ne sais pas » en droit accordé.
-//
-// `permissions` est la table de la plateforme active (nom canonique -> bitfield),
-// et non un drapeau discord.js : c'est ce qui rend ce contrôle d'accès portable
-// sans être réécrit.
-function memberIsAdministrator(interaction, permissions) {
-    const perms = interaction.memberPermissions || interaction.member?.permissions;
-    return typeof perms?.has === 'function' && perms.has(permissions.ADMINISTRATOR);
-}
-
-/**
- * @returns {null|{title:string,cause:string,action:string}} null = accès accordé,
- *          sinon le refus à afficher en éphémère.
- */
-function checkCustomCommandAccess(interaction, row, permissions) {
-    // Repli sur le plus restrictif si la valeur en base n'est pas reconnue
-    // (cf. effectiveAccessMode). On le journalise : c'est le signe d'une base
-    // incohérente, et la commande devient inaccessible aux non-administrateurs.
-    const mode = effectiveAccessMode(row.access_mode);
-    if (row.access_mode && mode !== row.access_mode) {
-        console.warn(`[Quasar] Commande custom /${row.name} : mode d'accès inconnu "${row.access_mode}" — repli sur "${mode}".`);
-    }
-
-    if (mode === 'everyone') return null;
-
-    // Hors serveur (message privé) il n'y a ni membre ni rôle : rien n'est
-    // vérifiable, donc rien n'est accordé. En pratique les commandes custom sont
-    // déployées par serveur et n'arrivent jamais en MP, mais on ne s'appuie pas
-    // sur cette hypothèse pour décider d'un droit.
-    if (!interaction.guild || !interaction.member) {
-        return {
-            title: 'Commande réservée au serveur',
-            cause: 'L\'accès à cette commande dépend de vos rôles ou de vos permissions, et je n\'arrive pas à les consulter ici.',
-            action: 'Relancez-la depuis un salon du serveur concerné. Si vous y êtes déjà, réessayez dans un instant.',
-        };
-    }
-
-    // Contournement administrateur — appliqué à TOUS les modes, et AVANT leur
-    // évaluation. Ce n'est pas un trou de sécurité, c'est ce qui rend le réglage
-    // réparable :
-    //   1. on ne s'enferme pas dehors de sa propre commande (configurer un mode
-    //      « rôle » sans s'être attribué ce rôle est l'erreur la plus courante) ;
-    //   2. une configuration cassée — rôle supprimé du serveur, mode inconnu en
-    //      base — resterait sinon bloquée pour tout le monde, y compris pour les
-    //      seules personnes capables de la corriger.
-    // Un administrateur peut de toute façon s'attribuer n'importe quel rôle :
-    // la restriction ne lui interdisait rien, elle ne faisait que le gêner.
-    if (memberIsAdministrator(interaction, permissions)) return null;
-
-    if (mode === 'admins') {
-        return {
-            title: 'Commande réservée aux administrateurs',
-            cause: 'Cette commande personnalisée est configurée pour les membres ayant la permission « Administrateur » sur ce serveur.',
-            action: 'Demandez à un administrateur de la lancer, ou d\'ouvrir son accès depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    // mode === 'role'
-    const roleId = row.access_role_id;
-
-    // Rôle configuré puis supprimé du serveur : plus personne ne peut le porter.
-    // On refuse (retomber sur « tout le monde » ouvrirait en grand une commande
-    // volontairement restreinte) et on le dit clairement, pour que la personne
-    // puisse le signaler plutôt que de croire à un bug. Les administrateurs, eux,
-    // sont déjà passés plus haut : ils peuvent utiliser la commande et surtout la
-    // reconfigurer.
-    if (!roleId || !interaction.guild.roles.cache.has(roleId)) {
-        return {
-            title: 'Commande momentanément indisponible',
-            cause: 'Cette commande est réservée à un rôle qui n\'existe plus sur le serveur : en dehors des administrateurs, personne ne peut donc l\'utiliser pour l\'instant.',
-            action: 'Signalez-le à un administrateur : il peut choisir un autre rôle depuis le dashboard ou `/cmd edit`.',
-        };
-    }
-
-    if (memberHasRole(interaction.member, roleId)) return null;
-
-    return {
-        title: 'Commande réservée à un rôle',
-        cause: `Cette commande personnalisée est réservée aux membres ayant le rôle <@&${roleId}>, ainsi qu'aux administrateurs du serveur.`,
-        action: 'Si vous pensez que ce rôle devrait vous être attribué, demandez-le à un administrateur.',
-    };
-}
 
 /**
  * Câble le bot sur la plateforme active et rend l'ADAPTATEUR, pas le client.
@@ -328,18 +231,28 @@ function createBot({ plateforme = null } = {}) {
 
             if (customCmd) {
                 try {
-                    // Contrôle d'accès AVANT toute réponse : un refus est éphémère,
-                    // rien n'est jamais posté dans le salon.
-                    const refus = checkCustomCommandAccess(interaction, customCmd, platform.permissions);
-                    if (refus) return userError(interaction, refus);
-
                     // Contexte NEUTRE, y compris ici : une commande
                     // personnalisée n'a pas de descripteur — elle est définie en
                     // base, serveur par serveur — mais elle répond par la même
                     // voie que les autres. C'était le dernier endroit du bot à
                     // construire un corps de message Discord à la main, et le
                     // dernier appelant de `buildDiscordEmbed`.
+                    //
+                    // Construit AVANT le contrôle d'accès, et ce n'est pas un
+                    // relâchement : créer un contexte n'écrit rien nulle part,
+                    // et c'est lui qui porte le membre normalisé que la règle
+                    // d'accès attend. Un refus reste éphémère, et rien n'est
+                    // jamais posté dans le salon.
                     const ctx = platform.contexteCommandePersonnalisee(interaction, interaction.commandName);
+
+                    // Règle partagée avec le parseur de l'autre plateforme. Les
+                    // rôles du serveur ne servent qu'à distinguer « rôle
+                    // supprimé » de « rôle que vous n'avez pas » : omis, le
+                    // contrôle d'existence est simplement sauté.
+                    const refus = platform.verifierAccesCommandePersonnalisee(customCmd, ctx.membre, {
+                        roles: interaction.guild?.roles?.cache || null,
+                    });
+                    if (refus) return userError(interaction, refus);
 
                     if (customCmd.embed_id) {
                         const embedRow = db.prepare(
@@ -575,8 +488,11 @@ async function demarrerServices(client, platform = null) {
 
     // Rétention — Purge des serveurs quittés et des sanctions expirées
     try {
-        const retention = require('./modules/retention');
-        retention.start(client);
+        // L'ADAPTATEUR : ce module SUPPRIME des données, et il lui faut la
+        // distinction que le cache de discord.js ne savait pas exprimer —
+        // `listerGuildes()` rend `null` quand la connexion n'est pas établie,
+        // `[]` quand le bot n'est réellement sur aucun serveur.
+        if (platform) require('./modules/retention').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
     }
@@ -595,7 +511,9 @@ async function demarrerServices(client, platform = null) {
     // Effacement (art. 17) — Boucle de suivi des demandes de suppression
     // (échéances légales, alertes owner).
     try {
-        require('./modules/erasure').start(client);
+        // L'ADAPTATEUR : la relance part en message privé par `ouvrirMessagePrive`
+        // puis `envoyerMessage`, et non plus par `client.users.fetch()`.
+        if (platform) require('./modules/erasure').start(platform);
     } catch (e) {
         console.error('[Quasar] Erreur demarrage effacement:', e.message || e);
     }

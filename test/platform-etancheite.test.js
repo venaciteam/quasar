@@ -52,7 +52,7 @@ const DOSSIERS_AUTORISES = Object.freeze([
 /**
  * Fichiers nommément autorisés à importer `discord.js`, avec leur raison.
  *
- * Aucun n'est un oubli de migration : ce sont les quatre cas où le portage
+ * Aucun n'est un oubli de migration : ce sont les trois cas où le portage
  * n'avait pas de sens, et ils sont tous documentés en tête de leur fichier.
  */
 const FICHIERS_AUTORISES = Object.freeze({
@@ -68,17 +68,21 @@ const FICHIERS_AUTORISES = Object.freeze({
 
 /**
  * Fichiers dont l'import de `discord.js` est une branche TRANSITION retenue par
- * un appelant dans `api/`. Ils sont la liste de travail du lot 7 : le jour où la
- * route citée reçoit l'adaptateur, la branche tombe et le fichier sort d'ici.
+ * un appelant dans `api/`.
  *
- * ⚠️ Le contrôle ne se contente PAS de la liste : chaque fichier doit porter un
- * marqueur `TRANSITION` qui NOMME sa route. Sans cette exigence, cette liste
- * deviendrait un endroit où ranger ce qu'on ne veut pas migrer.
+ * ⚠️ VIDE, et c'est le résultat du lot 7. Les deux dérogations qui vivaient ici
+ * — `bot/commands/customcmd.js` pour `api/routes/customcmds.js`,
+ * `bot/modules/antiraid/panic.js` pour `api/routes/antiraid.js` — sont tombées
+ * le jour où `createApi` a reçu l'ADAPTATEUR au lieu du client natif. Avec
+ * elles sont tombées la voie `Guild` de `punishments.sendAutomodLog`, celle de
+ * `modlog.sendModLog` et le pont `assignableRole.describeForApi`, dont ces deux
+ * fichiers étaient le dernier chemin d'accès.
+ *
+ * La table reste en place, avec son contrôle : une dérogation future devra
+ * NOMMER la route qui la retient, et ne sera donc jamais un endroit où ranger ce
+ * qu'on ne veut pas migrer.
  */
-const TRANSITIONS_RETENUES_PAR_API = Object.freeze({
-    'bot/commands/customcmd.js': 'api/routes/customcmds.js',
-    'bot/modules/antiraid/panic.js': 'api/routes/antiraid.js',
-});
+const TRANSITIONS_RETENUES_PAR_API = Object.freeze({});
 
 // ─── Balayage ───────────────────────────────────────────────────────────────
 
@@ -270,6 +274,26 @@ test('le contrat neutre ne charge pas discord.js non plus', () => {
     `;
     const sortie = execFileSync(process.execPath, ['-e', script], { cwd: RACINE, encoding: 'utf8' });
     assert.equal(sortie, '0', 'une pièce du contrat neutre importe l\'adaptateur');
+});
+
+test('api/ ne lit le client natif que par api/services/plateforme.js', () => {
+    // Le lot 7 a fait passer `createApi` du client natif à l'ADAPTATEUR. La
+    // clé `discordClient` n'existe plus, et les quelques lectures qui n'ont pas
+    // encore de méthode au contrat sont rassemblées dans un seul fichier, où
+    // elles se comptent (cf. son en-tête).
+    const dossierApi = path.join(RACINE, 'api');
+    const fautifs = [];
+    for (const relatif of sources(dossierApi)) {
+        if (relatif === 'api/services/plateforme.js') continue;
+        const code = codeSeul(fs.readFileSync(path.join(RACINE, relatif), 'utf8'));
+        if (/discordClient/.test(code)) fautifs.push(`${relatif} (discordClient)`);
+        if (/\.client\s*\?\.\s*guilds|\.client\.guilds/.test(code)) fautifs.push(`${relatif} (client.guilds)`);
+    }
+    assert.deepEqual(
+        fautifs, [],
+        'Passez par api/services/plateforme.js : il expose le client REST normalisé, '
+        + 'les capacités, et regroupe les lectures natives restantes avec leur marqueur.',
+    );
 });
 
 test('le routage des clics ne connaît plus aucun préfixe historique', () => {

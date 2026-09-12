@@ -517,11 +517,13 @@ test('punishments — unreachableTarget : une cible non neutre ne décide de rie
     );
 });
 
-test('punishments — sendAutomodLog accepte les deux formats', async () => {
+test('punishments — sendAutomodLog n\'écrit que par la voie neutre', async () => {
+    // La voie `Guild` discord.js a été retirée au lot 7 : son dernier appelant,
+    // le mode panique, reçoit une portée de `api/routes/antiraid.js`. Une guilde
+    // ne poste plus rien — et surtout pas en silence par un autre chemin.
     const { guild, envois } = faireGuilde();
-    const builder = new EmbedBuilder().setTitle('Alerte');
-    await sendAutomodLog(guild, builder, 'mod_ban', SALON_LOG);
-    assert.deepEqual(envois[0], { embeds: [builder] });
+    await sendAutomodLog(guild, new EmbedBuilder().setTitle('Alerte'), 'mod_ban', SALON_LOG);
+    assert.deepEqual(envois, []);
 
     const { portee, appels } = fairePortee();
     const neutre = buildLogEmbed({ title: 'Alerte', color: 1, targetId: CIBLE, reason: 'r', source: 'antiraid' });

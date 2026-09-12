@@ -7,6 +7,7 @@
 const express = require('express');
 const { requireAuth, requireOwner } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const router = express.Router();
 
 // Valeurs autorisées
@@ -77,24 +78,21 @@ router.put('/', requireAuth, requireOwner, (req, res) => {
         db.prepare(`INSERT OR REPLACE INTO bot_presence (id, status, activity_type, activity_text)
                     VALUES (1, ?, ?, ?)`).run(status, actType, actType === -1 ? '' : text);
 
-        // Appliquer en temps réel sur le bot
-        const client = req.app.get('discordClient');
-        if (client?.user) {
-            if (actType === -1) {
+        // Appliquer en temps réel sur le bot.
+        //
+        // ⚠️ Le CONTRAT ne couvre pas la présence : ni la DA §4.3 ni les deux
+        // adaptateurs n'exposent de méthode pour la définir, et l'objet de
+        // présence (statut + type d'activité numéroté) est une forme propre à
+        // Discord. On passe donc par le client natif, en vérifiant qu'il sait
+        // faire : sur une plateforme qui ne le sait pas, le réglage est
+        // enregistré en base et simplement pas appliqué — la ligne restera
+        // valable le jour où la méthode existera.
+        const client = plateforme.adaptateur(req)?.client;
+        if (typeof client?.user?.setPresence === 'function') {
+            client.user.setPresence(actType === -1
                 // Aucune activité — statut uniquement
-                client.user.setPresence({
-                    status: status,
-                    activities: []
-                });
-            } else {
-                client.user.setPresence({
-                    status: status,
-                    activities: [{
-                        name: text,
-                        type: actType
-                    }]
-                });
-            }
+                ? { status, activities: [] }
+                : { status, activities: [{ name: text, type: actType }] });
         }
 
         console.log(`[Quasar] Présence mise à jour par ${req.user.username}: ${status}${actType === -1 ? ' (aucune activité)' : ` — ${text} (type ${actType})`}`);

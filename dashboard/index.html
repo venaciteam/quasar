@@ -23,9 +23,15 @@
         <div class="landing-logo">Qua<span>sar</span></div>
         <p class="landing-subtitle">Connectez-vous pour accéder au dashboard</p>
 
-        <a href="/auth/login" class="landing-btn">
-            <img src="/dashboard/img/discord-logo.png" style="width:22px;height:22px;filter:brightness(0) invert(1)" alt="">
-            Se connecter avec Discord
+        <!-- Marque de la plateforme active. Les valeurs écrites ici sont celles
+             de Discord : c'est ce qui s'affiche avant la réponse de
+             /api/plateforme, et sur une instance qui n'aurait pas encore cette
+             route. Le script plus bas les remplace si la plateforme diffère —
+             côté Discord, il ne change rien, pas un caractère. -->
+        <a href="/auth/login" class="landing-btn" id="login-btn">
+            <img src="/dashboard/img/discord-logo.png" id="login-logo"
+                 style="width:22px;height:22px;filter:brightness(0) invert(1)" alt="">
+            <span id="login-label">Se connecter avec Discord</span>
         </a>
     </div>
 
@@ -66,6 +72,23 @@
         VNCT.config.discordWebhookUrl = '/api/feedback/vnct';
     </script>
     <script src="/dashboard/js/instance.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/plateforme.js?v=__VERSION__"></script>
+    <script>
+        // Marque de la plateforme active : le bouton, son logo et son libellé.
+        // Le texte porte le nom, il ne dépend pas de l'image — un logo qui ne
+        // charge pas ne doit pas laisser un bouton muet.
+        QuasarPlateforme.charger().then(function () {
+            var nom = QuasarPlateforme.libelle();
+            var label = document.getElementById('login-label');
+            if (label) label.textContent = 'Se connecter avec ' + nom;
+            var logo = document.getElementById('login-logo');
+            if (!logo) return;
+            if (QuasarPlateforme.nom === 'discord') return;
+            // Pas de logo pour cette plateforme : on retire l'image plutôt que
+            // d'afficher celle d'une autre marque.
+            logo.remove();
+        });
+    </script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/dashboard/sw.js').then(function(reg) {

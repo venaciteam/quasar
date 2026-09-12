@@ -575,24 +575,20 @@ function versErreurNeutre({ title, cause, action }) {
 // ═══════════════════════════════════════════════════════════════
 //  Enregistrement d'une commande personnalisée auprès de la plateforme
 //
-//  DEUX VOIES, et c'est temporaire :
+//  DEUX APPELANTS, UNE SEULE VOIE : l'adaptateur actif. La commande
+//  (`/cmd create|edit|delete`) le tient par son contexte, la route du dashboard
+//  (`api/routes/customcmds.js`) le reçoit de `createApi`. Les deux fabriques
+//  ci-dessous rendent la même paire `{ deployer, retirer }`, si bien que
+//  `syncCustomCommandRename` n'a pas à savoir d'où elle vient.
 //
-//   • depuis la COMMANDE (`/cmd create|edit|delete`) — `ctx.deployerCommandeServeur`
-//     et `ctx.retirerCommandeServeur`, qui délèguent à l'adaptateur actif. Rien
-//     n'est monté, rien n'est authentifié une seconde fois, et l'appel est
-//     inerte là où `capacites.interactions` est faux. C'est la voie normale ;
-//     `enregistrementNeutre(ctx)` ci-dessous la construit.
+//  Jusqu'au lot 7, la route montait son PROPRE client REST discord.js sur les
+//  variables d'environnement, faute de recevoir l'adaptateur : c'étaient les
+//  trois derniers `require('discord.js')` de bot/commands/ hors famille
+//  musique. Ils sont tombés avec la nouvelle signature de `createApi`.
 //
-//   • depuis le DASHBOARD (`api/routes/customcmds.js`) — les quatre fonctions
-//     qui suivent, avec leur propre client REST monté sur les variables
-//     d'environnement. La route ne reçoit ni adaptateur ni client (`createApi()`
-//     ne reçoit que le client natif), et `resolvePlatform()` n'est pas une
-//     issue : il INSTANCIE un adaptateur, donc un second client discord.js.
-//
-//  ⚠️ TRANSITION : la seconde voie est RETENUE par `api/routes/customcmds.js`.
-//  Elle tombe au lot 7, quand la route recevra l'adaptateur — et avec elle les
-//  trois `require('discord.js')` différés de ce fichier, les derniers de
-//  bot/commands/ hors famille musique.
+//  L'appel est INERTE là où `capacites.interactions` est faux : sur Fluxer, une
+//  commande personnalisée est une ligne de `custom_commands` que le parseur
+//  consulte, il n'y a rien à enregistrer auprès de la plateforme.
 // ═══════════════════════════════════════════════════════════════
 
 /**
@@ -604,7 +600,7 @@ function versErreurNeutre({ title, cause, action }) {
  *
  * @param {object} ctx contexte de commande
  * @returns {{deployer: Function, retirer: Function}} même signature que
- *   `deployCustomCommand` / `removeCustomCommand`, pour être interchangeables.
+ *   `enregistrementAdaptateur`, pour être interchangeables.
  */
 function enregistrementNeutre(ctx) {
     return {
@@ -616,60 +612,31 @@ function enregistrementNeutre(ctx) {
     };
 }
 
-/** Client REST Discord, construit à la demande (le token n'est lu qu'à l'appel). */
-// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
-function restClient() {
-    const { REST } = require('discord.js');
-    return new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-}
-
 /**
- * Enregistre une commande personnalisée auprès de Discord.
+ * Même paire, construite à partir de l'ADAPTATEUR lui-même.
  *
- * La description est construite par `buildCustomCommandDescription()`, la même
- * fonction qu'utilise le redéploiement au démarrage : sans ça, une commande
- * changerait de libellé au premier reboot suivant sa création.
+ * C'est ce que consomme `api/routes/customcmds.js` : une route n'a pas de
+ * contexte de commande, mais elle reçoit l'adaptateur depuis `createApi`. Les
+ * deux méthodes portent ici le serveur en premier argument — l'adaptateur, lui,
+ * n'en désigne aucun.
  *
- * @param {string|null} response texte de réponse de la commande (null = embed).
- * @returns {Promise<boolean>} false si Discord a refusé — l'appelant décide quoi
- *          en dire, il n'y a rien à annuler côté base (cf. syncCustomCommandRename).
+ * @param {object|null} adaptateur
+ * @returns {{deployer: Function, retirer: Function}} inerte si l'adaptateur est
+ *   absent : le bot n'est pas connecté, il n'y a rien à enregistrer et rien à
+ *   annuler côté base. `false` remonte alors comme un refus de la plateforme,
+ *   qui se corrige au prochain démarrage (cf. syncCustomCommandRename).
  */
-// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
-async function deployCustomCommand(guildId, name, response) {
-    const { Routes } = require('discord.js');
-
-    try {
-        await restClient().post(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guildId), {
-            body: { name, description: buildCustomCommandDescription({ name, response }), type: 1 }
-        });
-        return true;
-    } catch (e) {
-        console.error('[Quasar] Erreur déploiement commande custom:', e.message);
-        return false;
+function enregistrementAdaptateur(adaptateur) {
+    if (!adaptateur || typeof adaptateur.deployerCommandeServeur !== 'function') {
+        return { deployer: async () => false, retirer: async () => false };
     }
-}
-
-/**
- * Désenregistre une commande personnalisée auprès de Discord.
- * @returns {Promise<boolean>} true si la commande n'est plus enregistrée (y
- *          compris quand elle n'y était déjà pas).
- */
-// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
-async function removeCustomCommand(guildId, name) {
-    const { Routes } = require('discord.js');
-
-    try {
-        const rest = restClient();
-        const cmds = await rest.get(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, guildId));
-        const cmd = cmds.find(c => c.name === name);
-        if (cmd) {
-            await rest.delete(Routes.applicationGuildCommand(process.env.DISCORD_CLIENT_ID, guildId, cmd.id));
-        }
-        return true;
-    } catch (e) {
-        console.error('[Quasar] Erreur suppression commande custom:', e.message);
-        return false;
-    }
+    return {
+        deployer: (guildId, name, response) => adaptateur.deployerCommandeServeur(guildId, {
+            nom: name,
+            description: buildCustomCommandDescription({ name, response }),
+        }),
+        retirer: (guildId, name) => adaptateur.retirerCommandeServeur(guildId, name),
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -698,16 +665,16 @@ async function removeCustomCommand(guildId, name) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * @param {{deployer: Function, retirer: Function}} [enregistrement] voie
- *   d'enregistrement. Par défaut le client REST monté sur l'environnement —
- *   celle de la route du dashboard ; la commande passe celle de son contexte
- *   neutre (`enregistrementNeutre`). Les deux ont la même signature, et cette
- *   fonction n'a donc pas à savoir laquelle elle emprunte.
+ * @param {{deployer: Function, retirer: Function}} enregistrement voie
+ *   d'enregistrement : `enregistrementNeutre(ctx)` depuis la commande,
+ *   `enregistrementAdaptateur(adaptateur)` depuis la route du dashboard. Les
+ *   deux ont la même signature, et cette fonction n'a donc pas à savoir
+ *   laquelle elle emprunte. OBLIGATOIRE : il n'y a plus de voie par défaut
+ *   montée sur les variables d'environnement.
  * @returns {Promise<{warning:string|null}>} avertissement à afficher, ou null.
  */
-async function syncCustomCommandRename(guildId, oldName, newName, response, enregistrement = null) {
-    const deployer = enregistrement?.deployer || deployCustomCommand;
-    const retirer = enregistrement?.retirer || removeCustomCommand;
+async function syncCustomCommandRename(guildId, oldName, newName, response, enregistrement) {
+    const { deployer, retirer } = enregistrement;
 
     const posee = await deployer(guildId, newName, response);
     // Tentée quoi qu'il arrive : l'ancienne entrée ne correspond plus à aucune
@@ -729,10 +696,9 @@ Object.assign(module.exports, {
     normalizeCustomCommandName,
     reservedCommandNames,
     enregistrementNeutre,
+    enregistrementAdaptateur,
     validateCustomCommandCreate,
     validateCustomCommandRename,
     updateCustomCommand,
-    deployCustomCommand,
-    removeCustomCommand,
     syncCustomCommandRename,
 });

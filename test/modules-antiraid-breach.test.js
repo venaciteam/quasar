@@ -64,23 +64,6 @@ db.prepare(`
  * Guilde discord.js réduite à ce que l'anti-raid et le mode panique en lisent.
  * `envois` collecte tout ce qui part vers le salon de logs.
  */
-function faireGuilde({ memberCount = 42 } = {}) {
-    const envois = [];
-    // `send` doit rendre une valeur VRAIE : `sendAutomodLog` retombe sur le
-    // modlog global quand l'envoi au salon dédié ne rend rien, et le message
-    // partirait alors deux fois.
-    const salon = { send: async (payload) => { envois.push(payload); return { id: 'log1' }; } };
-    const guilde = {
-        id: GUILDE,
-        memberCount,
-        channels: { cache: new Map([[SALON_LOG, salon]]) },
-        client: { user: { id: BOT } },
-        setIncidentActions: async () => {},
-        disableInvites: async () => {},
-    };
-    return { guilde, envois };
-}
-
 /**
  * Client REST normalisé, réduit aux méthodes que ce lot emprunte. Chaque appel
  * est tracé : c'est la preuve que la voie neutre ne passe QUE par le contrat.
@@ -220,19 +203,23 @@ const ligneDePanique = () => db.prepare('SELECT * FROM antiraid_panic WHERE guil
 const oublierPanique = () => db.prepare('DELETE FROM antiraid_panic WHERE guild_id = ?').run(GUILDE);
 
 test('anti-raid — le message de levée du mode panique sort en embed neutre', async () => {
-    const { guilde, envois } = faireGuilde();
+    // Portée d'écriture, exactement celle que `api/routes/antiraid.js` passe
+    // depuis le lot 7 : la voie `Guild` discord.js n'existe plus.
+    const { portee, api } = fairePortee();
     db.prepare(`
         INSERT INTO antiraid_panic (guild_id, method, expires_at, previous_invites_disabled, reason)
         VALUES (?, 'incident_actions', ?, 0, 'test')
         ON CONFLICT(guild_id) DO UPDATE SET method = excluded.method, expires_at = excluded.expires_at
     `).run(GUILDE, nowSec() - 5);
 
-    const resultat = await liftPanic(guilde, { liftedBy: '777777777777777777', logChannelId: SALON_LOG });
+    const resultat = await liftPanic(portee, { liftedBy: '777777777777777777', logChannelId: SALON_LOG });
 
     assert.deepEqual(resultat, { ok: true });
+    const envois = api.appels.filter(a => a[0] === 'envoyerMessage');
     assert.equal(envois.length, 1);
+    assert.equal(envois[0][1], SALON_LOG);
 
-    const rendu = corpsEnvoye(envois[0].embeds[0]);
+    const rendu = corpsEnvoye(envois[0][2]);
     assert.equal(rendu.title, '✅ Mode panique levé');
     assert.equal(rendu.color, 0x2ecc71);
     assert.deepEqual(rendu.fields, [

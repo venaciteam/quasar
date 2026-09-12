@@ -37,39 +37,30 @@
 //  Si les invitations étaient DÉJÀ en pause avant mon intervention, la levée ne
 //  les rouvre pas : ce n'était pas ma décision, ce n'est pas à moi de la défaire.
 //
-//  ─── Bi-format, RETENU par api/** (lot 7) ──────────────────────────────────
+//  ─── Entièrement neutre ────────────────────────────────────────────────────
 //
-//  ⚠️ C'est le dernier module bi-format de `bot/`, et il le reste pour une seule
-//  raison : `api/routes/antiraid.js` appelle `enterPanic(guild, …)` et
-//  `liftPanic(guild, …)` avec une `Guild` discord.js résolue dans le cache du
-//  client. Tant que cette route ne reçoit pas l'adaptateur, la voie historique
-//  ne peut pas tomber — et avec elle restent les deux `require('discord.js')`
-//  différés de ce fichier, ainsi que la voie `Guild` de
-//  `punishments.sendAutomodLog` et de `modlog.sendModLog`, qu'elle est SEULE à
-//  emprunter.
+//  Ce fichier a été le dernier module bi-format de `bot/`. Sa voie `Guild`
+//  discord.js n'avait qu'un appelant, `api/routes/antiraid.js`, qui résolvait
+//  son serveur dans le cache du client. Depuis que cette route reçoit
+//  l'adaptateur et passe une portée `{ guildeId, api, moiId, capacites }`, la
+//  voie historique est tombée — et avec elle les deux `require('discord.js')`
+//  différés de ce fichier, la voie `Guild` de `punishments.sendAutomodLog` et
+//  celle de `modlog.sendModLog`, dont elle était le dernier chemin d'accès.
 //
-//  `bot/index.js`, lui, passe désormais l'ADAPTATEUR à `startPanicSweeper`.
-//
-//    voie neutre     — une PORTÉE (`ctx`, adaptateur, ou `{ guildeId, api }`),
-//                      reconnue par `resoudrePorteeNeutre`. Toute la mécanique
-//                      passe par quatre méthodes du client REST normalisé :
-//                      `mettreInvitationsEnPause`, `obtenirEtatInvitations`,
-//                      `obtenirMembre` et, pour le balayage, `listerGuildes`.
-//    voie historique — `Guild` discord.js, `Client` pour le balayeur.
-//                      Comportement inchangé, marqué `// TRANSITION : format
-//                      historique, retenu par api/routes/antiraid.js (lot 7)`.
-//
-//  `discord.js` n'est plus importé en tête : les deux énumérations dont la voie
-//  historique a encore besoin (`GuildFeature`, `PermissionFlagsBits`) sont
-//  chargées PARESSEUSEMENT, dans la branche historique seule. Un processus
-//  Fluxer n'évalue donc jamais la bibliothèque par ce fichier.
+//  Tout passe désormais par une PORTÉE (`ctx`, adaptateur, ou
+//  `{ guildeId, api }`), reconnue par `resoudrePorteeNeutre`, et par cinq
+//  méthodes du client REST normalisé : `mettreInvitationsEnPause`,
+//  `obtenirEtatInvitations`, `obtenirMembre` et, pour le balayage,
+//  `listerGuildes`.
 //
 //  ⚠️ Une capacité garde la porte : `capacites.pauseInvitations`. Une plateforme
 //  qui ne la déclare pas ressort en `{ ok: false, skipped: 'indisponible' }` —
 //  jamais en erreur, parce qu'un serveur qui n'a pas d'action d'incident n'est
-//  pas un serveur en panne.
+//  pas un serveur en panne. La route du dashboard traduit ce cas en une réponse
+//  qui le DIT ; un 400 nu ferait chercher une faute de saisie inexistante.
 //
-//  ⚠️ Deux écarts assumés de la voie neutre, tous deux du côté prudent :
+//  ⚠️ Deux écarts assumés par rapport au comportement d'avant migration, tous
+//  deux du côté prudent :
 //   • `api.mettreInvitationsEnPause(id, null)` retire l'action d'incident ET la
 //     fonction INVITES_DISABLED, là où la voie historique n'annulait que la
 //     méthode réellement employée. Sans conséquence : la branche
@@ -184,21 +175,10 @@ function forgetPanicRow(guildId) {
 
 /**
  * Les invitations du serveur sont-elles déjà fermées, indépendamment de moi ?
- * Deux mécanismes coexistent chez Discord et doivent tous deux être consultés :
- * la fonction de serveur (permanente) et l'action d'incident (temporaire).
+ * Deux mécanismes coexistent et doivent tous deux être consultés : la fonction
+ * de serveur (permanente) et l'action d'incident (temporaire). Le contrat les
+ * rend ensemble : `{ enPauseJusqua, desactiveesEnDur } | null`.
  */
-// TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-function invitesAlreadyPaused(guild, now = Date.now()) {
-    // Chargement paresseux : c'est la SEULE raison pour laquelle ce fichier
-    // touche encore discord.js, et un processus Fluxer n'emprunte jamais cette
-    // branche — donc n'évalue jamais la bibliothèque.
-    const { GuildFeature } = require('discord.js');
-    if (Array.isArray(guild?.features) && guild.features.includes(GuildFeature.InvitesDisabled)) return true;
-    const until = guild?.incidentsData?.invitesDisabledUntil;
-    return !!until && new Date(until).getTime() > now;
-}
-
-/** Même question, par le contrat : `{ enPauseJusqua, desactiveesEnDur } | null`. */
 async function invitesDejaEnPauseNeutre(portee, guildeId, now) {
     const etat = await portee.api.obtenirEtatInvitations(guildeId).catch(() => null);
     // `null` = bot retiré du serveur, ou état illisible. On ne retient alors
@@ -208,14 +188,8 @@ async function invitesDejaEnPauseNeutre(portee, guildeId, now) {
     return etat.desactiveesEnDur || (!!etat.enPauseJusqua && etat.enPauseJusqua > now);
 }
 
-// TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-function canManageGuild(guild) {
-    const { PermissionFlagsBits } = require('discord.js');
-    return !!guild?.members?.me?.permissions?.has(PermissionFlagsBits.ManageGuild);
-}
-
 /**
- * Le bot a-t-il le droit de mettre les invitations en pause, sur la voie neutre ?
+ * Le bot a-t-il le droit de mettre les invitations en pause ?
  *
  * Rend `null` — donc « on laisse passer » — quand la réponse est INDÉTERMINABLE
  * (adaptateur pas encore connecté, membre illisible). Même posture que
@@ -238,8 +212,8 @@ async function refusPermissionNeutre(portee, guildeId) {
  * Bascule le serveur en mode panique jusqu'à `durationSeconds`.
  * Ne lève jamais.
  *
- * @param {object}  cible  portée neutre (`ctx`, adaptateur, `{ guildeId, api }`),
- *   ou `Guild` discord.js sur la voie historique
+ * @param {object}  cible  portée neutre : `ctx`, adaptateur, ou
+ *   `{ guildeId, api, moiId, capacites }`
  * @param {object}  options
  * @param {number}  options.durationSeconds — 0 : le mode panique est désactivé
  * @param {string}  options.reason
@@ -259,23 +233,20 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
     }
 
     const portee = resoudrePorteeNeutre(cible);
-    const guildeId = portee ? portee.guildeId : cible.id;
-    // Une portée neutre sans serveur ne désigne rien : même issue qu'une guilde
+    // Une portée sans serveur ne désigne rien : même issue qu'une guilde
     // absente, plutôt qu'une ligne de mode panique écrite sur `null`.
-    if (!guildeId) return { ok: false, error: 'Serveur indisponible.' };
+    if (!portee || !portee.guildeId) return { ok: false, error: 'Serveur indisponible.' };
+    const guildeId = portee.guildeId;
 
     // Capacité, et pas nom de plateforme. Le test n'est posé que si l'appelant
     // DÉCLARE ses capacités : une portée littérale `{ guildeId, api }` n'en a
     // pas, et lui refuser la mesure pour cette raison serait absurde.
     const capacites = cible.capacites;
-    if (portee && capacites && !capacites.pauseInvitations) {
+    if (capacites && !capacites.pauseInvitations) {
         return { ok: false, skipped: 'indisponible' };
     }
 
-    const refus = portee
-        ? await refusPermissionNeutre(portee, guildeId)
-        // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-        : (canManageGuild(cible) ? null : REFUS_PERMISSION);
+    const refus = await refusPermissionNeutre(portee, guildeId);
     if (refus) return { ok: false, error: refus };
 
     const now = Date.now();
@@ -288,66 +259,33 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
     // levée ne rouvrirait alors jamais les invitations.
     const previousInvitesDisabled = existing
         ? !!existing.previous_invites_disabled
-        : (portee
-            ? await invitesDejaEnPauseNeutre(portee, guildeId, now)
-            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-            : invitesAlreadyPaused(cible, now));
+        : await invitesDejaEnPauseNeutre(portee, guildeId, now);
 
-    let method = null;
-
-    if (portee) {
-        // Le contrat encapsule les deux mécanismes ET le repli de l'un sur
-        // l'autre : il rend la voie réellement empruntée, qu'on traduit en
-        // valeur de la colonne `method`.
-        let voie;
-        try {
-            voie = await portee.api.mettreInvitationsEnPause(guildeId, expiresAt * 1000, reason);
-        } catch (err) {
-            return {
-                ok: false,
-                error: `Les invitations n'ont pas pu être mises en pause : ${err?.message || 'erreur inconnue'}.`,
-            };
-        }
-        method = METHODE_PAR_VOIE[voie];
-        if (!method) {
-            // Un adaptateur qui rend autre chose que « incident » ou
-            // « permanent » à une POSE est cassé. On ne devine pas une méthode :
-            // la ligne écrite servirait ensuite à choisir comment lever.
-            return { ok: false, error: `Voie de mise en pause inattendue : « ${voie} ».` };
-        }
-        if (method === METHOD_INVITES_DISABLED) {
-            // Le repli n'a pas d'échéance côté plateforme : c'est le balayage
-            // ci-dessous qui la tiendra, et c'est précisément pour ce cas que
-            // l'état est persisté. Le motif du refus, lui, est absorbé par
-            // l'adaptateur (cf. en-tête).
-            console.warn('[Quasar Anti-raid] Action d\'incident refusée, repli sur INVITES_DISABLED : '
-                + 'la levée dépend désormais du balayage.');
-        }
-    } else {
-        // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-        let apiError = null;
-        try {
-            await cible.setIncidentActions({ invitesDisabledUntil: new Date(expiresAt * 1000) });
-            method = METHOD_INCIDENT_ACTIONS;
-        } catch (err) {
-            apiError = err;
-        }
-
-        if (!method) {
-            // Repli. Il n'a pas d'échéance côté Discord : c'est le balayage qui la
-            // tiendra, et c'est précisément pour ce cas que l'état est persisté.
-            try {
-                await cible.disableInvites(true);
-                method = METHOD_INVITES_DISABLED;
-                console.warn('[Quasar Anti-raid] Action d\'incident refusée, repli sur INVITES_DISABLED :',
-                    apiError?.message || apiError);
-            } catch (err) {
-                return {
-                    ok: false,
-                    error: `Les invitations n'ont pas pu être mises en pause : ${err?.message || 'erreur inconnue'}.`,
-                };
-            }
-        }
+    // Le contrat encapsule les deux mécanismes ET le repli de l'un sur l'autre :
+    // il rend la voie réellement empruntée, qu'on traduit en valeur de la
+    // colonne `method`.
+    let voie;
+    try {
+        voie = await portee.api.mettreInvitationsEnPause(guildeId, expiresAt * 1000, reason);
+    } catch (err) {
+        return {
+            ok: false,
+            error: `Les invitations n'ont pas pu être mises en pause : ${err?.message || 'erreur inconnue'}.`,
+        };
+    }
+    const method = METHODE_PAR_VOIE[voie];
+    if (!method) {
+        // Un adaptateur qui rend autre chose que « incident » ou « permanent » à
+        // une POSE est cassé. On ne devine pas une méthode : la ligne écrite
+        // servirait ensuite à choisir comment lever.
+        return { ok: false, error: `Voie de mise en pause inattendue : « ${voie} ».` };
+    }
+    if (method === METHOD_INVITES_DISABLED) {
+        // Le repli n'a pas d'échéance côté plateforme : c'est le balayage
+        // ci-dessous qui la tiendra, et c'est précisément pour ce cas que l'état
+        // est persisté. Le motif du refus, lui, est absorbé par l'adaptateur.
+        console.warn('[Quasar Anti-raid] Action d\'incident refusée, repli sur INVITES_DISABLED : '
+            + 'la levée dépend désormais du balayage.');
     }
 
     try {
@@ -362,9 +300,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
         // laisser un verrou sans horloge.
         console.error('[Quasar Anti-raid] Échéance de mode panique non enregistrée :', err.message);
         if (method === METHOD_INVITES_DISABLED && !previousInvitesDisabled) {
-            if (portee) await portee.api.mettreInvitationsEnPause(guildeId, null, reason).catch(() => {});
-            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-            else await cible.disableInvites(false).catch(() => {});
+            await portee.api.mettreInvitationsEnPause(guildeId, null, reason).catch(() => {});
             return { ok: false, error: 'L\'échéance du mode panique n\'a pas pu être enregistrée : rien n\'a été appliqué.' };
         }
     }
@@ -383,7 +319,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
  * Rend au serveur son état d'avant le mode panique.
  * Ne lève jamais.
  *
- * @param {object} cible  portée neutre, ou `Guild` discord.js
+ * @param {object} cible  portée neutre
  * @param {object} [options]
  * @param {object} [options.row]        — ligne déjà lue (évite un SELECT au balayage)
  * @param {string} [options.liftedBy]   — identifiant de personne, pour une levée manuelle
@@ -394,8 +330,8 @@ async function liftPanic(cible, { row = null, liftedBy = null, logChannelId = nu
     if (!cible) return { ok: false, error: 'Serveur indisponible.' };
 
     const portee = resoudrePorteeNeutre(cible);
-    const guildeId = portee ? portee.guildeId : cible.id;
-    if (!guildeId) return { ok: false, error: 'Serveur indisponible.' };
+    if (!portee || !portee.guildeId) return { ok: false, error: 'Serveur indisponible.' };
+    const guildeId = portee.guildeId;
 
     // Verrou de ré-entrance, à la maille du serveur : c'est là qu'un doublon se
     // verrait (deux messages de levée pour une seule levée).
@@ -431,11 +367,9 @@ async function liftPanic(cible, { row = null, liftedBy = null, logChannelId = nu
         try {
             // Une seule méthode neutre pour les deux mécanismes : elle retire
             // l'action d'incident ET la fonction de serveur. Voir l'en-tête —
-            // c'est plus large que la voie historique, jamais plus risqué.
-            if (portee) await portee.api.mettreInvitationsEnPause(guildeId, null);
-            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-            else if (state.method === METHOD_INVITES_DISABLED) await cible.disableInvites(false);
-            else await cible.setIncidentActions({ invitesDisabledUntil: null });
+            // c'est plus large que ce que faisait la voie `Guild`, jamais plus
+            // risqué.
+            await portee.api.mettreInvitationsEnPause(guildeId, null);
         } catch (err) {
             // Le repli n'a pas d'échéance côté plateforme : tant qu'il n'est pas
             // levé, le serveur reste fermé. On garde la ligne et on retentera —
@@ -466,7 +400,7 @@ const METHOD_LABELS = {
     [METHOD_INVITES_DISABLED]: 'invitations désactivées (fonction de serveur)',
 };
 
-async function sendPanicLog(guild, opts) {
+async function sendPanicLog(portee, opts) {
     const {
         entering, method, expiresAt, reason, triggeredBy, extended,
         durationSeconds, liftedBy, restoredNothing, logChannelId,
@@ -498,7 +432,7 @@ async function sendPanicLog(guild, opts) {
             },
         ];
 
-    await sendAutomodLog(guild, embed({
+    await sendAutomodLog(portee, embed({
         couleur: entering ? 0xe74c3c : 0x2ecc71,
         titre: entering
             ? (extended ? '🚨 Mode panique prolongé' : '🚨 Mode panique activé')
@@ -515,8 +449,7 @@ async function sendPanicLog(guild, opts) {
  * Exporté pour permettre une levée immédiate sans attendre le tour de boucle
  * (tests, opération manuelle).
  *
- * @param {object} cible  adaptateur de plateforme (voie neutre), ou `Client`
- *   discord.js sur la voie historique
+ * @param {object} cible  adaptateur de plateforme
  */
 async function sweepExpiredPanics(cible, now = Date.now()) {
     // Verrou de ré-entrance : un tour qui déborde ne doit pas être doublé par le
@@ -525,27 +458,20 @@ async function sweepExpiredPanics(cible, now = Date.now()) {
     sweeping = true;
     try {
         const portee = resoudrePorteeNeutre(cible);
+        if (!portee) return 0;
 
         // Quels serveurs le bot connaît-il ? La distinction est VITALE : la
         // branche « serveur introuvable » ci-dessous SUPPRIME l'échéance, ce qui
         // laisserait un serveur fermé pour toujours si la réponse n'était en fait
         // que « je ne sais pas encore ».
-        let guildes = null;
-        if (portee) {
-            const liste = await portee.api.listerGuildes();
-            // `null` = indéterminable (connexion incomplète) : on ne touche à
-            // RIEN. `[]` = connecté et réellement sur aucun serveur : les
-            // échéances en base n'ont plus d'objet et seront oubliées, une par
-            // une, par la boucle ci-dessous.
-            if (liste === null) return 0;
-            guildes = new Set(liste);
-        } else if (!cible?.guilds?.cache || cible.guilds.cache.size === 0) {
-            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-            // Cache vide = connexion incomplète, pas un bot sans serveur. Le
-            // cache de discord.js ne sait pas exprimer la différence, d'où cette
-            // sortie plus prudente que celle de la voie neutre.
-            return 0;
-        }
+        //
+        // `null` = indéterminable (connexion incomplète) : on ne touche à RIEN.
+        // `[]` = connecté et réellement sur aucun serveur : les échéances en base
+        // n'ont plus d'objet et seront oubliées, une par une, par la boucle
+        // ci-dessous.
+        const liste = await portee.api.listerGuildes();
+        if (liste === null) return 0;
+        const guildes = new Set(liste);
 
         let due;
         try {
@@ -560,31 +486,21 @@ async function sweepExpiredPanics(cible, now = Date.now()) {
 
         let lifted = 0;
         for (const row of due) {
-            let porteeDuServeur;
-            if (portee) {
-                if (!guildes.has(row.guild_id)) {
-                    // Bot retiré du serveur : il n'y a plus rien à lever, et garder
-                    // l'échéance ferait retenter indéfiniment.
-                    forgetPanicRow(row.guild_id);
-                    continue;
-                }
-                // Portée d'écriture du serveur courant : l'adaptateur ne porte pas
-                // de `guildeId`, et `liftPanic` en a besoin pour lire sa ligne,
-                // poser son verrou et journaliser.
-                porteeDuServeur = {
-                    guildeId: row.guild_id,
-                    api: portee.api,
-                    moiId: portee.moiId,
-                    capacites: cible.capacites,
-                };
-            } else {
-                // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
-                porteeDuServeur = cible.guilds.cache.get(row.guild_id);
-                if (!porteeDuServeur) {
-                    forgetPanicRow(row.guild_id);
-                    continue;
-                }
+            if (!guildes.has(row.guild_id)) {
+                // Bot retiré du serveur : il n'y a plus rien à lever, et garder
+                // l'échéance ferait retenter indéfiniment.
+                forgetPanicRow(row.guild_id);
+                continue;
             }
+            // Portée d'écriture du serveur courant : l'adaptateur ne porte pas de
+            // `guildeId`, et `liftPanic` en a besoin pour lire sa ligne, poser son
+            // verrou et journaliser.
+            const porteeDuServeur = {
+                guildeId: row.guild_id,
+                api: portee.api,
+                moiId: portee.moiId,
+                capacites: cible.capacites,
+            };
 
             const result = await liftPanic(porteeDuServeur, { row }).catch(err => {
                 console.error('[Quasar Anti-raid] Levée du mode panique en échec :', err?.message);
@@ -604,7 +520,7 @@ async function sweepExpiredPanics(cible, now = Date.now()) {
  * Démarre le balayage des modes panique arrivés à terme, et le ménage de la
  * fenêtre glissante. Idempotent : un second appel ne crée pas de seconde boucle.
  *
- * @param {object} cible  adaptateur de plateforme, ou `Client` discord.js
+ * @param {object} cible  adaptateur de plateforme
  */
 function startPanicSweeper(cible) {
     if (sweepHandle) return;

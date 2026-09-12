@@ -21,7 +21,7 @@ const assert = require('node:assert/strict');
 
 const { construireSlashCommand } = require('../bot/platform/discord/commands');
 const { getDb } = require('../api/services/database');
-const { describeRefusal, describeForApi } = require('../bot/utils/assignableRole');
+const { describeRefusal } = require('../bot/utils/assignableRole');
 
 /**
  * Corps RÉELLEMENT envoyé à Discord : la sérialisation retire les champs restés
@@ -301,13 +301,14 @@ test('describeRefusal nomme le rôle depuis le format neutre', () => {
     assert.equal(describeRefusal('missing').title, 'Ce rôle est introuvable');
 });
 
-test('describeForApi accepte encore le rôle discord.js de l\'API du dashboard', () => {
-    // TRANSITION : api/routes/reactionroles.js résout ses rôles dans le cache
-    // discord.js et passe l'objet natif, qui porte `name`. Le pont vit dans
-    // `describeForApi` et disparaîtra au lot 7 — sans lui, le dashboard
-    // afficherait « « undefined » est au-dessus… ».
-    assert.match(describeForApi('hierarchy', { id: '1', name: 'Modération' }), /« Modération » est au-dessus/);
-    assert.match(describeForApi('hierarchy', { id: '1', nom: 'Modération' }), /« Modération » est au-dessus/);
+test('le motif de refus du dashboard est celui du bot, en une phrase', () => {
+    // `describeForApi` n'existe plus : c'était un pont qui rattrapait le `name`
+    // d'un rôle discord.js, parce que api/routes/reactionroles.js le résolvait
+    // dans le cache. Depuis qu'elle lit `api.obtenirRole`, elle reçoit un rôle
+    // NORMALISÉ et concatène cause + action elle-même.
+    const { cause, action } = describeRefusal('hierarchy', { id: '1', nom: 'Modération' });
+    assert.match(`${cause} ${action}`, /« Modération » est au-dessus/);
+    assert.match(`${cause} ${action}`, /Remontez le rôle « Quasar »/);
 });
 
 // ── 5. Les événements de rôle écrivent l'embed d'avant, au champ près ────────

@@ -33,7 +33,7 @@ function checkAssignableRole(guild, role) {
 
 /**
  * Motif de refus détaillé, au format attendu par `userError` (embeds du bot).
- * L'API sert le même texte à plat via `describeForApi`.
+ * L'API en sert le même texte à plat, en concaténant `cause` et `action`.
  *
  * @param {null|'missing'|'everyone'|'managed'|'hierarchy'} code
  * @param {{nom?: string}} [role] rôle NORMALISÉ (cf. `normaliserRole` de la
@@ -76,18 +76,4 @@ function describeRefusal(code, role) {
     }
 }
 
-/**
- * Même motif, en une phrase, pour un `res.status(400).json({ error })`.
- *
- * ⚠️ TRANSITION : format historique, RETENU par `api/routes/reactionroles.js`
- * (lot 7). Cette route résout ses rôles dans le cache discord.js et passe
- * l'objet natif, qui porte `name` et non `nom`. Le pont est ici plutôt que dans
- * `describeRefusal` pour que le cœur reste neutre : c'est l'API qui a un format
- * à rattraper. Il tombe le jour où elle lira `api.obtenirRole`.
- */
-function describeForApi(code, role) {
-    const { cause, action } = describeRefusal(code, { nom: role?.nom ?? role?.name });
-    return `${cause} ${action}`;
-}
-
-module.exports = { checkAssignableRole, describeRefusal, describeForApi };
+module.exports = { checkAssignableRole, describeRefusal };

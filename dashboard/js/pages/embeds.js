@@ -82,7 +82,7 @@ async function loadEmbeds(container, guildId) {
                             @here
                         </label>
                     </div>
-                    <p style="font-size:.7rem;color:var(--text-muted);margin:0">Ces mentions sont postées au-dessus de l'embed à chaque envoi (<code>/embed send</code>). Un rappel qui a ses propres mentions garde les siennes.</p>
+                    <p style="font-size:.7rem;color:var(--text-muted);margin:0">Ces mentions sont postées au-dessus de l'embed à chaque envoi (<code>${escapeHtml(QuasarPlateforme.commande('embed'))} send</code>). Un rappel qui a ses propres mentions garde les siennes.</p>
 
                     <div style="display:flex;gap:.75rem;flex-wrap:wrap">
                         <button class="btn btn-primary" onclick="saveEmbed()">💾 Sauvegarder</button>

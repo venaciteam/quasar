@@ -169,6 +169,10 @@
         VNCT.config.discordWebhookUrl = '/api/feedback/vnct';
     </script>
     <script src="/dashboard/js/instance.js?v=__VERSION__"></script>
+    <!-- Capacités de la plateforme active. AVANT les pages : elles l'interrogent
+         pour masquer ce que la plateforme ne sait pas faire, et pour écrire une
+         commande avec la bonne forme (/warn ou !warn). -->
+    <script src="/dashboard/js/plateforme.js?v=__VERSION__"></script>
     <script src="/dashboard/js/utils.js?v=__VERSION__"></script>
     <script src="/dashboard/js/commandsBlock.js?v=__VERSION__"></script>
     <script src="/dashboard/js/pages/moderation.js?v=__VERSION__"></script>

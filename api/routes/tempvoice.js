@@ -1,43 +1,48 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const router = express.Router({ mergeParams: true });
 
+/** Salon normalisé, ou `null`. Un échec de lecture vaut « supprimé ». */
+function lireCanal(req, canalId) {
+    const api = plateforme.api(req);
+    if (!api || !canalId) return Promise.resolve(null);
+    return api.obtenirCanal(String(canalId)).catch(() => null);
+}
+
 // GET /api/guilds/:guildId/tempvoice/triggers
-router.get('/triggers', requireAuth, requireGuildAdmin, (req, res) => {
+router.get('/triggers', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const guildId = req.params.guildId;
     const triggers = db.prepare('SELECT * FROM tempvoice_triggers WHERE guild_id = ?').all(guildId);
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
-
-    const result = triggers.map(t => {
-        const ch = guild?.channels.cache.get(t.channel_id);
-        const cat = t.category_id ? guild?.channels.cache.get(t.category_id) : null;
+    const result = await Promise.all(triggers.map(async (t) => {
+        const [ch, cat] = await Promise.all([
+            lireCanal(req, t.channel_id),
+            t.category_id ? lireCanal(req, t.category_id) : null,
+        ]);
         return {
             channel_id: t.channel_id,
-            channel_name: ch?.name || '(supprimé)',
+            channel_name: ch?.nom || '(supprimé)',
             category_id: t.category_id || '',
-            category_name: cat?.name || (t.category_id ? '(supprimé)' : 'Sans catégorie'),
+            category_name: cat?.nom || (t.category_id ? '(supprimé)' : 'Sans catégorie'),
             enabled: !!t.enabled
         };
-    });
+    }));
 
     res.json(result);
 });
 
 // POST /api/guilds/:guildId/tempvoice/triggers
-router.post('/triggers', requireAuth, requireGuildAdmin, (req, res) => {
+router.post('/triggers', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const guildId = req.params.guildId;
     const { channel_id } = req.body;
 
     if (!channel_id) return res.status(400).json({ error: 'channel_id requis' });
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
-    const channel = guild?.channels.cache.get(channel_id);
+    const channel = await lireCanal(req, channel_id);
     const categoryId = channel?.parentId || '';
 
     // Vérifier max 1 par catégorie
@@ -75,28 +80,32 @@ router.put('/triggers/:channelId/toggle', requireAuth, requireGuildAdmin, (req, 
 });
 
 // GET /api/guilds/:guildId/tempvoice/active
-router.get('/active', requireAuth, requireGuildAdmin, (req, res) => {
+router.get('/active', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const guildId = req.params.guildId;
     const active = db.prepare('SELECT * FROM tempvoice_active WHERE guild_id = ?').all(guildId);
+    const api = plateforme.api(req);
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(guildId);
-
-    const result = active.map(row => {
-        const channel = guild?.channels.cache.get(row.channel_id);
-        const owner = guild?.members.cache.get(row.owner_id);
-        const cat = row.category_id ? guild?.channels.cache.get(row.category_id) : null;
+    const result = await Promise.all(active.map(async (row) => {
+        const [channel, owner, cat, occupants] = await Promise.all([
+            lireCanal(req, row.channel_id),
+            api ? api.obtenirMembre(guildId, row.owner_id).catch(() => null) : null,
+            row.category_id ? lireCanal(req, row.category_id) : null,
+            // `listerMembresVocal` rend `null` si le salon n'existe plus ou n'est
+            // pas vocal : le compte retombe alors sur 0, comme le faisait
+            // `channel?.members.size` sur un salon absent du cache.
+            api ? api.listerMembresVocal(String(row.channel_id)).catch(() => null) : null,
+        ]);
         return {
             channel_id: row.channel_id,
-            channel_name: channel?.name || '(supprimé)',
+            channel_name: channel?.nom || '(supprimé)',
             owner_id: row.owner_id,
-            owner_name: owner?.displayName || owner?.user?.tag || row.owner_id,
-            member_count: channel?.members.size || 0,
-            category_name: cat?.name || 'Sans catégorie',
+            owner_name: owner?.nom || owner?.etiquette || row.owner_id,
+            member_count: occupants?.length || 0,
+            category_name: cat?.nom || 'Sans catégorie',
             created_at: row.created_at
         };
-    });
+    }));
 
     res.json(result);
 });
@@ -106,12 +115,11 @@ router.delete('/active/:channelId', requireAuth, requireGuildAdmin, async (req, 
     const db = getDb();
     const { channelId } = req.params;
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(req.params.guildId);
-    const channel = guild?.channels.cache.get(channelId);
+    const api = plateforme.api(req);
+    const channel = await lireCanal(req, channelId);
 
-    if (channel) {
-        try { await channel.delete(); } catch (e) {
+    if (api && channel) {
+        try { await api.supprimerCanal(String(channelId), 'Salon temporaire supprimé depuis le dashboard'); } catch (e) {
             console.error('[Quasar] Erreur suppression TempVoice:', e.message);
         }
     }

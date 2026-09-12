@@ -30,12 +30,6 @@
 //  `member`, `message` discord.js, `client` pour le balayeur — a été retirée à
 //  la consolidation : plus aucun appelant ne l'empruntait.
 //
-//  ⚠️ Une seule exception, et elle n'est PAS une voie d'entrée de ce module :
-//  `sendAutomodLog` accepte encore une `Guild` discord.js, parce que
-//  `bot/modules/antiraid/panic.js` lui en passe une quand la route
-//  `api/routes/antiraid.js` déclenche un mode panique depuis le dashboard.
-//  Elle tombe au lot 7, avec cette route.
-//
 //  Les trois contrôles préventifs comptent, et ce n'est pas un détail de
 //  confort : un refus annoncé AVANT la tentative nomme la correction à faire
 //  (remonter le rôle du bot, cocher une permission), là où un refus traduit
@@ -52,8 +46,7 @@
 const { getDb } = require('../../api/services/database');
 const { embed } = require('../platform/embed');
 const { CODES_NEUTRES, codeNeutre } = require('../platform/erreurs');
-const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
-const { sendModLog } = require('./modlog');
+const { resoudrePorteeNeutre } = require('./errors');
 const { sendLog } = require('./logger');
 
 // Plafond du timeout natif de Discord. Au-delà, l'API refuse : on tronque et on
@@ -238,49 +231,31 @@ function validatePunishments(str) {
  * panique, cas honeypot…), et faire passer ce repli par quatre implémentations
  * différentes garantirait que trois d'entre elles l'oublient.
  *
- * @param {object} cible   portée neutre (`ctx`, `{ guildeId, api }`), ou `Guild`
- *   discord.js — voir la note ci-dessous.
+ * ⚠️ La voie `Guild` discord.js a été retirée au lot 7. Son dernier appelant
+ * était le mode panique, qui recevait une `Guild` de `api/routes/antiraid.js` ;
+ * cette route passe désormais une portée neutre.
+ *
+ * @param {object} cible   portée neutre (`ctx`, adaptateur, `{ guildeId, api }`)
  * @param {object} contenu embed neutre
  */
 async function sendAutomodLog(cible, contenu, logType, logChannelId) {
     if (!cible) return;
     const portee = resoudrePorteeNeutre(cible);
+    if (!portee) return;
 
-    if (portee) {
-        if (logChannelId) {
-            const envoye = await portee.api.envoyerMessage(String(logChannelId), contenu).catch(err => {
-                console.error(`[Quasar AutoMod] Log ${logType} vers ${logChannelId} en échec :`, err.message);
-                return null;
-            });
-            if (envoye) return;
-        }
-        // Le repli passe par `sendLog` et non par `sendModLog` : les deux
-        // appliquent la même règle — type de log activé, salon configuré — seul
-        // le libellé de l'erreur d'envoi diffère.
-        await sendLog(portee.source, logType, contenu).catch(() => {});
-        return;
-    }
-
-    // ⚠️ VOIE NATIVE — une `Guild` discord.js — RETENUE par `api/**`, lot 7 :
-    //   api/routes/antiraid.js -> antiraid.enterPanic(guild) / liftPanic(guild)
-    //   -> bot/modules/antiraid/panic.js (voie Guild) -> ICI.
-    // C'est le SEUL chemin qui y mène encore ; aucune autre fonction de ce
-    // fichier n'accepte plus d'objet discord.js. Elle tombe le jour où la route
-    // du dashboard passe l'adaptateur au lieu du client.
-    const embedDiscord = versEmbedDiscord(contenu);
     if (logChannelId) {
-        const channel = cible.channels?.cache?.get(String(logChannelId));
-        if (channel) {
-            const sent = await channel.send({ embeds: [embedDiscord] }).catch(err => {
-                console.error(`[Quasar AutoMod] Log ${logType} vers ${logChannelId} en échec :`, err.message);
-                return null;
-            });
-            if (sent) return;
-        }
+        const envoye = await portee.api.envoyerMessage(String(logChannelId), contenu).catch(err => {
+            console.error(`[Quasar AutoMod] Log ${logType} vers ${logChannelId} en échec :`, err.message);
+            return null;
+        });
+        if (envoye) return;
         // Salon supprimé ou inaccessible : on ne perd pas le log, on retombe sur
         // le modlog global plutôt que de laisser la sanction sans trace.
     }
-    await sendModLog(cible, embedDiscord, logType).catch(() => {});
+    // Le repli passe par `sendLog` et non par `sendModLog` : les deux appliquent
+    // la même règle — type de log activé, salon configuré — seul le libellé de
+    // l'erreur d'envoi diffère.
+    await sendLog(portee.source, logType, contenu).catch(() => {});
 }
 
 function recordSanction({ guildId, userId, moderatorId, type, reason, duration }) {

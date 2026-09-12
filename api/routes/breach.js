@@ -16,9 +16,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
-const { PermissionFlagsBits } = require('discord.js');
 const { requireAuth, requireOwner } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 
 const router = express.Router();
 
@@ -45,36 +45,34 @@ function getTargetGuilds(db) {
 }
 
 /**
- * Destinataires d'un serveur : propriétaire + membres ayant la permission
- * ADMINISTRATOR, dédupliqués, hors bots. Nécessite le client Discord pour
- * énumérer les membres.
+ * Destinataires d'un serveur : propriétaire + membres administrateurs,
+ * dédupliqués, hors bots.
+ *
+ * `reachable=false` signifie « je ne vois pas ce serveur », jamais « il n'a
+ * aucun administrateur » : la propriétaire doit savoir combien de serveurs la
+ * notification n'a pas pu atteindre. C'est une obligation de l'article 33, pas
+ * un détail d'affichage.
+ *
  * @returns {Promise<{ reachable: boolean, recipients: string[] }>}
- *          reachable=false si le bot ne voit pas le serveur (cache non chargé,
- *          bot retiré) — dans ce cas la liste de destinataires est vide.
  */
-async function computeGuildRecipients(client, guildId) {
-    const guild = client?.guilds?.cache?.get(guildId);
-    if (!guild) return { reachable: false, recipients: [] };
+async function computeGuildRecipients(req, guildId) {
+    const api = plateforme.api(req);
+    const guilde = api ? await api.obtenirGuilde(guildId).catch(() => null) : null;
+    if (!guilde) return { reachable: false, recipients: [] };
 
     const ids = new Set();
-    if (guild.ownerId) ids.add(guild.ownerId); // le propriétaire est toujours destinataire
+    // Le propriétaire est toujours destinataire.
+    if (guilde.proprietaireId) ids.add(guilde.proprietaireId);
 
-    try {
-        // fetch() peuple le cache avec tous les membres (intent GuildMembers actif).
-        // Négligeable à l'échelle actuelle (poignée de serveurs) ; au-delà, voir la
-        // note de scalabilité du compte-rendu.
-        const members = await guild.members.fetch();
-        for (const m of members.values()) {
-            if (m.user?.bot) continue;
-            if (m.permissions?.has(PermissionFlagsBits.Administrator)) ids.add(m.id);
-        }
-    } catch {
-        // Énumération impossible : on retombe sur le cache déjà chargé + le
-        // propriétaire, plutôt que de renvoyer une liste vide.
-        for (const m of guild.members.cache.values()) {
-            if (m.user?.bot) continue;
-            if (m.permissions?.has(PermissionFlagsBits.Administrator)) ids.add(m.id);
-        }
+    // `reachable` dit « je vois ce serveur », pas « j'ai pu énumérer ses
+    // membres » : ce sont deux échecs différents. Une énumération impossible
+    // laisse le propriétaire comme destinataire — c'était déjà le repli d'avant
+    // migration, et le retirer priverait de notification un serveur que le bot
+    // voit parfaitement.
+    const { membres } = await plateforme.listerMembres(req, guildId);
+    for (const m of membres) {
+        if (m.estBot) continue;
+        if (m.estAdmin) ids.add(m.id);
     }
 
     return { reachable: true, recipients: [...ids] };
@@ -85,11 +83,11 @@ async function computeGuildRecipients(client, guildId) {
  * l'identique par /preview (estimation) et /send (enfilage), pour garantir que
  * ce qui est prévisualisé correspond à ce qui est envoyé.
  */
-async function computeTargets(client, db) {
+async function computeTargets(req, db) {
     const guilds = getTargetGuilds(db);
     const out = [];
     for (const g of guilds) {
-        const { reachable, recipients } = await computeGuildRecipients(client, g.guild_id);
+        const { reachable, recipients } = await computeGuildRecipients(req, g.guild_id);
         out.push({ guildId: g.guild_id, guildName: g.name, reachable, recipients });
     }
     return out;
@@ -183,13 +181,17 @@ router.post('/incidents/:id/preview', requireAuth, requireOwner, async (req, res
             return res.status(400).json({ error: `Le message dépasse ${MAX_BODY} caractères (limite d'un embed Discord).` });
         }
 
-        const client = req.app.get('discordClient');
-        const targets = await computeTargets(client, db);
+        const targets = await computeTargets(req, db);
 
         const nextPhase = (db.prepare('SELECT MAX(phase) AS m FROM breach_messages WHERE incident_id = ?').get(incident.id)?.m || 0) + 1;
         const estimatedRecipients = targets.reduce((n, t) => n + t.recipients.length, 0);
         const unreachableGuilds = targets.filter(t => !t.reachable).length;
-        const botOnline = !!(client?.guilds?.cache && client.guilds.cache.size > 0);
+        // `listerGuildes()` rend `null` quand la connexion n'est pas établie, et
+        // `[]` quand le bot est connecté sans serveur : seule la première valeur
+        // veut dire « hors ligne ».
+        const api = plateforme.api(req);
+        const connectees = api ? await api.listerGuildes().catch(() => null) : null;
+        const botOnline = Array.isArray(connectees) && connectees.length > 0;
 
         res.json({
             incidentId: incident.id,
@@ -230,8 +232,7 @@ router.post('/incidents/:id/send', requireAuth, requireOwner, async (req, res) =
             return res.status(400).json({ error: `Le message dépasse ${MAX_BODY} caractères.` });
         }
 
-        const client = req.app.get('discordClient');
-        const targets = await computeTargets(client, db);
+        const targets = await computeTargets(req, db);
 
         const ts = nowSec();
         const phase = (db.prepare('SELECT MAX(phase) AS m FROM breach_messages WHERE incident_id = ?').get(incident.id)?.m || 0) + 1;

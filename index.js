@@ -543,8 +543,10 @@ async function main() {
         const { createBot } = require('./bot');
         plateforme = createBot({ plateforme: resolvePlatform() });
         await plateforme.connecter();
-        // `api/` et le dashboard consomment encore le client natif (lot 7).
-        app = createApi(plateforme.client, mode);
+        // L'ADAPTATEUR, pas le client : `api/` lit le client REST normalisé et
+        // les capacités déclarées, et le dashboard n'affiche que ce que la
+        // plateforme active sait faire (GET /api/plateforme).
+        app = createApi(plateforme, mode);
     }
 
     const server = ecouter(app, {

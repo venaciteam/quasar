@@ -28,10 +28,14 @@ const SALON_DE_B = '910000000000000002';
 
 const app = express();
 app.use(express.json());
-// Le client Discord n'est lu que pour supprimer le vrai salon : ici il n'en
-// connaît aucun, la route se contente donc de la ligne en base — exactement le
-// chemin que l'on veut éprouver.
-app.set('discordClient', { guilds: { cache: { get: () => null } } });
+// L'adaptateur n'est lu que pour supprimer le vrai salon : ici son client REST
+// ne connaît aucun salon, la route se contente donc de la ligne en base —
+// exactement le chemin que l'on veut éprouver.
+app.set('plateforme', {
+    nom: 'test',
+    capacites: {},
+    api: { async envoyerMessage() {}, async obtenirCanal() { return null; } },
+});
 app.use('/api/guilds/:guildId/tempvoice', tempvoiceRoutes);
 
 let server;

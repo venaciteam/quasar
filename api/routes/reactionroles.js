@@ -1,20 +1,41 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const { embed } = require('../../bot/platform/embed');
+const plateforme = require('../services/plateforme');
 const router = express.Router({ mergeParams: true });
-const { checkAssignableRole, describeForApi } = require('../../bot/utils/assignableRole');
+const { describeRefusal } = require('../../bot/utils/assignableRole');
 
-// Les rôles automatiques (autorôles, rôles vocaux) passent tous par la même
-// vérification : cf. bot/utils/assignableRole.js. Résout le rôle dans le cache du
-// serveur et renvoie soit { role }, soit { status, error } prêt à renvoyer.
-function resolveAssignableRole(req, roleId) {
-    const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
-    if (!guild) return { status: 404, error: 'Ce serveur est introuvable pour le bot.' };
+// Accent des panneaux de rôles. Même valeur qu'avant migration ; la couleur
+// vivait en dur dans les deux constructions d'embed de ce fichier.
+const ACCENT_PANNEAU = 0xc86e8e;
 
-    const role = guild.roles.cache.get(roleId);
-    const refusal = checkAssignableRole(guild, role);
-    if (refusal) return { status: 400, error: describeForApi(refusal, role) };
+/**
+ * Les rôles automatiques (autorôles, rôles vocaux, panneaux) passent tous par la
+ * même vérification. Elle vit désormais dans le contrat —
+ * `api.verifierRoleAttribuable` — et non plus dans le cache discord.js : c'est ce
+ * qui a libéré le pont `describeForApi` de bot/utils/assignableRole.js, dont
+ * cette route était le seul appelant.
+ *
+ * @returns {Promise<{role: object}|{status: number, error: string}>}
+ */
+async function resolveAssignableRole(req, roleId) {
+    const api = plateforme.api(req);
+    if (!api) return { status: 404, error: 'Ce serveur est introuvable pour le bot.' };
 
+    const refus = await api.verifierRoleAttribuable(req.params.guildId, roleId);
+    if (refus) {
+        // Le nom du rôle n'est lu que pour le motif « trop haut dans la
+        // hiérarchie », le seul qui le cite. Un échec de lecture n'empêche pas
+        // de refuser : la phrase perd un nom, pas son sens.
+        const role = refus === 'hierarchy'
+            ? await api.obtenirRole(req.params.guildId, roleId).catch(() => null)
+            : null;
+        const { cause, action } = describeRefusal(refus, role);
+        return { status: 400, error: `${cause} ${action}` };
+    }
+
+    const role = await api.obtenirRole(req.params.guildId, roleId).catch(() => null);
     return { role };
 }
 
@@ -29,11 +50,11 @@ router.get('/autoroles', requireAuth, requireGuildAdmin, (req, res) => {
 // membre, dans un `console.error` que personne ne lit. Depuis la v4.6.1 les
 // autorôles s'appliquent sur tous les serveurs, plus seulement ceux qui ont un
 // message de bienvenue : autant refuser tout de suite, avec un motif.
-router.post('/autoroles', requireAuth, requireGuildAdmin, (req, res) => {
+router.post('/autoroles', requireAuth, requireGuildAdmin, async (req, res) => {
     const roleId = typeof req.body?.role_id === 'string' ? req.body.role_id.trim() : '';
     if (!roleId) return res.status(400).json({ error: 'Aucun rôle fourni.' });
 
-    const resolved = resolveAssignableRole(req, roleId);
+    const resolved = await resolveAssignableRole(req, roleId);
     if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
 
     const db = getDb();
@@ -57,27 +78,31 @@ router.get('/voiceroles', requireAuth, requireGuildAdmin, (req, res) => {
 
 // Mêmes gardes que pour les autorôles : un rôle vocal inattribuable échoue à
 // chaque connexion en vocal, en silence côté administrateur.
-router.post('/voiceroles', requireAuth, requireGuildAdmin, (req, res) => {
+router.post('/voiceroles', requireAuth, requireGuildAdmin, async (req, res) => {
     const channelId = typeof req.body?.channel_id === 'string' ? req.body.channel_id.trim() : '';
     const roleId = typeof req.body?.role_id === 'string' ? req.body.role_id.trim() : '';
     if (!channelId || !roleId) return res.status(400).json({ error: 'Salon ou rôle manquant.' });
 
-    const resolved = resolveAssignableRole(req, roleId);
+    const resolved = await resolveAssignableRole(req, roleId);
     if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
 
     // Le salon doit exister et être vocal : la table est indexée dessus, une
-    // ligne pointant un salon textuel ne se déclencherait jamais.
-    const { ChannelType } = require('discord.js');
-    const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
-    const channel = guild?.channels.cache.get(channelId);
-    if (!channel) return res.status(400).json({ error: 'Ce salon n\'existe pas sur ce serveur.' });
-    if (channel.type !== ChannelType.GuildVoice && channel.type !== ChannelType.GuildStageVoice) {
+    // ligne pointant un salon textuel ne se déclencherait jamais. Les noms
+    // canoniques viennent de bot/platform/channels.js — « conference » est le
+    // salon de conférence, vocal lui aussi.
+    const api = plateforme.api(req);
+    const channel = api ? await api.obtenirCanal(channelId).catch(() => null) : null;
+    if (!channel || channel.guildeId !== req.params.guildId) {
+        return res.status(400).json({ error: 'Ce salon n\'existe pas sur ce serveur.' });
+    }
+    if (channel.type !== 'vocal' && channel.type !== 'conference') {
         return res.status(400).json({ error: 'Ce salon n\'est pas un salon vocal.' });
     }
 
-    const db = getDb();
-    db.exec(`CREATE TABLE IF NOT EXISTS voice_roles (guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, role_id TEXT NOT NULL, PRIMARY KEY (guild_id, channel_id))`);
-    db.prepare(`INSERT INTO voice_roles (guild_id, channel_id, role_id) VALUES (?, ?, ?) ON CONFLICT(guild_id, channel_id) DO UPDATE SET role_id = ?`)
+    // `voice_roles` appartient au schéma (api/services/database.js) depuis la
+    // consolidation : la créer à la volée ici n'aurait servi qu'à masquer une
+    // migration manquante.
+    getDb().prepare(`INSERT INTO voice_roles (guild_id, channel_id, role_id) VALUES (?, ?, ?) ON CONFLICT(guild_id, channel_id) DO UPDATE SET role_id = ?`)
         .run(req.params.guildId, channelId, roleId, roleId);
     res.json({ success: true });
 });
@@ -110,16 +135,19 @@ router.get('/panels', requireAuth, requireGuildAdmin, (req, res) => {
 router.get('/panels/status', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const panels = db.prepare('SELECT id, channel_id, message_id FROM reaction_panels WHERE guild_id = ?').all(req.params.guildId);
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(req.params.guildId);
+    const api = plateforme.api(req);
 
     const status = {};
     for (const p of panels) {
         try {
-            const channel = guild?.channels.cache.get(p.channel_id);
-            const msg = await channel?.messages.fetch(p.message_id);
+            const msg = api && p.message_id ? await api.obtenirMessage(p.channel_id, p.message_id) : null;
             status[p.id] = msg ? 'active' : 'missing';
         } catch {
+            // Panne réseau : `obtenirMessage` LÈVE plutôt que de rendre null,
+            // précisément pour ne pas confondre « supprimé » et « injoignable ».
+            // Le panneau est annoncé manquant comme avant migration — c'est ce
+            // que faisait le `catch` du cache — et l'affichage se corrigera au
+            // rafraîchissement suivant.
             status[p.id] = 'missing';
         }
     }
@@ -132,25 +160,26 @@ router.post('/panels', requireAuth, requireGuildAdmin, async (req, res) => {
     const { channel_id, title, description, mode } = req.body;
     if (!channel_id || !title) return res.status(400).json({ error: 'channel_id et title requis' });
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds.cache.get(req.params.guildId);
-    const channel = guild?.channels.cache.get(channel_id);
-    if (!channel) return res.status(400).json({ error: 'Channel introuvable' });
+    const api = plateforme.api(req);
+    const channel = api ? await api.obtenirCanal(channel_id).catch(() => null) : null;
+    if (!channel || channel.guildeId !== req.params.guildId) {
+        return res.status(400).json({ error: 'Channel introuvable' });
+    }
 
     const result = db.prepare('INSERT INTO reaction_panels (guild_id, channel_id, title, mode) VALUES (?, ?, ?, ?)')
         .run(req.params.guildId, channel_id, title, mode || 'multiple');
     const panelId = result.lastInsertRowid;
 
     // Poster l'embed
-    const { EmbedBuilder } = require('discord.js');
-    const embed = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription((description || 'Cliquez sur un emoji pour obtenir le rôle correspondant.') + '\n\n*(Aucun rôle configuré)*')
-        .setColor(0xc86e8e)
-        .setFooter({ text: `Panel #${panelId} • Mode ${mode || 'multiple'}` });
+    const corps = embed({
+        titre: title,
+        description: (description || 'Cliquez sur un emoji pour obtenir le rôle correspondant.') + '\n\n*(Aucun rôle configuré)*',
+        couleur: ACCENT_PANNEAU,
+        pied: { texte: `Panel #${panelId} • Mode ${mode || 'multiple'}` },
+    });
 
     try {
-        const msg = await channel.send({ embeds: [embed] });
+        const msg = await api.envoyerMessage(channel_id, corps);
         db.prepare('UPDATE reaction_panels SET message_id = ? WHERE id = ?').run(msg.id, panelId);
         res.json({ success: true, id: panelId, message_id: msg.id });
     } catch (e) {
@@ -239,7 +268,7 @@ router.post('/panels/:panelId/entries', requireAuth, requireGuildAdmin, async (r
     // inattribuable n'échoue qu'au premier clic sur l'emoji.
     const roleId = typeof role_id === 'string' ? role_id.trim() : '';
     if (!roleId) return res.status(400).json({ error: 'Aucun rôle fourni.' });
-    const resolved = resolveAssignableRole(req, roleId);
+    const resolved = await resolveAssignableRole(req, roleId);
     if (resolved.error) return res.status(resolved.status).json({ error: resolved.error });
 
     const emojiLu = validerEmoji(emoji);
@@ -293,14 +322,11 @@ router.delete('/panels/:panelId', requireAuth, requireGuildAdmin, async (req, re
         .get(panelId, req.params.guildId);
     if (!panel) return res.json({ success: true });
 
-    // Supprimer le message Discord
+    // Supprimer le message du panneau
     try {
-        const client = req.app.get('discordClient');
-        const guild = client?.guilds.cache.get(req.params.guildId);
-        const channel = guild?.channels.cache.get(panel.channel_id);
-        const msg = await channel?.messages.fetch(panel.message_id);
-        await msg?.delete();
-    } catch {} // Message or channel may already be deleted
+        const api = plateforme.api(req);
+        if (api && panel.message_id) await api.supprimerMessage(panel.channel_id, panel.message_id);
+    } catch {} // Message ou salon déjà supprimé
 
     db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId);
     res.json({ success: true });
@@ -308,11 +334,10 @@ router.delete('/panels/:panelId', requireAuth, requireGuildAdmin, async (req, re
 
 async function refreshPanelFromApi(req, panel, panelId, db) {
     try {
-        const { EmbedBuilder } = require('discord.js');
+        const api = plateforme.api(req);
+        if (!api) return;
         const entries = db.prepare('SELECT * FROM reaction_roles WHERE panel_id = ? ORDER BY rowid ASC').all(panelId);
-        const client = req.app.get('discordClient');
-        const guild = client?.guilds.cache.get(panel.guild_id);
-        const channel = guild?.channels.cache.get(panel.channel_id);
+        const channel = await api.obtenirCanal(panel.channel_id).catch(() => null);
         if (!channel) return;
 
         const p = db.prepare('SELECT * FROM reaction_panels WHERE id = ?').get(panelId);
@@ -326,35 +351,37 @@ async function refreshPanelFromApi(req, panel, panelId, db) {
             ).join('\n');
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle(p.title)
-            .setDescription(description)
-            .setColor(0xc86e8e)
-            .setFooter({ text: `Panel #${panelId} • Mode ${p.mode}` });
+        const corps = embed({
+            titre: p.title,
+            description,
+            couleur: ACCENT_PANNEAU,
+            pied: { texte: `Panel #${panelId} • Mode ${p.mode}` },
+        });
 
-        // Tenter de récupérer le message existant
-        let msg = await channel.messages.fetch(panel.message_id).catch(() => null);
+        // Tenter de récupérer le message existant. Le message NORMALISÉ porte ses
+        // réactions, `parMoi` compris : c'est ce qui permet de ne reposer que les
+        // emojis manquants au lieu de tous les reposer.
+        let msg = panel.message_id
+            ? await api.obtenirMessage(panel.channel_id, panel.message_id).catch(() => null)
+            : null;
 
         if (!msg) {
             // Message supprimé par un admin → re-poster
             console.log(`[Quasar] Panel #${panelId} : message supprimé, re-post...`);
-            msg = await channel.send({ embeds: [embed] });
+            msg = await api.envoyerMessage(panel.channel_id, corps);
             db.prepare('UPDATE reaction_panels SET message_id = ? WHERE id = ?').run(msg.id, panelId);
         } else {
-            await msg.edit({ embeds: [embed] });
+            await api.modifierMessage(panel.channel_id, msg.id, corps);
         }
 
         // Ajouter les réactions manquantes
+        // `emoji.cle` est la forme STOCKÉE EN BASE (`🎮`, `<:nom:id>`,
+        // `<a:nom:id>`), pas l'identifiant : comparer autre chose ferait reposer
+        // chaque emoji personnalisé à chaque rafraîchissement.
+        const posees = new Set((msg.reactions || []).filter(r => r.parMoi).map(r => r.emoji?.cle));
         for (const entry of entries) {
-            const existing = msg.reactions.cache.find(r => {
-                const rEmoji = r.emoji.id
-                    ? `<${r.emoji.animated ? 'a' : ''}:${r.emoji.name}:${r.emoji.id}>`
-                    : r.emoji.name;
-                return rEmoji === entry.emoji;
-            });
-            if (!existing || !existing.me) {
-                await msg.react(entry.emoji).catch(() => {});
-            }
+            if (posees.has(entry.emoji)) continue;
+            await api.ajouterReaction(panel.channel_id, msg.id, entry.emoji).catch(() => {});
         }
     } catch (e) {
         console.error('[Quasar] Erreur refresh panel API:', e.message);

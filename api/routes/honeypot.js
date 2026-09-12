@@ -26,8 +26,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
-const { PermissionFlagsBits } = require('discord.js');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
+const plateforme = require('../services/plateforme');
 const { getDb } = require('../services/database');
 const { validatePunishments, parsePunishments, ACTION_NAMES } = require('../../bot/utils/punishments');
 // Le module du salon piège est un écouteur d'événement : sa configuration vit à
@@ -182,38 +182,43 @@ function readRow(guildId) {
  * configuré ne se déclenche jamais : le salon a été supprimé, je n'y vois pas
  * les messages, ou je n'ai pas le droit d'y supprimer quoi que ce soit.
  */
-function buildWarnings(req, row) {
+async function buildWarnings(req, row) {
     const warnings = [];
     if (!row.channel_id) return warnings;
 
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds?.cache?.get(req.params.guildId);
-    if (!guild) {
+    const api = plateforme.api(req);
+    const moiId = plateforme.adaptateur(req)?.moi?.id || null;
+    if (!api) {
         warnings.push('Je ne suis pas connecté à ce serveur pour le moment : je n\'ai pas pu vérifier que le salon piège existe toujours.');
         return warnings;
     }
 
-    const channel = guild.channels.cache.get(String(row.channel_id));
+    const channel = await api.obtenirCanal(String(row.channel_id)).catch(() => null);
     if (!channel) {
         warnings.push('Le salon piège configuré n\'existe plus sur ce serveur : rien n\'est surveillé tant qu\'un autre salon n\'est pas choisi.');
         return warnings;
     }
 
-    const me = guild.members.me;
-    const perms = me && channel.permissionsFor ? channel.permissionsFor(me) : null;
-    if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
-        warnings.push(`Je ne vois pas le salon ${channel.name} : Discord ne m'envoie pas les messages d'un salon auquel je n'ai pas accès, le piège ne peut donc pas se déclencher.`);
+    // Permissions EFFECTIVES du bot dans ce salon, overwrites appliqués : c'est
+    // ce que faisait `channel.permissionsFor(guild.members.me)`. `null` signifie
+    // « indéterminable » et n'entraîne aucun avertissement — en inventer un
+    // enverrait corriger une permission qui n'a rien.
+    const perms = moiId
+        ? await api.permissionsSurCanal(String(row.channel_id), moiId).catch(() => null)
+        : null;
+    if (perms && !perms.aPermission('VIEW_CHANNEL')) {
+        warnings.push(`Je ne vois pas le salon ${channel.nom} : Discord ne m'envoie pas les messages d'un salon auquel je n'ai pas accès, le piège ne peut donc pas se déclencher.`);
     }
 
     const usesDelete = parsePunishments(row.punishments || '').punishments.some(p => p.action === 'delete');
-    if (usesDelete && perms && !perms.has(PermissionFlagsBits.ManageMessages)) {
-        warnings.push(`Vos sanctions comportent « ${ACTION_HELP.delete.label} », mais je n'ai pas la permission « Gérer les messages » dans ${channel.name} : cette action échouera.`);
+    if (usesDelete && perms && !perms.aPermission('MANAGE_MESSAGES')) {
+        warnings.push(`Vos sanctions comportent « ${ACTION_HELP.delete.label} », mais je n'ai pas la permission « Gérer les messages » dans ${channel.nom} : cette action échouera.`);
     }
 
     return warnings;
 }
 
-function buildState(req) {
+async function buildState(req) {
     const guildId = req.params.guildId;
     const row = readRow(guildId);
     const source = row || DEFAULT_ROW;
@@ -237,7 +242,7 @@ function buildState(req) {
         // « je n'applique rien tant que ce n'est pas corrigé », plutôt que de
         // laisser croire à une protection active.
         problems: verdict?.problems || [],
-        warnings: buildWarnings(req, source),
+        warnings: await buildWarnings(req, source),
         catalog: buildCatalog(),
     };
 }
@@ -246,7 +251,7 @@ function buildState(req) {
 
 // GET / — état complet du module pour ce serveur.
 router.get('/', requireAuth, requireGuildAdmin, async (req, res) => {
-    res.json(buildState(req));
+    res.json(await buildState(req));
 });
 
 // PUT / — enregistre la configuration.
@@ -288,7 +293,7 @@ router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     // salon et le teste dans la foulée verrait encore l'ancien réglage.
     invalidateConfig();
 
-    res.json({ success: true, ...buildState(req) });
+    res.json({ success: true, ...(await buildState(req)) });
 });
 
 module.exports = router;

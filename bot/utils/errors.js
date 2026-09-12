@@ -19,12 +19,16 @@
 //  ─── Bi-format, et il le reste ─────────────────────────────────────────────
 //
 //  Ce fichier est importé par 23 autres et appelé des DEUX côtés : avec un `ctx`
-//  neutre par le code métier, avec une `interaction` ou une `Guild` discord.js
-//  par les deux endroits qui n'en ont pas — l'ADAPTATEUR lui-même
-//  (`ctx.erreurUtilisateur` rappelle `userError` avec son interaction, pour ne
-//  pas reboucler) et le DISPATCH de `bot/index.js`, qui signale un incident
-//  avant d'avoir construit un contexte. Ce n'est donc pas une transition à
-//  retirer : c'est la frontière de la couche, et elle a deux côtés par nature.
+//  neutre par le code métier, avec une `interaction` discord.js par les deux
+//  endroits qui n'en ont pas — l'ADAPTATEUR lui-même (`ctx.erreurUtilisateur`
+//  rappelle `userError` avec son interaction, pour ne pas reboucler) et le
+//  DISPATCH de `bot/index.js`, qui signale un incident avant d'avoir construit
+//  un contexte. Ce n'est donc pas une transition à retirer : c'est la frontière
+//  de la couche, et elle a deux côtés par nature.
+//
+//  La `Guild` discord.js, elle, ne passe plus : son dernier appelant était le
+//  mode panique, que `api/routes/antiraid.js` alimente désormais par une portée
+//  neutre (lot 7).
 //
 //  Ce qui a disparu à la consolidation, en revanche, c'est l'import de
 //  `discord.js` en tête : le rendu passe par `versEmbedDiscord`, donc par
@@ -112,10 +116,12 @@ function resoudrePorteeNeutre(valeur) {
  * Laisse passer tel quel ce qui n'est pas un embed neutre : un `EmbedBuilder`
  * déjà construit doit continuer à voyager sans être touché.
  *
- * ⚠️ Retenue par `api/**` (lot 7), pas par une transition en cours : le mode
- * panique (`bot/modules/antiraid/panic.js`) reçoit encore une `Guild` de
- * `api/routes/antiraid.js`, et la notification de violation une `Client` tant
- * que `api/routes/breach.js` n'est pas migrée. Les deux finissent ici.
+ * ⚠️ Elle ne disparaîtra pas avec le lot 7 : ses appelants restants ne sont plus
+ * dans `api/` mais dans la couche elle-même. `buildErrorEmbed` la traverse, et
+ * ses deux appelants — `ctx.erreurUtilisateur` de l'adaptateur Discord et le
+ * dispatch natif de `bot/index.js` — sont permanents par construction (voir le
+ * commentaire de `buildErrorEmbed`).
+ *
  * Le require de l'adaptateur est différé : ce fichier est chargé par 23 autres,
  * y compris dans un processus Fluxer qui ne doit jamais évaluer discord.js.
  */
