@@ -237,8 +237,6 @@ async function runWarnEscalation(options = {}) {
         }
 
         const results = await applyPunishments(punishments, {
-            // `portee` et jamais `guild` : ce dernier repart en voie historique,
-            // donc en discord.js, sans le dire.
             portee,
             member,
             userId: member?.id || userId,

@@ -85,7 +85,7 @@ test('un corps composé porte contenu, embeds et pièces jointes', () => {
 
 // ── 2. Voie d'entrée des événements ──────────────────────────────────────────
 
-test('chargerEvenements branche les DEUX formats sur le bon événement natif', async () => {
+test('chargerEvenements branche un handler neutre sur le bon événement natif', async () => {
     // Sans ce chargeur, un handler migré en { nom: 'roleCree', executer } était
     // abonné à client.on('roleCree') — un événement que discord.js n'émet
     // jamais. Pas d'erreur, pas de journal, la fonctionnalité disparaît.
@@ -98,33 +98,38 @@ test('chargerEvenements branche les DEUX formats sur le bon événement natif', 
             executer: async (ctx, role) => { global.__vuNeutre = { ctx, role }; },
         });
     `);
-    fs.writeFileSync(path.join(dossier, 'historique.js'), `
-        module.exports = { name: 'roleDelete', once: false, execute: async (role) => { global.__vuLegacy = role; } };
-    `);
 
     const { client, abonnements } = faireClient();
     const adaptateur = creerAdaptateurDiscord({ client });
     const charges = adaptateur.chargerEvenements({ dossier });
 
-    assert.deepEqual(
-        charges.map(c => [c.nom, c.neutre, c.branche]).sort(),
-        [['roleCree', true, true], ['roleDelete', false, true]],
-    );
+    assert.deepEqual(charges.map(c => [c.nom, c.neutre, c.branche]), [['roleCree', true, true]]);
     assert.ok(abonnements.has('roleCreate'), 'roleCree doit être branché sur roleCreate');
-    assert.ok(abonnements.has('roleDelete'));
 
     abonnements.get('roleCreate')({ id: '1', name: 'Membre', position: 2 });
-    abonnements.get('roleDelete')({ id: '2', name: 'Ancien' });
     await new Promise(setImmediate);
 
     assert.equal(global.__vuNeutre.role.nom, 'Membre');
     assert.equal(global.__vuNeutre.role.mention, '<@&1>');
     assert.equal(global.__vuNeutre.ctx.plateforme, 'discord');
-    // Le format historique reçoit toujours l'objet natif : les 16 handlers pas
-    // encore migrés ne doivent rien voir changer.
-    assert.equal(global.__vuLegacy.name, 'Ancien');
+    delete global.__vuNeutre;
 
-    delete global.__vuNeutre; delete global.__vuLegacy;
+    // Le format historique `{ name, execute }` est REFUSÉ depuis la
+    // consolidation. On lève au lieu d'ignorer : un handler simplement écarté,
+    // c'est une fonctionnalité qui disparaît sans erreur et sans journal.
+    fs.writeFileSync(path.join(dossier, 'historique.js'), `
+        module.exports = { name: 'roleDelete', once: false, execute: async () => {} };
+    `);
+    assert.throws(
+        () => creerAdaptateurDiscord({ client: faireClient().client }).chargerEvenements({ dossier }),
+        (err) => {
+            assert.match(err.message, /historique\.js/);
+            assert.match(err.message, /definirEvenement/);
+            assert.match(err.message, /roleSupprime/, 'le message doit lister le vocabulaire neutre');
+            return true;
+        },
+    );
+
     fs.rmSync(dossier, { recursive: true, force: true });
 });
 
@@ -142,7 +147,11 @@ test('une exception dans un handler passe par le filet, jamais par un rejet flot
         });
     `);
     fs.writeFileSync(path.join(dossier, 'casseSync.js'), `
-        module.exports = { name: 'roleDelete', execute: () => { throw new Error('boum sync'); } };
+        const { definirEvenement } = require(${chemin});
+        module.exports = definirEvenement({
+            nom: 'roleSupprime',
+            executer: () => { throw new Error('boum sync'); },
+        });
     `);
 
     const { client, abonnements } = faireClient();
@@ -155,7 +164,7 @@ test('une exception dans un handler passe par le filet, jamais par un rejet flot
     await new Promise(setImmediate);
 
     // Le throw synchrone comme le rejet asynchrone, et l'événement est nommé.
-    assert.deepEqual(vus.sort(), [['roleCree', 'boum'], ['roleDelete', 'boum sync']]);
+    assert.deepEqual(vus.sort(), [['roleCree', 'boum'], ['roleSupprime', 'boum sync']]);
     fs.rmSync(dossier, { recursive: true, force: true });
 });
 
@@ -521,4 +530,104 @@ test('le nom du panneau est le même mot à la pose et au routage', () => {
     adaptateur.surPanneau('ticket', (ctx, cle) => { vu = cle; });
     adaptateur.routerPanneau({ customId, user: { id: '1' }, client: {} });
     assert.equal(vu, 'ouvrir');
+});
+
+// ── api.modifierPanneau : le symétrique de poserPanneau ──────────────────────
+
+test('api.modifierPanneau réécrit un panneau posé, choix compris', async () => {
+    // Sans elle, un panneau tranché ne pouvait que PERDRE ses boutons
+    // (`composants: []`) : le message cessait de dire ce qui avait été proposé.
+    // C'est ce que le salon d'arbitrage faisait avant migration — reposer les
+    // mêmes boutons, grisés — et ce qu'elle restitue.
+    const { creerApi } = require('../bot/platform/discord/api');
+    const { embed } = require('../bot/platform/embed');
+
+    const requetes = [];
+    const api = creerApi({
+        rest: {
+            patch: async (route, requete) => {
+                requetes.push([route, requete]);
+                return { id: 'M1', channel_id: 'C1' };
+            },
+        },
+    });
+
+    const message = await api.modifierPanneau(
+        'C1', 'M1',
+        embed({ titre: 'Cas #42 — sanctions appliquées' }),
+        [
+            { cle: 'apply:42', libelle: 'Appliquer les sanctions', style: 'danger', desactive: true },
+            { cle: 'ignore:42', libelle: 'Ignorer le cas', style: 'secondaire', desactive: true },
+        ],
+        { panneau: 'defer' },
+    );
+
+    // Le message rendu est NORMALISÉ : l'appelant peut le stocker sans connaître
+    // la forme de la réponse REST.
+    assert.equal(message.id, 'M1');
+    assert.equal(message.canalId, 'C1');
+
+    assert.equal(requetes.length, 1);
+    const [route, { body }] = requetes[0];
+    assert.equal(route, '/channels/C1/messages/M1');
+    assert.equal(body.embeds[0].title, 'Cas #42 — sanctions appliquées');
+    // Le `customId` est identique à celui que `poserPanneau` aurait produit :
+    // même nom de panneau, même séparateur, donc même routage après coup.
+    assert.deepEqual(body.components[0].components.map(b => [b.custom_id, b.disabled]), [
+        ['defer:apply:42', true],
+        ['defer:ignore:42', true],
+    ]);
+});
+
+test('api.modifierPanneau exige un panneau, un salon et un message', async () => {
+    const { creerApi } = require('../bot/platform/discord/api');
+    const api = creerApi({ rest: { patch: async () => ({ id: 'M1' }) } });
+
+    await assert.rejects(() => api.modifierPanneau('C1', 'M1', 'x', [], { panneau: 'a:b' }),
+        /nom de panneau invalide/);
+    await assert.rejects(() => api.modifierPanneau('C1', null, 'x', [], { panneau: 'defer' }),
+        /salon et le message/);
+});
+
+// ── rendreChoix : le découpage en rangées est une donnée de mise en page ─────
+
+test('rendreChoix accepte un marqueur de rangée et un tableau de rangées', () => {
+    const { rendreChoix } = require('../bot/platform/discord/render');
+    const choix = (n) => Array.from({ length: n }, (_, i) => ({ cle: `c${i}`, libelle: `C${i}` }));
+    const tailles = (rangees) => rangees.map(r => r.toJSON().components.length);
+
+    // Défaut : cinq par rangée, comportement inchangé.
+    assert.deepEqual(tailles(rendreChoix(choix(7), 'p')), [5, 2]);
+
+    // Marqueur porté par le choix qui OUVRE la rangée — la forme du panneau des
+    // salons vocaux temporaires, qui repasse ainsi de 5 + 2 à son 4 + 3 d'origine.
+    const avecMarqueur = choix(7);
+    avecMarqueur[4].nouvelleRangee = true;
+    assert.deepEqual(tailles(rendreChoix(avecMarqueur, 'p')), [4, 3]);
+
+    // Un marqueur sur le PREMIER choix n'ouvre rien : la rangée est déjà vide.
+    const premierMarque = choix(3);
+    premierMarque[0].nouvelleRangee = true;
+    assert.deepEqual(tailles(rendreChoix(premierMarque, 'p')), [3]);
+
+    // Tableau de rangées : découpage explicite.
+    assert.deepEqual(tailles(rendreChoix([choix(2), choix(1), choix(3)], 'p')), [2, 1, 3]);
+
+    // L'ordre et les identifiants ne changent jamais, quel que soit le découpage.
+    const plats = rendreChoix(avecMarqueur, 'p').flatMap(r => r.toJSON().components.map(b => b.custom_id));
+    assert.deepEqual(plats, ['p:c0', 'p:c1', 'p:c2', 'p:c3', 'p:c4', 'p:c5', 'p:c6']);
+});
+
+test('rendreChoix refuse ce que Discord refuserait, en disant quoi faire', () => {
+    const { rendreChoix } = require('../bot/platform/discord/render');
+    const choix = (n) => Array.from({ length: n }, (_, i) => ({ cle: `c${i}`, libelle: `C${i}` }));
+
+    assert.throws(() => rendreChoix(choix(26), 'p'), /25 au maximum/);
+    assert.throws(() => rendreChoix([choix(6)], 'p'), /5 par rangée/);
+    assert.throws(() => rendreChoix([choix(1), choix(1), choix(1), choix(1), choix(1), choix(1)], 'p'),
+        /5 au maximum/);
+    // Mélanger choix et rangées dans la même liste est une faute de frappe, pas
+    // une intention : on la signale au lieu de deviner.
+    assert.throws(() => rendreChoix([{ cle: 'a', libelle: 'A' }, [{ cle: 'b', libelle: 'B' }]], 'p'),
+        /mélange de choix et de rangées/);
 });

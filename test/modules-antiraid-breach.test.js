@@ -137,23 +137,34 @@ function faireAdaptateur(options = {}) {
     };
 }
 
-/** Client discord.js réduit à ce que `notify.js` emprunte sur la voie historique. */
+/**
+ * Portée d'écriture réduite à ce que `notify.js` emprunte, dans la forme que lui
+ * passe désormais `bot/modules/breach/index.js` : l'ADAPTATEUR de plateforme.
+ *
+ * La voie historique — un `Client` discord.js, son cache de salons et
+ * `permissionsFor` — a été retirée à la consolidation, en même temps que la
+ * boucle est passée à l'adaptateur.
+ */
 function faireClient({ peutEcrire = true, salonPresent = true } = {}) {
     const mps = [];
     const salonEnvois = [];
-    const salon = {
-        send: async (payload) => { salonEnvois.push(payload); return { id: 'log1' }; },
-        permissionsFor: () => ({ has: (nom) => peutEcrire && ['ViewChannel', 'SendMessages'].includes(nom) }),
-    };
-    const guilde = {
-        id: GUILDE,
-        members: { me: { id: BOT } },
-        channels: { cache: salonPresent ? new Map([[SALON_LOG, salon]]) : new Map() },
-    };
     return {
         client: {
-            guilds: { cache: new Map([[GUILDE, guilde]]) },
-            users: { fetch: async () => ({ send: async (payload) => { mps.push(payload); } }) },
+            moi: { id: BOT, nom: 'Quasar#0000' },
+            api: {
+                async ouvrirMessagePrive() { return 'dm-canal'; },
+                async obtenirGuilde() { return { id: GUILDE, nom: 'Serveur de test' }; },
+                async obtenirCanal(id) {
+                    return salonPresent && id === SALON_LOG ? { id, nom: 'logs', type: 'texte' } : null;
+                },
+                async permissionsSurCanal() {
+                    return { aPermission: (nom) => peutEcrire && ['VIEW_CHANNEL', 'SEND_MESSAGES'].includes(nom) };
+                },
+                async envoyerMessage(canalId, contenu) {
+                    (canalId === 'dm-canal' ? mps : salonEnvois).push(contenu);
+                    return { id: 'log1', canalId };
+                },
+            },
         },
         mps,
         salonEnvois,
@@ -289,7 +300,7 @@ test('violation — sendDM voie neutre : ouvrirMessagePrive puis envoyerMessage'
     assert.equal(estEmbed(api.appels[1][2]), true);
 });
 
-test('violation — sendDM voie historique : le Client discord.js reste servi', async () => {
+test('violation — sendDM par l\'adaptateur : deux appels, un embed neutre', async () => {
     const { client, mps } = faireClient();
     const contenu = notify.buildBreachEmbed({ title: 'I' }, { phase: 1, body: 'b' });
 
@@ -297,19 +308,34 @@ test('violation — sendDM voie historique : le Client discord.js reste servi', 
 
     assert.deepEqual(res, { ok: true, error: null });
     assert.equal(mps.length, 1);
-    // Rendu en EmbedBuilder par la couche de transition, comme avant le lot.
-    assert.equal(typeof mps[0].embeds[0].toJSON, 'function');
-    assert.equal(corpsEnvoye(mps[0].embeds[0]).title, '⚠️ Notification de violation de données');
+    // L'embed voyage NEUTRE jusqu'au client REST, qui le rend lui-même.
+    assert.equal(estEmbed(mps[0]), true);
+    assert.equal(mps[0].titre, '⚠️ Notification de violation de données');
 });
 
 test('violation — sendDM : un échec est tracé avec le code de la plateforme', async () => {
     const erreur = Object.assign(new Error('Cannot send messages to this user'), { code: 50007 });
-    const client = { users: { fetch: async () => { throw erreur; } } };
+    const portee = {
+        moi: { id: BOT },
+        api: {
+            async ouvrirMessagePrive() { throw erreur; },
+            async envoyerMessage() { throw new Error('jamais atteint'); },
+        },
+    };
 
-    const res = await notify.sendDM(client, DESTINATAIRE, notify.buildBreachPointerEmbed());
+    const res = await notify.sendDM(portee, DESTINATAIRE, notify.buildBreachPointerEmbed());
 
     assert.equal(res.ok, false);
     assert.equal(res.error, '[50007] Cannot send messages to this user');
+});
+
+test('violation — sendDM : une cible non neutre est refusée, jamais envoyée à l\'aveugle', async () => {
+    // Un `Client` discord.js n'est plus une portée d'écriture. On le refuse
+    // explicitement plutôt que de laisser l'envoi partir dans le vide : la
+    // traçabilité (art. 33.5) doit pouvoir dire QUI n'a pas reçu.
+    const res = await notify.sendDM({ users: { fetch: async () => ({}) } }, DESTINATAIRE,
+        notify.buildBreachPointerEmbed());
+    assert.deepEqual(res, { ok: false, error: 'client ou destinataire indisponible' });
 });
 
 test('violation — repli salon voie neutre : le pointeur part dans le salon de logs', async () => {
@@ -344,7 +370,7 @@ test('violation — repli salon voie neutre : salon de logs disparu, rien n\'est
     assert.equal(api.appels.some(a => a[0] === 'envoyerMessage'), false);
 });
 
-test('violation — repli salon voie historique : le contrôle de permission tient toujours', async () => {
+test('violation — repli salon par l\'adaptateur : le contrôle de permission tient toujours', async () => {
     const refus = faireClient({ peutEcrire: false });
     const res = await notify.sendToGuildChannel(refus.client, GUILDE);
     assert.deepEqual(res, { ok: false, error: 'aucun salon de logs configure pour le repli' });
@@ -354,7 +380,7 @@ test('violation — repli salon voie historique : le contrôle de permission tie
     const res2 = await notify.sendToGuildChannel(ok.client, GUILDE);
     assert.deepEqual(res2, { ok: true, error: null });
     assert.equal(ok.salonEnvois.length, 1);
-    assert.equal(corpsEnvoye(ok.salonEnvois[0].embeds[0]).title, '⚠️ Notification importante');
+    assert.equal(ok.salonEnvois[0].titre, '⚠️ Notification importante');
 });
 
 test('violation — truncate : borne respectée et troncature annoncée', () => {

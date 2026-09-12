@@ -79,11 +79,11 @@ function describeRefusal(code, role) {
 /**
  * Même motif, en une phrase, pour un `res.status(400).json({ error })`.
  *
- * TRANSITION : format historique, à retirer au lot de consolidation.
- * `api/routes/reactionroles.js` résout encore ses rôles dans le cache
- * discord.js et passe l'objet natif, qui porte `name` et non `nom`. Le pont est
- * ici plutôt que dans `describeRefusal` pour que le cœur reste neutre : c'est
- * l'API qui a un format à rattraper, et elle est migrée au lot 7.
+ * ⚠️ TRANSITION : format historique, RETENU par `api/routes/reactionroles.js`
+ * (lot 7). Cette route résout ses rôles dans le cache discord.js et passe
+ * l'objet natif, qui porte `name` et non `nom`. Le pont est ici plutôt que dans
+ * `describeRefusal` pour que le cœur reste neutre : c'est l'API qui a un format
+ * à rattraper. Il tombe le jour où elle lira `api.obtenirRole`.
  */
 function describeForApi(code, role) {
     const { cause, action } = describeRefusal(code, { nom: role?.nom ?? role?.name });

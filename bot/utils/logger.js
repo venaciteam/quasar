@@ -1,15 +1,16 @@
 // ═══════════════════════════════════════════════════════════════
 //  Journalisation des événements de serveur
 //
-//  Bi-format le temps de la migration multiplateforme : `sendLog` est appelée
-//  par quinze fichiers, migrés ou non. La voie historique reçoit une `Guild`
-//  discord.js et un `EmbedBuilder` ; la voie neutre reçoit une portée
-//  (`ctx`, ou `{ guildeId, api }`) et un embed neutre. La détection vient de
+//  `sendLog` attend une PORTÉE d'écriture — un `ctx`, l'adaptateur, ou
+//  `{ guildeId, api }` — et un embed neutre. Sa voie historique (une `Guild`
+//  discord.js et son cache de salons) a été retirée à la consolidation : ses
+//  quinze appelants sont migrés, à l'exception de `bot/modules/music/player.js`,
+//  famille coupée et jamais chargée. La détection de portée vient de
 //  `bot/utils/errors.js`, seul endroit du dépôt où elle est écrite.
 // ═══════════════════════════════════════════════════════════════
 
 const { getDb } = require('../../api/services/database');
-const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
+const { resoudrePorteeNeutre } = require('./errors');
 
 const LOG_CATEGORIES = {
     // Modération (déjà en place via modlog.js, on garde la compat)
@@ -77,40 +78,39 @@ function isLogEnabled(guildId, logType) {
 /**
  * Envoie un embed dans le salon de journalisation du serveur.
  *
- * @param {object} cible   `Guild` discord.js (voie historique), ou portée neutre :
- *   un `ctx`, ou `{ guildeId, api }`. Reconnue à la présence d'un `api` normalisé.
+ * @param {object} cible   portée d'écriture neutre : un `ctx`, l'adaptateur, ou
+ *   `{ guildeId, api }`. Reconnue à la présence d'un `api` normalisé.
  * @param {string} logType clé de LOG_CATEGORIES
- * @param {object} contenu embed neutre, ou `EmbedBuilder` sur la voie historique.
- *   Un embed neutre passé avec une `Guild` est rendu au vol : un fichier à demi
- *   migré (embed neutre, guilde discord.js) reste fonctionnel.
+ * @param {object} contenu embed neutre
  */
 async function sendLog(cible, logType, contenu) {
     const portee = resoudrePorteeNeutre(cible);
-    const guildId = portee ? portee.guildeId : cible.id;
+    if (!portee) {
+        // La voie historique — une `Guild` discord.js et son cache de salons — a
+        // été retirée à la consolidation. Son dernier appelant est
+        // `bot/modules/music/player.js`, famille COUPÉE depuis le 2026-06-18 :
+        // ses fichiers de commande sont dans DISABLED_COMMAND_FILES et
+        // `@discordjs/voice` n'est plus dans package.json, donc ce module n'est
+        // jamais chargé. Si la musique est réactivée un jour, il devra passer
+        // une portée `{ guildeId, api }` — et ce message le dira.
+        console.error(
+            `[Quasar] Log ${logType} ignoré : portée d'écriture non neutre. `
+            + 'Passez un `ctx`, l\'adaptateur, ou `{ guildeId, api }`.'
+        );
+        return;
+    }
 
+    const guildId = portee.guildeId;
     if (!isLogEnabled(guildId, logType)) return;
     const config = getLogConfig(guildId);
     if (!config.logChannel) return;
 
-    if (portee) {
-        try {
-            // Pas d'équivalent du « salon absent du cache » qui fait renoncer la
-            // voie historique sans un mot : le client REST neutre ne tient pas de
-            // cache. Un salon supprimé produit donc une erreur, attrapée ici et
-            // journalisée exactement comme un échec d'envoi.
-            await portee.api.envoyerMessage(config.logChannel, contenu);
-        } catch (e) {
-            console.error(`[Quasar] Erreur log ${logType}:`, e.message);
-        }
-        return;
-    }
-
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    const channel = cible.channels.cache.get(config.logChannel);
-    if (!channel) return;
-
     try {
-        await channel.send({ embeds: [versEmbedDiscord(contenu)] });
+        // Pas d'équivalent du « salon absent du cache » qui faisait renoncer la
+        // voie historique sans un mot : le client REST neutre ne tient pas de
+        // cache. Un salon supprimé produit donc une erreur, attrapée ici et
+        // journalisée exactement comme un échec d'envoi.
+        await portee.api.envoyerMessage(config.logChannel, contenu);
     } catch (e) {
         console.error(`[Quasar] Erreur log ${logType}:`, e.message);
     }

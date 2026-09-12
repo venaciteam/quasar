@@ -378,28 +378,26 @@ async function ouvrirTicket(ctx) {
     const texteAccueil = config.welcome_message
         || 'Un membre du staff va vous répondre sous peu. Décrivez votre problème en détail.';
 
-    // ⚠️ Les mentions partent dans un message SÉPARÉ du panneau d'accueil.
-    // `poserPanneau` n'accepte qu'une chaîne OU un embed, jamais un corps
-    // composé : le message unique d'origine (`content` + `embeds` +
-    // `components`) n'est pas reproductible en un seul envoi. Ce sont les
-    // mentions qui notifient — celles d'un embed ne notifient pas — donc c'est
-    // cette ligne qu'on préserve, quitte à la poster à part. Discord affiche les
-    // deux blocs l'un au-dessus de l'autre, comme avant. À refondre en un seul
-    // envoi le jour où `poserPanneau` accepte `{ contenu, embeds }`.
-    await ctx.api.envoyerMessage(salonTicket.id, `${ctx.auteur.mention} | <@&${config.staff_role_id}>`);
-
+    // UN SEUL message : les mentions, l'embed d'accueil et le bouton de
+    // fermeture. Ce sont les mentions qui notifient — celles d'un embed ne
+    // notifient pas — et elles doivent voyager avec le panneau, comme avant
+    // migration. Le corps composé de `poserPanneau` rend cela possible ; sans
+    // lui, il fallait poster deux messages à la suite.
     await ctx.poserPanneau(
         salonTicket.id,
-        embed({
-            titre: `🎫 Ticket #${ticketId}`,
-            description: `Bienvenue ${ctx.auteur.mention} !\n\n${texteAccueil}`,
-            couleur: ACCENT_COLOR,
-            champs: [
-                { nom: 'Ouvert par', valeur: ctx.auteur.mention, enLigne: true },
-                { nom: 'Staff', valeur: `<@&${config.staff_role_id}>`, enLigne: true },
-            ],
-            horodatage: true,
-        }),
+        {
+            contenu: `${ctx.auteur.mention} | <@&${config.staff_role_id}>`,
+            embeds: [embed({
+                titre: `🎫 Ticket #${ticketId}`,
+                description: `Bienvenue ${ctx.auteur.mention} !\n\n${texteAccueil}`,
+                couleur: ACCENT_COLOR,
+                champs: [
+                    { nom: 'Ouvert par', valeur: ctx.auteur.mention, enLigne: true },
+                    { nom: 'Staff', valeur: `<@&${config.staff_role_id}>`, enLigne: true },
+                ],
+                horodatage: true,
+            })],
+        },
         [CHOIX_FERMER],
         { panneau: PANNEAU },
     );

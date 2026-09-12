@@ -14,9 +14,11 @@
 
 const { definirPanneau } = require('../platform/panneaux');
 const {
+    PANNEAU,
     analyserCle,
     getCase,
     claimCase,
+    buildCaseChoixResolus,
     buildResolvedEmbed,
 } = require('../modules/defer');
 const { applyPunishments, parsePunishments } = require('../utils/punishments');
@@ -28,20 +30,39 @@ function formatOutcome(result) {
 }
 
 /**
- * Réécrit le message d'arbitrage.
+ * Réécrit le message d'arbitrage EN ACQUITTANT le clic.
  *
- * ⚠️ Passe par `api.modifierMessage` et non par `ctx.modifierPanneau` : ce
- * dernier appelle `editReply`, qui exige une interaction déjà acquittée, et un
- * clic de panneau arrive vierge. Les boutons sont RETIRÉS (`composants: []`)
- * là où la version d'origine les laissait grisés : rien dans le contrat ne
- * permet de reposer des choix désactivés sur un message existant. Le détail de
- * ce qui était proposé reste lisible — c'est un champ de l'embed.
+ * C'est `ctx.modifierPanneau`, et c'est la sémantique d'`interaction.update()` :
+ * sur un clic vierge — ce qu'est toujours un clic de panneau — il réécrit le
+ * message ET acquitte, en un seul appel et sans laisser le moindre message
+ * éphémère. Les boutons sont REPOSÉS désactivés, comme avant migration : un
+ * message d'arbitrage sans boutons ne dit plus à quoi le clic correspondait.
+ *
+ * Le contournement d'avant consolidation — `ctx.differer({ ephemere: true })`
+ * puis `api.modifierMessage` puis `ctx.repondre()` — coûtait quatre messages
+ * éphémères que l'original n'avait pas. Il n'existait que parce que
+ * `ctx.modifierPanneau` appelait `editReply` sur une interaction non acquittée.
+ */
+function acquitterEtReecrire(ctx, row, contenuEmbed) {
+    return ctx.modifierPanneau(contenuEmbed, buildCaseChoixResolus(row.id), { panneau: PANNEAU });
+}
+
+/**
+ * Réécrit le message d'arbitrage APRÈS coup, par ses coordonnées.
+ *
+ * Pour le seul cas où le travail dépasse les trois secondes accordées à une
+ * interaction : le clic a déjà été acquitté par `acquitterEtReecrire`, et il
+ * s'agit maintenant d'ajouter le résultat des sanctions. C'est le
+ * `interaction.message.edit()` d'avant migration, dans le vocabulaire du
+ * contrat.
  */
 function reecrireCas(ctx, row, contenuEmbed) {
-    return ctx.api.modifierMessage(
+    return ctx.api.modifierPanneau(
         row.channel_id || ctx.canalId,
         ctx.panneau.messageId || row.message_id,
-        { embeds: [contenuEmbed], composants: [] },
+        contenuEmbed,
+        buildCaseChoixResolus(row.id),
+        { panneau: PANNEAU },
     );
 }
 
@@ -80,19 +101,14 @@ module.exports = definirPanneau({
             });
         }
 
-        // Réponse différée à partir d'ici : bannir, expulser et écrire les logs
-        // dépasse facilement les trois secondes accordées à une interaction, et
-        // c'est aussi le seul acquittement dont dispose le contrat neutre.
-        await ctx.differer({ ephemere: true });
-
         if (row.status !== 'pending') {
             // Cas déjà tranché — typiquement deux personnes qui cliquent en même
             // temps, ou un vieux message rouvert. On rafraîchit l'affichage pour que
-            // le salon cesse de mentir sur l'état du cas.
-            await reecrireCas(ctx, row, buildResolvedEmbed(row, {
+            // le salon cesse de mentir sur l'état du cas. Rien d'autre à dire :
+            // le message réécrit EST la réponse.
+            return acquitterEtReecrire(ctx, row, buildResolvedEmbed(row, {
                 resolvedBy: row.resolved_by, outcomeLines: [],
             })).catch(() => {});
-            return ctx.repondre('Ce cas a déjà été tranché.', { ephemere: true });
         }
 
         const nouveauStatut = analyse.verb === 'apply' ? 'approved' : 'rejected';
@@ -100,21 +116,30 @@ module.exports = definirPanneau({
             // Perdu la course : quelqu'un vient de trancher entre la lecture et
             // l'écriture. Aucune sanction n'est appliquée deux fois.
             const frais = getCase(row.id) || row;
-            await reecrireCas(ctx, frais, buildResolvedEmbed(frais, {
+            return acquitterEtReecrire(ctx, frais, buildResolvedEmbed(frais, {
                 resolvedBy: frais.resolved_by, outcomeLines: [],
             })).catch(() => {});
-            return ctx.repondre('Ce cas vient d\'être tranché par quelqu\'un d\'autre.', { ephemere: true });
         }
 
         const resolu = getCase(row.id) || { ...row, status: nouveauStatut, resolved_by: ctx.auteur.id };
 
         if (nouveauStatut !== 'approved') {
-            await reecrireCas(ctx, resolu, buildResolvedEmbed(resolu, {
+            return acquitterEtReecrire(ctx, resolu, buildResolvedEmbed(resolu, {
                 resolvedBy: ctx.auteur.id,
                 outcomeLines: ['Aucune sanction appliquée.'],
             })).catch(() => {});
-            return ctx.repondre('Cas ignoré : aucune sanction appliquée.', { ephemere: true });
         }
+
+        // ─── Cas approuvé : le travail dépasse les trois secondes ────────────
+        //
+        // Bannir, expulser et écrire les logs prend du temps. Le clic est donc
+        // acquitté TOUT DE SUITE en posant l'état « tranché » sur le message,
+        // puis le résultat des sanctions y est ajouté une fois connu. Deux
+        // écritures, comme avant migration (`deferUpdate()` puis
+        // `message.edit()`), et toujours aucun message éphémère.
+        await acquitterEtReecrire(ctx, resolu, buildResolvedEmbed(resolu, {
+            resolvedBy: ctx.auteur.id, outcomeLines: [],
+        })).catch(() => {});
 
         const { punishments } = parsePunishments(resolu.proposed_punishments || '');
         // `defer` est retiré de la proposition : un cas ne peut pas rouvrir un cas.
@@ -126,8 +151,6 @@ module.exports = definirPanneau({
         } else {
             const membre = await ctx.api.obtenirMembre(ctx.guildeId, resolu.target_user_id).catch(() => null);
             const resultats = await applyPunishments(aAppliquer, {
-                // `portee` et jamais `guild` : ce dernier repart en voie
-                // historique, donc en discord.js, sans le dire.
                 portee: ctx,
                 member: membre,
                 userId: resolu.target_user_id,
@@ -142,10 +165,9 @@ module.exports = definirPanneau({
             outcomeLines = resultats.map(formatOutcome);
         }
 
-        await reecrireCas(ctx, resolu, buildResolvedEmbed(resolu, {
+        return reecrireCas(ctx, resolu, buildResolvedEmbed(resolu, {
             resolvedBy: ctx.auteur.id,
             outcomeLines,
         })).catch(() => {});
-        return ctx.repondre('Sanctions appliquées.', { ephemere: true });
     },
 });

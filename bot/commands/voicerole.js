@@ -8,23 +8,6 @@ const { describeRefusal } = require('../utils/assignableRole');
 // fichier connaisse les entiers de la plateforme.
 const SALONS_VOCAUX = ['vocal', 'conference'];
 
-/**
- * La table `voice_roles` n'est pas créée par le schéma de `database.js` : elle
- * l'est à la volée, à chaque exécution de la commande, depuis toujours. On
- * conserve ce fonctionnement tel quel — le déplacer dans le schéma serait une
- * correction, et ce lot est à comportement constant.
- */
-function assurerTable(db) {
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS voice_roles (
-            guild_id TEXT NOT NULL,
-            channel_id TEXT NOT NULL,
-            role_id TEXT NOT NULL,
-            PRIMARY KEY (guild_id, channel_id)
-        )
-    `);
-}
-
 module.exports = definirCommande({
     nom: 'voicerole',
     description: 'Gérer les rôles vocaux (attribués en vocal, retirés à la déconnexion)',
@@ -44,7 +27,6 @@ module.exports = definirCommande({
             ],
             async executer(ctx) {
                 const db = ctx.db;
-                assurerTable(db);
 
                 const salon = ctx.options.get('salon');
                 const role = ctx.options.get('role');
@@ -84,7 +66,6 @@ module.exports = definirCommande({
             ],
             async executer(ctx) {
                 const db = ctx.db;
-                assurerTable(db);
 
                 const salon = ctx.options.get('salon');
                 const supprimes = db.prepare('DELETE FROM voice_roles WHERE guild_id = ? AND channel_id = ?')
@@ -111,7 +92,6 @@ module.exports = definirCommande({
             description: 'Voir les rôles vocaux configurés',
             async executer(ctx) {
                 const db = ctx.db;
-                assurerTable(db);
 
                 const rolesVocaux = db.prepare('SELECT channel_id, role_id FROM voice_roles WHERE guild_id = ?')
                     .all(ctx.guildeId);

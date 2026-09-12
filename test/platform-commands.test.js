@@ -179,36 +179,35 @@ test('les règles que Discord impose à l\'ordre des options sont vérifiées ic
     }), /sous-commandes ne peut pas porter d'options/);
 });
 
-test('un descripteur porte un pont data.name, pour la liste des noms réservés', () => {
-    // `reservedCommandNames()` (bot/commands/customcmd.js) lit `mod.data.name`.
-    // Sans ce pont, /ping et /autorole sortiraient de la liste et un homonyme
-    // personnalisé pourrait être créé — inerte, puis écarté au déploiement.
+test('les noms réservés se lisent sur le descripteur, sans pont data.name', () => {
+    // `reservedCommandNames()` (bot/commands/customcmd.js) lisait `mod.data.name`,
+    // ce qui obligeait `definirCommande` à poser un `data` factice sur chaque
+    // descripteur. Le pont a été retiré à la consolidation : la liste se
+    // construit sur `mod.nom`, et un homonyme personnalisé reste impossible.
     const { reservedCommandNames } = require('../bot/commands/customcmd');
     const noms = reservedCommandNames();
     assert.ok(noms.has('ping'), '/ping doit rester un nom réservé');
     assert.ok(noms.has('autorole'), '/autorole doit rester un nom réservé');
-    // Une commande restée au format historique doit l'être aussi. On la cherche
-    // sans la nommer : les deux formats alimentent la même liste, et nommer une
-    // commande précise ferait tomber ce test à sa migration.
-    const historique = chargerCommandes({ dossier: DOSSIER_COMMANDES, exclus: DISABLED_COMMAND_FILES })
-        .find(e => !e.neutre);
-    if (historique) {
-        assert.ok(noms.has(historique.nom), `/${historique.nom} (format historique) doit rester un nom réservé`);
+
+    // TOUTES les commandes chargées, sans exception : c'est la liste des noms
+    // que Quasar occupe déjà sur un serveur.
+    for (const entree of chargerCommandes({ dossier: DOSSIER_COMMANDES, exclus: DISABLED_COMMAND_FILES })) {
+        assert.ok(noms.has(entree.nom), `/${entree.nom} doit être un nom réservé`);
     }
+
+    // Et le pont lui-même a bien disparu du descripteur.
+    assert.equal(require('../bot/commands/ping').data, undefined,
+        'un descripteur neutre ne doit plus porter de `data`');
 });
 
 // ── Cohabitation des deux formats ────────────────────────────────────────────
 
-test('le chargeur accepte descripteurs neutres et modules historiques', () => {
-    // Commandes FACTICES, et non des commandes du bot.
-    //
-    // Ce test a d'abord affirmé « /warn n'est pas migrée », puis « /warn l'est,
-    // /clear ne l'est pas » : à chaque fois, l'assertion est tombée dès que le
-    // lot concerné a rendu, et a fait échouer une suite qui ne teste pas ces
-    // commandes. Ce qu'on vérifie ici, c'est le CHARGEUR ; il ne doit dépendre
-    // de l'avancement d'aucun lot. Le jour où les 29 commandes seront migrées,
-    // la doublure historique ci-dessous sera la dernière du dépôt — et ce test
-    // continuera de prouver que la cohabitation fonctionne.
+test('le chargeur REFUSE un module resté au format historique', () => {
+    // Le chargeur a accepté les deux formats le temps des lots 1 à 5. Depuis la
+    // consolidation il n'accepte plus que le descripteur neutre, et il LÈVE sur
+    // l'autre — il ne l'ignore pas. La différence est tout l'objet de ce test :
+    // une commande simplement ignorée disparaîtrait du bot ET du déploiement
+    // sans erreur, sans journal, et sans symptôme qui désigne sa cause.
     const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-biformat-'));
     const registre = JSON.stringify(path.join(__dirname, '..', 'bot', 'platform', 'commands'));
     // Chemins absolus : le dossier factice est hors du dépôt, la résolution
@@ -222,41 +221,46 @@ test('le chargeur accepte descripteurs neutres et modules historiques', () => {
             async executer(ctx) { return ctx; },
         });
     `);
-    fs.writeFileSync(path.join(dossier, 'historique.js'), `
-        const { SlashCommandBuilder } = require(${discordjs});
-        module.exports = {
-            data: new SlashCommandBuilder().setName('temoin-historique').setDescription('Témoin historique'),
-            async execute(interaction) { return interaction; },
-        };
-    `);
 
     try {
-        const parNom = new Map(
-            chargerCommandes({ dossier }).map(e => [e.nom, e]),
+        const [entree, ...reste] = chargerCommandes({ dossier });
+        assert.equal(reste.length, 0);
+        assert.equal(entree.nom, 'temoin-neutre');
+        assert.equal(entree.neutre, true);
+        assert.equal(typeof entree.data.toJSON, 'function', 'non déployable');
+        assert.equal(typeof entree.execute, 'function', 'non exécutable');
+
+        fs.writeFileSync(path.join(dossier, 'historique.js'), `
+            const { SlashCommandBuilder } = require(${discordjs});
+            module.exports = {
+                data: new SlashCommandBuilder().setName('temoin-historique').setDescription('Témoin historique'),
+                async execute(interaction) { return interaction; },
+            };
+        `);
+
+        assert.throws(
+            () => chargerCommandes({ dossier }),
+            (err) => {
+                // Le message doit nommer LE FICHIER et LA CORRECTION : c'est la
+                // seule information utile à qui découvre l'échec au démarrage.
+                assert.match(err.message, /historique\.js/);
+                assert.match(err.message, /temoin-historique/);
+                assert.match(err.message, /definirCommande/);
+                return true;
+            },
         );
-
-        assert.equal(parNom.get('temoin-neutre').neutre, true);
-        assert.equal(parNom.get('temoin-historique').neutre, false);
-
-        // Dans les deux cas, la MÊME entrée exploitable des deux côtés : c'est
-        // tout l'intérêt du chargeur unique.
-        for (const entree of parNom.values()) {
-            assert.equal(typeof entree.nom, 'string');
-            assert.equal(typeof entree.data.toJSON, 'function', `${entree.nom} : non déployable`);
-            assert.equal(typeof entree.execute, 'function', `${entree.nom} : non exécutable`);
-        }
     } finally {
         fs.rmSync(dossier, { recursive: true, force: true });
     }
 });
 
-test('toutes les commandes du bot sont déployables et exécutables, quel que soit leur format', () => {
+test('toutes les commandes du bot sont neutres, déployables et exécutables', () => {
     // Le pendant du test ci-dessus sur le VRAI dossier : il ne nomme aucune
-    // commande et ne présume d'aucun format, donc il survit à toutes les
-    // migrations — mais il attrape un fichier qui ne serait chargé par aucune
-    // des deux voies, et qui disparaîtrait donc en silence.
+    // commande, donc il survit à tout ajout — mais il attrape un fichier qui ne
+    // serait chargé par aucune voie, et qui disparaîtrait donc en silence.
     const entrees = chargerCommandes({ dossier: DOSSIER_COMMANDES, exclus: DISABLED_COMMAND_FILES });
     for (const entree of entrees) {
+        assert.equal(entree.neutre, true, `/${entree.nom} : encore au format historique`);
         assert.equal(typeof entree.data.toJSON, 'function', `/${entree.nom} : non déployable`);
         assert.equal(typeof entree.execute, 'function', `/${entree.nom} : non exécutable`);
     }

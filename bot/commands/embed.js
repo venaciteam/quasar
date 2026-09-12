@@ -258,21 +258,12 @@ function construireEmbedEnregistre(data) {
     });
 }
 
-/**
- * Le même embed, au format Discord.
- *
- * ⚠️ Ce pont ne subsiste que pour DEUX appelants hors du périmètre du lot 3 :
- * `bot/index.js` (réponse d'une commande personnalisée) et
- * `bot/modules/scheduler/index.js` (rappel programmé). Tous deux postent encore
- * par `channel.send()` discord.js. Il disparaît quand ils passent au client REST
- * normalisé, qui accepte directement `construireEmbedEnregistre`.
- */
-// TRANSITION : format historique, à retirer au lot de consolidation
-function buildDiscordEmbed(data) {
-    const { rendreEmbed } = require('../platform/discord/render');
-    return rendreEmbed(construireEmbedEnregistre(data));
-}
-
-// `data` et `executer` restent l'export principal : les chargeurs de commandes
-// lisent le descripteur, et ne font que l'accompagner de ces deux fonctions.
-Object.assign(module.exports, { construireEmbedEnregistre, buildDiscordEmbed });
+// Le descripteur reste l'export principal : le chargeur de commandes le lit, et
+// ne fait qu'accompagner `construireEmbedEnregistre` — la SOURCE UNIQUE de la
+// forme d'un embed enregistré, partagée avec les commandes personnalisées
+// (`bot/index.js`) et les rappels programmés (`bot/modules/scheduler/`).
+//
+// Le pont `buildDiscordEmbed`, qui rendait ce même embed en `EmbedBuilder`, a
+// été retiré à la consolidation : ses deux appelants postent désormais par le
+// client REST normalisé, qui accepte l'embed neutre directement.
+Object.assign(module.exports, { construireEmbedEnregistre });

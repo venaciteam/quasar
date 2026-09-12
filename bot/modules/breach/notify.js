@@ -12,30 +12,22 @@
 //  trace exploitable (art. 33.5 — savoir qui n'a PAS reçu), pas lever une
 //  exception qui remonte jusqu'à la boucle.
 //
-//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
+//  ─── Entièrement neutre ────────────────────────────────────────────────────
 //
-//  Les embeds sont NEUTRES (bot/platform/embed.js) et plus aucun `discord.js`
-//  n'est importé ici. Les deux fonctions d'envoi acceptent en revanche deux
-//  mondes, parce que leur seul appelant — `bot/modules/breach/index.js` — n'est
-//  dans le périmètre d'aucun lot parallèle et continue de passer un `Client`
-//  discord.js :
+//  Les embeds sont NEUTRES (bot/platform/embed.js) et aucun `discord.js` n'est
+//  importé ici. La voie historique — un `Client` discord.js — a été retirée à la
+//  consolidation, en même temps que son seul appelant est passé à l'adaptateur
+//  (`bot/modules/breach/index.js`).
 //
-//    voie neutre     — une PORTÉE (`ctx`, adaptateur, ou `{ guildeId, api }`),
-//                      reconnue par `resoudrePorteeNeutre`. Toutes les écritures
-//                      passent par le client REST normalisé.
-//    voie historique — le `Client` discord.js, marquée
-//                      `// TRANSITION : format historique, à retirer au lot de
-//                      consolidation`.
-//
-//  Les deux voies rendent les MÊMES motifs d'échec, mot pour mot : ils sont
-//  stockés dans `breach_deliveries.error` et relus par le dashboard. Le droit
-//  d'écrire dans un salon passe par `api.permissionsSurCanal`, et des
-//  permissions illisibles valent refus — ce module trace qui n'a pas reçu
-//  (art. 33.5) plutôt que de poster dans un salon dont il ne sait rien.
+//  Une PORTÉE est donc attendue partout : `ctx`, adaptateur, ou
+//  `{ guildeId, api }`, reconnue par `resoudrePorteeNeutre`. Le droit d'écrire
+//  dans un salon passe par `api.permissionsSurCanal`, et des permissions
+//  illisibles valent refus — ce module trace qui n'a pas reçu (art. 33.5)
+//  plutôt que de poster dans un salon dont il ne sait rien.
 // ═══════════════════════════════════════════════════════════════
 
 const { embed } = require('../../platform/embed');
-const { resoudrePorteeNeutre, versEmbedDiscord } = require('../../utils/errors');
+const { resoudrePorteeNeutre } = require('../../utils/errors');
 const { getLogConfig } = require('../../utils/logger');
 
 // Rouge « alerte », cohérent avec bot/utils/errors.js — une notification de
@@ -138,8 +130,7 @@ function describeError(err) {
 /**
  * Envoie l'embed en message privé à un utilisateur.
  *
- * @param {object} cible  portée neutre (`ctx`, adaptateur, `{ guildeId, api }`),
- *   ou `Client` discord.js sur la voie historique
+ * @param {object} cible  portée neutre (`ctx`, adaptateur, `{ guildeId, api }`)
  * @param {string} userId
  * @param {object} contenu embed neutre
  * @returns {Promise<{ ok: boolean, error: string|null }>}
@@ -148,23 +139,14 @@ async function sendDM(cible, userId, contenu) {
     if (!cible || !userId) return { ok: false, error: 'client ou destinataire indisponible' };
 
     const portee = resoudrePorteeNeutre(cible);
-    if (portee) {
-        try {
-            // Deux appels et pas un : le contrat neutre ouvre le salon privé
-            // (`ouvrirMessagePrive`) puis y poste comme dans n'importe quel
-            // salon. `user.send()` faisait les deux d'un coup côté discord.js.
-            const canalId = await portee.api.ouvrirMessagePrive(userId);
-            await portee.api.envoyerMessage(canalId, contenu);
-            return { ok: true, error: null };
-        } catch (err) {
-            return { ok: false, error: describeError(err) };
-        }
-    }
+    if (!portee) return { ok: false, error: 'client ou destinataire indisponible' };
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
     try {
-        const user = await cible.users.fetch(userId);
-        await user.send({ embeds: [versEmbedDiscord(contenu)] });
+        // Deux appels et pas un : le contrat neutre ouvre le salon privé
+        // (`ouvrirMessagePrive`) puis y poste comme dans n'importe quel
+        // salon. `user.send()` faisait les deux d'un coup côté discord.js.
+        const canalId = await portee.api.ouvrirMessagePrive(userId);
+        await portee.api.envoyerMessage(canalId, contenu);
         return { ok: true, error: null };
     } catch (err) {
         return { ok: false, error: describeError(err) };
@@ -182,7 +164,7 @@ async function sendDM(cible, userId, contenu) {
  * et on renvoie un échec, pour que la boucle le trace (art. 33.5 — qui n'a pas
  * reçu). La bannière dashboard reste le filet indépendant.
  *
- * @param {object} cible  portée neutre, ou `Client` discord.js
+ * @param {object} cible  portée neutre (`ctx`, adaptateur, `{ guildeId, api }`)
  * @returns {Promise<{ ok: boolean, error: string|null }>}
  */
 async function sendToGuildChannel(cible, guildId) {
@@ -205,60 +187,32 @@ async function sendToGuildChannel(cible, guildId) {
     };
 
     const portee = resoudrePorteeNeutre(cible);
-    if (portee) {
-        // `obtenirGuilde` rend null quand le bot n'est plus sur ce serveur, et
-        // LÈVE sur une panne. Les deux se traitent ici de la même façon — on
-        // n'envoie pas — parce que la boucle retentera de toute manière.
-        const guilde = await portee.api.obtenirGuilde(guildId).catch(() => null);
-        if (!guilde) return { ok: false, error: 'serveur introuvable dans le cache du bot' };
-        // Identité du bot inconnue = adaptateur pas encore connecté.
-        if (!portee.moiId) return { ok: false, error: 'membre bot introuvable sur le serveur' };
+    if (!portee) return { ok: false, error: 'client ou serveur indisponible' };
 
-        const logChannelId = salonDeLogs();
-        if (!logChannelId) return { ok: false, error: NO_LOG_CHANNEL };
-        const canal = await portee.api.obtenirCanal(logChannelId).catch(() => null);
-        if (!canal) return { ok: false, error: NO_LOG_CHANNEL };
-
-        // Droit d'écrire dans CE salon. `null` — permissions illisibles — vaut
-        // refus, exactement comme sur la voie historique : ce module trace qui
-        // n'a pas reçu (art. 33.5) plutôt que de poster dans un salon dont il ne
-        // sait rien.
-        const permissions = await portee.api.permissionsSurCanal(logChannelId, portee.moiId).catch(() => null);
-        const peutEcrire = Boolean(permissions
-            && permissions.aPermission('VIEW_CHANNEL')
-            && permissions.aPermission('SEND_MESSAGES'));
-        if (!peutEcrire) return { ok: false, error: NO_LOG_CHANNEL };
-
-        try {
-            await portee.api.envoyerMessage(logChannelId, buildBreachPointerEmbed());
-            return { ok: true, error: null };
-        } catch (err) {
-            return { ok: false, error: describeError(err) };
-        }
-    }
-
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    const guild = cible.guilds?.cache?.get(guildId);
-    if (!guild) return { ok: false, error: 'serveur introuvable dans le cache du bot' };
-
-    const me = guild.members?.me;
-    if (!me) return { ok: false, error: 'membre bot introuvable sur le serveur' };
+    // `obtenirGuilde` rend null quand le bot n'est plus sur ce serveur, et
+    // LÈVE sur une panne. Les deux se traitent ici de la même façon — on
+    // n'envoie pas — parce que la boucle retentera de toute manière.
+    const guilde = await portee.api.obtenirGuilde(guildId).catch(() => null);
+    if (!guilde) return { ok: false, error: 'serveur introuvable dans le cache du bot' };
+    // Identité du bot inconnue = adaptateur pas encore connecté.
+    if (!portee.moiId) return { ok: false, error: 'membre bot introuvable sur le serveur' };
 
     const logChannelId = salonDeLogs();
     if (!logChannelId) return { ok: false, error: NO_LOG_CHANNEL };
+    const canal = await portee.api.obtenirCanal(logChannelId).catch(() => null);
+    if (!canal) return { ok: false, error: NO_LOG_CHANNEL };
 
-    const channel = guild.channels?.cache?.get(logChannelId);
-    if (!channel) return { ok: false, error: NO_LOG_CHANNEL };
-
-    const perms = channel.permissionsFor?.(me);
-    // Noms canoniques (bot/platform/permissions.js) : discord.js accepte la clé
-    // textuelle d'un PermissionFlagsBits, ce qui évite d'importer l'énumération
-    // pour deux drapeaux.
-    const canWrite = !!(perms && perms.has('ViewChannel') && perms.has('SendMessages'));
-    if (!canWrite) return { ok: false, error: NO_LOG_CHANNEL };
+    // Droit d'écrire dans CE salon. `null` — permissions illisibles — vaut
+    // refus : ce module trace qui n'a pas reçu (art. 33.5) plutôt que de
+    // poster dans un salon dont il ne sait rien.
+    const permissions = await portee.api.permissionsSurCanal(logChannelId, portee.moiId).catch(() => null);
+    const peutEcrire = Boolean(permissions
+        && permissions.aPermission('VIEW_CHANNEL')
+        && permissions.aPermission('SEND_MESSAGES'));
+    if (!peutEcrire) return { ok: false, error: NO_LOG_CHANNEL };
 
     try {
-        await channel.send({ embeds: [versEmbedDiscord(buildBreachPointerEmbed())] });
+        await portee.api.envoyerMessage(logChannelId, buildBreachPointerEmbed());
         return { ok: true, error: null };
     } catch (err) {
         return { ok: false, error: describeError(err) };

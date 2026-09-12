@@ -37,13 +37,18 @@
 //  Si les invitations étaient DÉJÀ en pause avant mon intervention, la levée ne
 //  les rouvre pas : ce n'était pas ma décision, ce n'est pas à moi de la défaire.
 //
-//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
+//  ─── Bi-format, RETENU par api/** (lot 7) ──────────────────────────────────
 //
-//  La signature publique de ce module est VERROUILLÉE hors de ce lot :
-//  `api/routes/antiraid.js` appelle `enterPanic(guild, …)` / `liftPanic(guild, …)`
-//  et `bot/index.js` appelle `startPanicSweeper(client)`. Aucun lot parallèle ne
-//  peut corriger ces deux fichiers : chaque fonction publique accepte donc les
-//  deux mondes, exactement comme `bot/utils/punishments.js`.
+//  ⚠️ C'est le dernier module bi-format de `bot/`, et il le reste pour une seule
+//  raison : `api/routes/antiraid.js` appelle `enterPanic(guild, …)` et
+//  `liftPanic(guild, …)` avec une `Guild` discord.js résolue dans le cache du
+//  client. Tant que cette route ne reçoit pas l'adaptateur, la voie historique
+//  ne peut pas tomber — et avec elle restent les deux `require('discord.js')`
+//  différés de ce fichier, ainsi que la voie `Guild` de
+//  `punishments.sendAutomodLog` et de `modlog.sendModLog`, qu'elle est SEULE à
+//  emprunter.
+//
+//  `bot/index.js`, lui, passe désormais l'ADAPTATEUR à `startPanicSweeper`.
 //
 //    voie neutre     — une PORTÉE (`ctx`, adaptateur, ou `{ guildeId, api }`),
 //                      reconnue par `resoudrePorteeNeutre`. Toute la mécanique
@@ -52,7 +57,7 @@
 //                      `obtenirMembre` et, pour le balayage, `listerGuildes`.
 //    voie historique — `Guild` discord.js, `Client` pour le balayeur.
 //                      Comportement inchangé, marqué `// TRANSITION : format
-//                      historique, à retirer au lot de consolidation`.
+//                      historique, retenu par api/routes/antiraid.js (lot 7)`.
 //
 //  `discord.js` n'est plus importé en tête : les deux énumérations dont la voie
 //  historique a encore besoin (`GuildFeature`, `PermissionFlagsBits`) sont
@@ -182,7 +187,7 @@ function forgetPanicRow(guildId) {
  * Deux mécanismes coexistent chez Discord et doivent tous deux être consultés :
  * la fonction de serveur (permanente) et l'action d'incident (temporaire).
  */
-// TRANSITION : format historique, à retirer au lot de consolidation
+// TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
 function invitesAlreadyPaused(guild, now = Date.now()) {
     // Chargement paresseux : c'est la SEULE raison pour laquelle ce fichier
     // touche encore discord.js, et un processus Fluxer n'emprunte jamais cette
@@ -203,7 +208,7 @@ async function invitesDejaEnPauseNeutre(portee, guildeId, now) {
     return etat.desactiveesEnDur || (!!etat.enPauseJusqua && etat.enPauseJusqua > now);
 }
 
-// TRANSITION : format historique, à retirer au lot de consolidation
+// TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
 function canManageGuild(guild) {
     const { PermissionFlagsBits } = require('discord.js');
     return !!guild?.members?.me?.permissions?.has(PermissionFlagsBits.ManageGuild);
@@ -269,7 +274,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
 
     const refus = portee
         ? await refusPermissionNeutre(portee, guildeId)
-        // TRANSITION : format historique, à retirer au lot de consolidation
+        // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
         : (canManageGuild(cible) ? null : REFUS_PERMISSION);
     if (refus) return { ok: false, error: refus };
 
@@ -285,7 +290,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
         ? !!existing.previous_invites_disabled
         : (portee
             ? await invitesDejaEnPauseNeutre(portee, guildeId, now)
-            // TRANSITION : format historique, à retirer au lot de consolidation
+            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
             : invitesAlreadyPaused(cible, now));
 
     let method = null;
@@ -319,7 +324,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
                 + 'la levée dépend désormais du balayage.');
         }
     } else {
-        // TRANSITION : format historique, à retirer au lot de consolidation
+        // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
         let apiError = null;
         try {
             await cible.setIncidentActions({ invitesDisabledUntil: new Date(expiresAt * 1000) });
@@ -358,7 +363,7 @@ async function enterPanic(cible, { durationSeconds, reason, triggeredBy = 'detec
         console.error('[Quasar Anti-raid] Échéance de mode panique non enregistrée :', err.message);
         if (method === METHOD_INVITES_DISABLED && !previousInvitesDisabled) {
             if (portee) await portee.api.mettreInvitationsEnPause(guildeId, null, reason).catch(() => {});
-            // TRANSITION : format historique, à retirer au lot de consolidation
+            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
             else await cible.disableInvites(false).catch(() => {});
             return { ok: false, error: 'L\'échéance du mode panique n\'a pas pu être enregistrée : rien n\'a été appliqué.' };
         }
@@ -428,7 +433,7 @@ async function liftPanic(cible, { row = null, liftedBy = null, logChannelId = nu
             // l'action d'incident ET la fonction de serveur. Voir l'en-tête —
             // c'est plus large que la voie historique, jamais plus risqué.
             if (portee) await portee.api.mettreInvitationsEnPause(guildeId, null);
-            // TRANSITION : format historique, à retirer au lot de consolidation
+            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
             else if (state.method === METHOD_INVITES_DISABLED) await cible.disableInvites(false);
             else await cible.setIncidentActions({ invitesDisabledUntil: null });
         } catch (err) {
@@ -535,7 +540,7 @@ async function sweepExpiredPanics(cible, now = Date.now()) {
             if (liste === null) return 0;
             guildes = new Set(liste);
         } else if (!cible?.guilds?.cache || cible.guilds.cache.size === 0) {
-            // TRANSITION : format historique, à retirer au lot de consolidation
+            // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
             // Cache vide = connexion incomplète, pas un bot sans serveur. Le
             // cache de discord.js ne sait pas exprimer la différence, d'où cette
             // sortie plus prudente que celle de la voie neutre.
@@ -573,7 +578,7 @@ async function sweepExpiredPanics(cible, now = Date.now()) {
                     capacites: cible.capacites,
                 };
             } else {
-                // TRANSITION : format historique, à retirer au lot de consolidation
+                // TRANSITION : format historique, retenu par api/routes/antiraid.js (lot 7)
                 porteeDuServeur = cible.guilds.cache.get(row.guild_id);
                 if (!porteeDuServeur) {
                     forgetPanicRow(row.guild_id);

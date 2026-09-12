@@ -22,24 +22,25 @@
 //      lui-même : chaque cas est détecté et rapporté en clair, jamais tenté à
 //      l'aveugle pour finir en trace d'erreur illisible.
 //
-//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
+//  ─── Entièrement neutre ────────────────────────────────────────────────────
 //
-//  Onze fichiers appellent ce module, migrés ou non. Chaque fonction publique
-//  accepte donc les deux mondes :
+//  Onze fichiers appellent ce module. Tous passent désormais une PORTÉE (`ctx`,
+//  adaptateur, ou `{ guildeId, api }`) dans le champ `portee`, et toutes les
+//  écritures passent par le client REST normalisé. La voie historique — `guild`,
+//  `member`, `message` discord.js, `client` pour le balayeur — a été retirée à
+//  la consolidation : plus aucun appelant ne l'empruntait.
 //
-//    voie historique — `guild` / `member` / `message` discord.js, `client` pour
-//                      le balayeur. Comportement inchangé, marqué
-//                      `// TRANSITION : format historique, à retirer au lot de
-//                      consolidation`.
-//    voie neutre     — une PORTÉE (`ctx`, adaptateur, ou `{ guildeId, api }`)
-//                      passée dans le champ `portee`, et le client REST
-//                      normalisé pour toutes les écritures.
+//  ⚠️ Une seule exception, et elle n'est PAS une voie d'entrée de ce module :
+//  `sendAutomodLog` accepte encore une `Guild` discord.js, parce que
+//  `bot/modules/antiraid/panic.js` lui en passe une quand la route
+//  `api/routes/antiraid.js` déclenche un mode panique depuis le dashboard.
+//  Elle tombe au lot 7, avec cette route.
 //
-//  Les trois contrôles préventifs qui manquaient à la voie neutre y sont
-//  désormais, et ce n'est pas un détail de confort : un refus annoncé AVANT la
-//  tentative nomme la correction à faire (remonter le rôle du bot, cocher une
-//  permission), là où un refus traduit après coup dit seulement « permission
-//  manquante » et envoie chercher au mauvais endroit une fois sur deux.
+//  Les trois contrôles préventifs comptent, et ce n'est pas un détail de
+//  confort : un refus annoncé AVANT la tentative nomme la correction à faire
+//  (remonter le rôle du bot, cocher une permission), là où un refus traduit
+//  après coup dit seulement « permission manquante » et envoie chercher au
+//  mauvais endroit une fois sur deux.
 //    • hiérarchie des rôles -> `api.verifierMembreSanctionnable(guildeId,
 //      membreId, 'timeout' | 'kick' | 'ban')`, équivalent de `member.moderatable`
 //      / `kickable` / `bannable` ;
@@ -48,7 +49,6 @@
 //      d'une panne réseau (`inconnu`).
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { embed } = require('../platform/embed');
 const { CODES_NEUTRES, codeNeutre } = require('../platform/erreurs');
@@ -238,8 +238,9 @@ function validatePunishments(str) {
  * panique, cas honeypot…), et faire passer ce repli par quatre implémentations
  * différentes garantirait que trois d'entre elles l'oublient.
  *
- * @param {object} cible   `Guild` discord.js, ou portée neutre (`ctx`, `{ guildeId, api }`)
- * @param {object} contenu embed neutre, ou `EmbedBuilder` sur la voie historique
+ * @param {object} cible   portée neutre (`ctx`, `{ guildeId, api }`), ou `Guild`
+ *   discord.js — voir la note ci-dessous.
+ * @param {object} contenu embed neutre
  */
 async function sendAutomodLog(cible, contenu, logType, logChannelId) {
     if (!cible) return;
@@ -253,15 +254,19 @@ async function sendAutomodLog(cible, contenu, logType, logChannelId) {
             });
             if (envoye) return;
         }
-        // Le repli passe par `sendLog` et non par `sendModLog` : ce dernier est
-        // encore strictement discord.js (lot 1). Les deux appliquent la même
-        // règle — type de log activé, salon configuré — seul le libellé de
-        // l'erreur d'envoi diffère.
+        // Le repli passe par `sendLog` et non par `sendModLog` : les deux
+        // appliquent la même règle — type de log activé, salon configuré — seul
+        // le libellé de l'erreur d'envoi diffère.
         await sendLog(portee.source, logType, contenu).catch(() => {});
         return;
     }
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
+    // ⚠️ VOIE NATIVE — une `Guild` discord.js — RETENUE par `api/**`, lot 7 :
+    //   api/routes/antiraid.js -> antiraid.enterPanic(guild) / liftPanic(guild)
+    //   -> bot/modules/antiraid/panic.js (voie Guild) -> ICI.
+    // C'est le SEUL chemin qui y mène encore ; aucune autre fonction de ce
+    // fichier n'accepte plus d'objet discord.js. Elle tombe le jour où la route
+    // du dashboard passe l'adaptateur au lieu du client.
     const embedDiscord = versEmbedDiscord(contenu);
     if (logChannelId) {
         const channel = cible.channels?.cache?.get(String(logChannelId));
@@ -297,8 +302,10 @@ function recordSanction({ guildId, userId, moderatorId, type, reason, duration }
  * Embed de log d'une sanction, au format NEUTRE — la source unique du contenu.
  *
  * Le champ « Raison » ne déclare volontairement PAS `enLigne` : c'était déjà le
- * cas avant (aucune clé `inline` sur ce champ), et `buildLogEmbedHistorique`
- * s'appuie sur cette absence pour produire un corps identique à l'octet près.
+ * cas avant migration, où le builder laissait alors la clé `inline` absente.
+ * `rendreEmbed` pose désormais `inline: false` — même affichage, corps JSON
+ * différent. Écart consigné et assumé : le doublon `buildLogEmbedHistorique`,
+ * qui n'existait que pour l'éviter, est tombé avec la voie `guild:`.
  */
 function buildLogEmbed({ title, color, targetId, reason, source, extra }) {
     const champs = [
@@ -309,32 +316,6 @@ function buildLogEmbed({ title, color, targetId, reason, source, extra }) {
     if (extra) champs.push({ nom: extra.name, valeur: extra.value, enLigne: true });
 
     return embed({ titre: title, couleur: color, champs, horodatage: true });
-}
-
-/**
- * Le même embed, au format Discord.
- *
- * Monté à la main à partir du neutre, et non par `rendreEmbed` : le rendu
- * générique pose `inline: Boolean(champ.enLigne)` sur TOUS les champs, ce qui
- * ajouterait `"inline": false` au champ « Raison » — même affichage, mais un
- * corps différent de celui d'avant. Ici, un champ sans `enLigne` ressort sans
- * clé `inline`, comme le faisait l'implémentation d'origine.
- */
-// TRANSITION : format historique, à retirer au lot de consolidation
-function buildLogEmbedHistorique(spec) {
-    const neutre = buildLogEmbed(spec);
-    return new EmbedBuilder()
-        .setTitle(neutre.titre)
-        .setColor(neutre.couleur)
-        .addFields(neutre.champs.map(champ => ('enLigne' in champ
-            ? { name: champ.nom, value: champ.valeur, inline: champ.enLigne }
-            : { name: champ.nom, value: champ.valeur })))
-        .setTimestamp();
-}
-
-/** Embed de log dans le format attendu par la voie empruntée. */
-function logEmbedPour(portee, spec) {
-    return portee ? buildLogEmbed(spec) : buildLogEmbedHistorique(spec);
 }
 
 // ─── Application ───────────────────────────────────────────────────────────
@@ -351,23 +332,16 @@ const PHRASES_NEUTRES = Object.freeze({
     [CODES_NEUTRES.guilde_inconnue]: 'Je ne suis plus sur ce serveur.',
 });
 
-// TRANSITION : format historique, à retirer au lot de consolidation
-// Une erreur n'est marquée d'un `codeNeutre` que si elle a traversé `api.*`. La
-// voie historique de ce fichier (`member.kick`, `guild.members.ban`,
-// `message.delete`) lève des erreurs BRUTES : sans cette table, tous ses échecs
-// ressortiraient en anglais, dans la langue de discord.js.
-const PHRASES_DISCORD = Object.freeze({
-    50013: 'Permission manquante côté bot.',
-    50001: 'Accès refusé au salon ou au membre.',
-    10007: 'Ce membre n\'est plus sur le serveur.',
-    10008: 'Le message n\'existe plus.',
-    10026: 'Aucun bannissement en cours pour ce membre.',
-});
-
 /**
  * Traduit une erreur d'API en phrase exploitable. Sans ça, un résultat dit
  * « DiscordAPIError[50013] » à une personne qui cherche pourquoi son anti-raid
  * ne fait rien.
+ *
+ * La table de NUMÉROS Discord qui servait de repli a été retirée à la
+ * consolidation : toutes les écritures de ce fichier passent désormais par
+ * `api.*`, donc toutes leurs erreurs portent un `codeNeutre`. Elle ne couvrait
+ * que les levées brutes des appels natifs (expulsion, bannissement,
+ * suppression de message), qui n'existent plus.
  */
 function describeError(err) {
     // 30035 n'a aucun équivalent dans le vocabulaire neutre : la limite de
@@ -376,11 +350,7 @@ function describeError(err) {
     // l'adaptateur la classe en `inconnu` — ce qu'elle est, pour une décision.
     if (err?.code === 30035) return 'Limite de bannissements atteinte pour ce serveur.';
 
-    const phrase = PHRASES_NEUTRES[codeNeutre(err)];
-    if (phrase) return phrase;
-
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    return PHRASES_DISCORD[err?.code] || err?.message || 'Erreur inconnue.';
+    return PHRASES_NEUTRES[codeNeutre(err)] || err?.message || 'Erreur inconnue.';
 }
 
 /**
@@ -394,24 +364,19 @@ function describeError(err) {
  * plateforme (50013), traduite en « Permission manquante côté bot. » : moins
  * explicite, jamais dangereux.
  *
- * @param {object} cible `Guild` discord.js, ou portée neutre
+ * @param {object} cible portée neutre (`ctx`, adaptateur, `{ guildeId, api }`)
  * @returns {string|null} raison du refus, ou null si la cible est sanctionnable.
  */
 function unreachableTarget(cible, targetId) {
     if (!targetId) return 'Cible inconnue.';
 
     const portee = resoudrePorteeNeutre(cible);
-    if (portee) {
-        if (portee.proprietaireId && targetId === portee.proprietaireId) {
-            return 'Le propriétaire du serveur ne peut pas être sanctionné.';
-        }
-        if (portee.moiId && targetId === portee.moiId) return 'Je ne me sanctionne pas moi-même.';
-        return null;
-    }
+    if (!portee) return null;
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    if (cible.ownerId && targetId === cible.ownerId) return 'Le propriétaire du serveur ne peut pas être sanctionné.';
-    if (cible.client?.user?.id && targetId === cible.client.user.id) return 'Je ne me sanctionne pas moi-même.';
+    if (portee.proprietaireId && targetId === portee.proprietaireId) {
+        return 'Le propriétaire du serveur ne peut pas être sanctionné.';
+    }
+    if (portee.moiId && targetId === portee.moiId) return 'Je ne me sanctionne pas moi-même.';
     return null;
 }
 
@@ -421,14 +386,13 @@ function unreachableTarget(cible, targetId) {
  * @param {Array|string} punishments — sortie de parsePunishments(), ou
  *        directement la chaîne de configuration (parsée ici dans ce cas).
  * @param {object} etat
- * @param {object} [etat.portee]  VOIE NEUTRE : `ctx`, adaptateur, ou
- *        `{ guildeId, api }`. Exclusif de `guild`, et prioritaire sur lui.
- * @param {import('discord.js').Guild}  [etat.guild]  VOIE HISTORIQUE
- * @param {object|null} [etat.member] membre discord.js, ou membre normalisé sur
- *        la voie neutre. Peut être null (membre déjà parti) : les actions qui
- *        l'exigent sont alors écartées.
- * @param {object} [etat.message]     message discord.js, ou message normalisé
- *        (`{ id, canalId }`) sur la voie neutre — requis par `delete`
+ * @param {object} etat.portee  PORTÉE D'ÉCRITURE : `ctx`, adaptateur, ou
+ *        `{ guildeId, api }`. Obligatoire — la voie `guild` discord.js a été
+ *        retirée à la consolidation.
+ * @param {object|null} [etat.member] membre NORMALISÉ. Peut être null (membre
+ *        déjà parti) : les actions qui l'exigent sont alors écartées.
+ * @param {object} [etat.message]     message normalisé (`{ id, canalId }`) —
+ *        requis par `delete`
  * @param {string} [etat.userId]      — identifiant de la cible quand `member`
  *        est null (permet de bannir quelqu'un qui vient de partir)
  * @param {string}  etat.reason
@@ -445,26 +409,24 @@ async function applyPunishments(punishments, etat = {}) {
 
     if (!list.length) return [];
 
-    // `portee` d'abord : un appelant qui fournit les deux a migré, et c'est la
-    // voie neutre qui fait foi.
-    const cible = etat.portee || etat.guild;
+    const cible = etat.portee;
     const portee = resoudrePorteeNeutre(cible);
-    const guild = portee ? null : etat.guild;
 
-    // Une portée neutre sans `guildeId` ne désigne aucun serveur : même issue
-    // qu'une guilde absente, plutôt qu'une sanction écrite en base sur `null`.
-    if ((!portee && !guild) || (portee && !portee.guildeId)) {
+    // Pas de portée, ou une portée sans `guildeId` : rien ne désigne un serveur
+    // où écrire. On rapporte l'échec plutôt que d'écrire une sanction en base
+    // sur `null`.
+    if (!portee || !portee.guildeId) {
         return list.map(p => ({ action: p.action, ok: false, error: 'Serveur indisponible.' }));
     }
 
-    const guildeId = portee ? portee.guildeId : guild.id;
+    const guildeId = portee.guildeId;
 
     const member = etat.member || null;
     // `auteur` : forme normalisée d'un message (bot/platform/discord/events.js).
     const targetId = member?.id || etat.userId || etat.message?.author?.id || etat.message?.auteur?.id || null;
     const reason = etat.reason || 'Modération automatique';
     const source = SOURCES.includes(etat.source) ? etat.source : 'automod';
-    const moderatorId = etat.moderatorId || (portee ? portee.moiId : guild.client?.user?.id) || 'system';
+    const moderatorId = etat.moderatorId || portee.moiId || 'system';
 
     // ─── `defer` court-circuite tout le reste ───
     // Écrire « tempmute 20m, defer », c'est demander qu'une personne tranche
@@ -474,11 +436,10 @@ async function applyPunishments(punishments, etat = {}) {
     if (list.some(p => p.action === 'defer') && etat.allowDefer !== false) {
         const proposed = list.filter(p => p.action !== 'defer');
         const { sendDeferCase } = require('../modules/defer');
-        // `sendDeferCase` est encore strictement discord.js (lot 5). On lui
-        // transmet la cible telle qu'on l'a reçue : le jour où il devient
-        // bi-format, rien à changer ici. En attendant, un appel neutre portant
-        // `defer` obtient « Arbitrage indisponible » — et donc AUCUNE sanction
-        // appliquée, ce qui est le repli voulu par l'invariant ci-dessus.
+        // La portée lui est transmise telle quelle : il pose son panneau par
+        // `ctx.poserPanneau` quand le contexte en expose un, et rend
+        // « Arbitrage indisponible » sinon — auquel cas AUCUNE sanction n'est
+        // appliquée, le repli voulu par l'invariant ci-dessus.
         const outcome = await sendDeferCase(cible, {
             targetUserId: targetId,
             source,
@@ -525,7 +486,7 @@ async function applyPunishments(punishments, etat = {}) {
 
         try {
             results.push(await applyOne(action, durationMs, {
-                cible, portee, guild, guildeId,
+                cible, portee, guildeId,
                 member, targetId, reason, source, moderatorId,
                 message: etat.message,
                 logChannelId: etat.logChannelId,
@@ -554,7 +515,7 @@ function stringifyPunishments(list) {
  *
  * `api.obtenirMembre` rend un membre dont `aPermission` lit les permissions
  * CALCULÉES — c'est la seule façon, sans discord.js, de poser la question que
- * `guild.members.me.permissions.has()` posait. Sans identité de bot connue
+ * posait l'appel natif aux permissions du bot. Sans identité de bot connue
  * (adaptateur pas encore connecté), on ne bloque pas : la plateforme refusera
  * elle-même, et inventer un refus empêcherait une sanction légitime.
  *
@@ -610,30 +571,25 @@ async function refusPermissionBanNeutre(portee, guildeId) {
 
 /** Nom du serveur, pour le texte du MP de l'action `dm`. */
 async function nomDuServeur(state) {
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    if (!state.portee) return state.guild.name;
     if (state.portee.nomGuilde) return state.portee.nomGuilde;
     const guilde = await state.portee.api.obtenirGuilde(state.guildeId).catch(() => null);
     return guilde?.nom || 'ce serveur';
 }
 
 async function applyOne(action, durationMs, state) {
-    const { cible, portee, guild, guildeId, member, targetId, reason, source, moderatorId, logChannelId } = state;
+    const { cible, portee, guildeId, member, targetId, reason, source, moderatorId, logChannelId } = state;
 
     switch (action) {
         case 'delete': {
             if (!state.message) return { action, ok: false, error: 'Aucun message à supprimer.' };
-            // `canalId` sur un message normalisé, `channelId` sur un message
-            // discord.js : le salon est lu avant la suppression, il sert au log.
-            const canalId = state.message.canalId ?? state.message.channelId;
+            // Le salon est lu AVANT la suppression : il sert au log.
+            const canalId = state.message.canalId;
             try {
-                if (portee) await portee.api.supprimerMessage(canalId, state.message.id);
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                else await state.message.delete();
+                await portee.api.supprimerMessage(canalId, state.message.id);
             } catch (err) {
                 return { action, ok: false, error: describeError(err) };
             }
-            await sendAutomodLog(cible, logEmbedPour(portee, {
+            await sendAutomodLog(cible, buildLogEmbed({
                 title: '🗑️ Message supprimé automatiquement',
                 color: 0x95a5a6,
                 targetId, reason, source,
@@ -644,7 +600,7 @@ async function applyOne(action, durationMs, state) {
 
         case 'warn': {
             const id = recordSanction({ guildId: guildeId, userId: targetId, moderatorId, type: 'warn', reason });
-            await sendAutomodLog(cible, logEmbedPour(portee, {
+            await sendAutomodLog(cible, buildLogEmbed({
                 title: '⚠️ Avertissement automatique',
                 color: 0xf1c40f,
                 targetId, reason, source,
@@ -663,10 +619,7 @@ async function applyOne(action, durationMs, state) {
         case 'tempmute':
         case 'mute': {
             if (!member) return { action, ok: false, error: 'Ce membre n\'est plus sur le serveur.' };
-            const refusTimeout = portee
-                ? await refusSanctionNeutre(portee, guildeId, member.id, 'timeout')
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                : (member.moderatable ? null : REFUS_PAR_SANCTION.timeout);
+            const refusTimeout = await refusSanctionNeutre(portee, guildeId, member.id, 'timeout');
             if (refusTimeout) return { action, ok: false, error: refusTimeout };
 
             const asked = action === 'mute' ? MAX_TIMEOUT_MS : durationMs;
@@ -679,12 +632,9 @@ async function applyOne(action, durationMs, state) {
             }
 
             try {
-                // `appliquerTimeout` attend une ÉCHÉANCE, `member.timeout` une
-                // durée : c'est la même exclusion, exprimée dans les termes de
-                // chaque API.
-                if (portee) await portee.api.appliquerTimeout(guildeId, member.id, Date.now() + applied, reason);
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                else await member.timeout(applied, reason);
+                // `appliquerTimeout` attend une ÉCHÉANCE, et non une durée :
+                // c'est la forme du contrat, et l'adaptateur la traduit.
+                await portee.api.appliquerTimeout(guildeId, member.id, Date.now() + applied, reason);
             } catch (err) {
                 return { action, ok: false, error: describeError(err) };
             }
@@ -693,7 +643,7 @@ async function applyOne(action, durationMs, state) {
                 guildId: guildeId, userId: targetId, moderatorId,
                 type: 'mute', reason, duration: formatDuration(applied),
             });
-            await sendAutomodLog(cible, logEmbedPour(portee, {
+            await sendAutomodLog(cible, buildLogEmbed({
                 title: '🔇 Exclusion temporaire automatique',
                 color: 0xe67e22,
                 targetId, reason, source,
@@ -704,20 +654,15 @@ async function applyOne(action, durationMs, state) {
 
         case 'kick': {
             if (!member) return { action, ok: false, error: 'Ce membre n\'est plus sur le serveur.' };
-            const refusKick = portee
-                ? await refusSanctionNeutre(portee, guildeId, member.id, 'kick')
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                : (member.kickable ? null : REFUS_PAR_SANCTION.kick);
+            const refusKick = await refusSanctionNeutre(portee, guildeId, member.id, 'kick');
             if (refusKick) return { action, ok: false, error: refusKick };
             try {
-                if (portee) await portee.api.exclureMembre(guildeId, member.id, reason);
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                else await member.kick(reason);
+                await portee.api.exclureMembre(guildeId, member.id, reason);
             } catch (err) {
                 return { action, ok: false, error: describeError(err) };
             }
             recordSanction({ guildId: guildeId, userId: targetId, moderatorId, type: 'kick', reason });
-            await sendAutomodLog(cible, logEmbedPour(portee, {
+            await sendAutomodLog(cible, buildLogEmbed({
                 title: '🔴 Expulsion automatique',
                 color: 0xe67e22,
                 targetId, reason, source,
@@ -732,25 +677,15 @@ async function applyOne(action, durationMs, state) {
             // contrôle donc QUE s'il est encore là ; la permission du bot, elle,
             // se contrôle dans tous les cas, juste en dessous.
             const refusHierarchie = member
-                ? (portee
-                    ? await refusSanctionNeutre(portee, guildeId, member.id, 'ban')
-                    // TRANSITION : format historique, à retirer au lot de consolidation
-                    : (member.bannable ? null : REFUS_PAR_SANCTION.ban))
+                ? await refusSanctionNeutre(portee, guildeId, member.id, 'ban')
                 : null;
             if (refusHierarchie) return { action, ok: false, error: refusHierarchie };
 
-            const refusBan = portee
-                ? await refusPermissionBanNeutre(portee, guildeId)
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                : (guild.members.me?.permissions?.has(PermissionFlagsBits.BanMembers)
-                    ? null
-                    : 'Permission « Bannir des membres » manquante.');
+            const refusBan = await refusPermissionBanNeutre(portee, guildeId);
             if (refusBan) return { action, ok: false, error: refusBan };
 
             try {
-                if (portee) await portee.api.bannirMembre(guildeId, targetId, reason);
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                else await guild.members.ban(targetId, { reason });
+                await portee.api.bannirMembre(guildeId, targetId, reason);
             } catch (err) {
                 return { action, ok: false, error: describeError(err) };
             }
@@ -762,7 +697,7 @@ async function applyOne(action, durationMs, state) {
                 scheduleUnban(guildeId, targetId, durationMs, reason, source);
             }
 
-            await sendAutomodLog(cible, logEmbedPour(portee, {
+            await sendAutomodLog(cible, buildLogEmbed({
                 title: action === 'tempban' ? '🔨 Bannissement temporaire automatique' : '🔨 Bannissement automatique',
                 color: 0xe74c3c,
                 targetId, reason, source,
@@ -772,19 +707,11 @@ async function applyOne(action, durationMs, state) {
         }
 
         case 'dm': {
-            let envoyer;
-            if (portee) {
-                const canalPrive = targetId
-                    ? await portee.api.ouvrirMessagePrive(targetId).catch(() => null)
-                    : null;
-                if (!canalPrive) return { action, ok: false, error: 'Destinataire introuvable.', benign: true };
-                envoyer = (contenu) => portee.api.envoyerMessage(canalPrive, contenu);
-            } else {
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                const user = member?.user || (targetId ? await guild.client.users.fetch(targetId).catch(() => null) : null);
-                if (!user) return { action, ok: false, error: 'Destinataire introuvable.', benign: true };
-                envoyer = (contenu) => user.send({ content: contenu });
-            }
+            const canalPrive = targetId
+                ? await portee.api.ouvrirMessagePrive(targetId).catch(() => null)
+                : null;
+            if (!canalPrive) return { action, ok: false, error: 'Destinataire introuvable.', benign: true };
+            const envoyer = (contenu) => portee.api.envoyerMessage(canalPrive, contenu);
 
             const text = state.responseMessage
                 || `Une règle de modération automatique de **${await nomDuServeur(state)}** vient de s'appliquer à votre message ou à votre compte.\nMotif : ${reason}`;
@@ -902,8 +829,9 @@ async function leverBanNeutre(portee, row) {
 }
 
 /**
- * @param {object} cible  adaptateur de plateforme (voie neutre), ou `Client`
- *   discord.js (voie historique).
+ * @param {object} cible  adaptateur de plateforme, ou toute portée d'écriture
+ *   (`{ api, moi }`). Le `Client` discord.js n'est plus accepté : il ne savait
+ *   pas distinguer « pas encore connecté » de « sur aucun serveur ».
  */
 async function sweepExpiredBans(cible) {
     // Verrou de ré-entrance : un tour qui déborde ne doit pas être doublé par le
@@ -916,14 +844,9 @@ async function sweepExpiredBans(cible) {
         // Connexion incomplète : il faut pouvoir la distinguer d'un bot sans
         // serveur, parce que la branche « serveur introuvable » ci-dessous
         // SUPPRIME l'échéance — ce qui transformerait un bannissement temporaire
-        // en bannissement définitif. Côté neutre, le signal est l'identité du
-        // bot, que l'adaptateur ne renseigne qu'une fois connecté (DA §4.1) ;
-        // côté historique, c'est le cache de serveurs.
-        if (portee) {
-            if (!portee.moiId) return;
-        } else if (!cible?.guilds?.cache || cible.guilds.cache.size === 0) {
-            return;
-        }
+        // en bannissement définitif. Le signal est l'identité du bot, que
+        // l'adaptateur ne renseigne qu'une fois connecté (DA §4.1).
+        if (!portee || !portee.moiId) return;
 
         let due;
         try {
@@ -940,45 +863,18 @@ async function sweepExpiredBans(cible) {
         const forget = db.prepare('DELETE FROM temp_bans WHERE guild_id = ? AND user_id = ?');
 
         for (const row of due) {
-            // Cible de journalisation du tour : la portée du serveur concerné
-            // côté neutre, la guilde discord.js côté historique.
-            let cibleLog;
+            // Portée de journalisation du serveur courant, reconstruite
+            // explicitement et non copiée depuis la source : un `ctx` porte un
+            // accesseur `db` qu'une recopie par décomposition déclencherait —
+            // donc ouvrirait la base — pour rien. Le journal n'a besoin que du
+            // serveur et du client REST.
+            const cibleLog = { guildeId: row.guild_id, api: portee.api, moiId: portee.moiId };
 
-            if (portee) {
-                // Portée reconstruite explicitement, et non copiée depuis la
-                // source : un `ctx` porte un accesseur `db` qu'une recopie par
-                // décomposition déclencherait — donc ouvrirait la base — pour
-                // rien. Le journal n'a besoin que du serveur et du client REST.
-                cibleLog = { guildeId: row.guild_id, api: portee.api, moiId: portee.moiId };
-                const issue = await leverBanNeutre(portee, row);
-                if (issue === 'reessayer') continue;
-                if (issue === 'abandon') {
-                    forget.run(row.guild_id, row.user_id);
-                    continue;
-                }
-            } else {
-                // TRANSITION : format historique, à retirer au lot de consolidation
-                const guild = cible.guilds.cache.get(row.guild_id);
-                if (!guild) {
-                    // Bot retiré du serveur : plus rien à lever, et garder l'échéance
-                    // ferait retenter indéfiniment.
-                    forget.run(row.guild_id, row.user_id);
-                    continue;
-                }
-                cibleLog = guild;
-
-                try {
-                    await guild.bans.remove(row.user_id, 'Fin du bannissement temporaire');
-                } catch (err) {
-                    // 10026 = plus aucun bannissement : quelqu'un a déjà levé la sanction
-                    // à la main. C'est un succès, pas un échec.
-                    if (err?.code !== 10026) {
-                        console.error(`[Quasar AutoMod] Levée du ban de ${row.user_id} en échec :`, describeError(err));
-                        // Permission manquante : on garde l'échéance pour retenter au
-                        // prochain passage, une fois les droits rétablis.
-                        if (err?.code === 50013) continue;
-                    }
-                }
+            const issue = await leverBanNeutre(portee, row);
+            if (issue === 'reessayer') continue;
+            if (issue === 'abandon') {
+                forget.run(row.guild_id, row.user_id);
+                continue;
             }
 
             // ─── ORDRE DES ÉCRITURES ────────────────────────────────────────
@@ -998,7 +894,7 @@ async function sweepExpiredBans(cible) {
             forget.run(row.guild_id, row.user_id);
             deactivateBanSanction(row.guild_id, row.user_id);
 
-            await sendAutomodLog(cibleLog, logEmbedPour(portee, {
+            await sendAutomodLog(cibleLog, buildLogEmbed({
                 title: '🔓 Fin de bannissement temporaire',
                 color: 0x2ecc71,
                 targetId: row.user_id,
@@ -1059,6 +955,9 @@ module.exports = {
     // morceaux que les commandes manuelles réimplémentaient jusqu'ici.
     buildLogEmbed,
     unreachableTarget,
+    // Exportée pour les tests : c'est elle qui décide de la phrase lue par une
+    // personne qui modère, et cette phrase ne doit pas dériver.
+    describeError,
     startTempBanSweeper,
     stopTempBanSweeper,
     // Exporté pour permettre une levée immédiate des bannissements échus, sans

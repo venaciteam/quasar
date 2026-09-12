@@ -21,10 +21,11 @@ const { chargerPanneaux } = require('./panneaux');
 const { creerContextePanneau } = require('./context');
 const { BITS } = require('./permissions');
 
-// Séparateur entre le préfixe d'un panneau neutre et la clé du choix. Les
-// panneaux historiques utilisent `_` (`ticket_open`, `tv_lock`) : les deux jeux
-// ne peuvent donc pas se confondre, et le routage neutre peut passer en premier
-// sans risquer d'intercepter un bouton pas encore migré.
+// Séparateur entre le préfixe d'un panneau neutre et la clé du choix. C'est
+// aussi lui qui distingue un `customId` de panneau d'un identifiant jetable de
+// collecteur (`qprompt:`, `qchoose:`, `qmembre:`) : le nom en tête ne désigne
+// aucun panneau enregistré, donc `routerPanneau` rend `null` et laisse le
+// collecteur faire son travail.
 const SEPARATEUR_PANNEAU = ':';
 
 // Type CHAT_INPUT dans l'API Discord — la forme d'une commande personnalisée.
@@ -166,17 +167,45 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
             }
         },
 
+        /**
+         * Contexte neutre d'une commande PERSONNALISÉE.
+         *
+         * Les commandes personnalisées n'ont pas de descripteur : elles sont
+         * définies en base, serveur par serveur, depuis `/cmd` ou le dashboard.
+         * Le bootstrap les résout lui-même, après le registre, et a pourtant
+         * besoin de répondre par la voie neutre — sans quoi `bot/index.js`
+         * resterait le dernier endroit du bot à construire un corps de message
+         * Discord à la main.
+         *
+         * ⚠️ Appelée depuis le dispatch NATIF de la plateforme (le
+         * `interactionCreate` de `bot/index.js` côté Discord). Un adaptateur
+         * dont la plateforme n'a pas d'interactions n'a pas à l'implémenter :
+         * ses commandes personnalisées passeront par son propre parseur.
+         *
+         * @param {import('discord.js').ChatInputCommandInteraction} interaction
+         * @param {string} nom  nom de la commande, tel qu'il est en base
+         */
+        contexteCommandePersonnalisee(interaction, nom) {
+            const { creerContexteCommande } = require('./context');
+            return creerContexteCommande(interaction, {
+                adaptateur,
+                // Descripteur minimal : une commande personnalisée ne porte
+                // aucune option, et n'a donc rien à lire dans l'interaction.
+                descripteur: { nom, description: nom, options: [] },
+            });
+        },
+
         /** @see bot/platform/discord/events.js pour la table et les payloads. */
         surEvenement(nomNeutre, handler, options) {
             return surEvenement(clientDiscord, adaptateur, nomNeutre, handler, options);
         },
 
-        /** Charge bot/commands/ dans les deux formats (neutre et historique). */
+        /** Charge bot/commands/ — descripteurs neutres exclusivement. */
         chargerCommandes(options) {
             return chargerCommandes({ ...options, adaptateur });
         },
 
-        /** Charge bot/events/ dans les deux formats et branche les handlers. */
+        /** Charge bot/events/ — descripteurs neutres — et branche les handlers. */
         chargerEvenements(options) {
             return chargerEvenements({ ...options, adaptateur });
         },
@@ -189,10 +218,11 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
         // ─── Panneaux persistants ────────────────────────────────────────────
         //
         // Le routage des clics vivait dans le `interactionCreate` de
-        // `bot/index.js`, par préfixes écrits en dur. Les lots 4 et 5 auraient
-        // donc dû modifier `bot/index.js`, qui leur est interdit. Ce registre
-        // est la voie neutre : un lot déclare son panneau, il est routé, et
-        // aucun fichier partagé n'est touché.
+        // `bot/index.js`, par préfixes écrits en dur (`tv_`, `ticket_`,
+        // `defer_`…). Ce registre l'a remplacé : un lot déclare son panneau, il
+        // est routé, et aucun fichier partagé n'est touché. Le routage par
+        // préfixes a été retiré à la consolidation — c'est désormais la SEULE
+        // voie par laquelle un clic atteint du code métier.
 
         /**
          * Enregistre le handler des clics d'un panneau persistant.

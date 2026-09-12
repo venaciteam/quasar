@@ -205,7 +205,8 @@ test('/help rend le même embed qu\'avant migration, section par section', async
 });
 
 test('un embed enregistré est rendu à l\'identique de l\'ancien buildDiscordEmbed', () => {
-    const { construireEmbedEnregistre, buildDiscordEmbed } = require('../bot/commands/embed');
+    const modEmbed = require('../bot/commands/embed');
+    const { construireEmbedEnregistre } = modEmbed;
 
     // Référence relevée sur l'implémentation d'origine (EmbedBuilder monté à la
     // main), pour une ligne `embeds.data` complète.
@@ -227,9 +228,13 @@ test('un embed enregistré est rendu à l\'identique de l\'ancien buildDiscordEm
     };
 
     assert.deepEqual(corpsEnvoye(rendreEmbed(construireEmbedEnregistre(DATA))), REFERENCE);
-    // Le pont gardé pour bot/index.js et le scheduler rend exactement la même
-    // chose : une seule source de vérité pour la forme d'un embed enregistré.
-    assert.deepEqual(corpsEnvoye(buildDiscordEmbed(DATA)), REFERENCE);
+    // Le pont `buildDiscordEmbed` a été RETIRÉ à la consolidation : ses deux
+    // appelants — la réponse d'une commande personnalisée dans `bot/index.js` et
+    // le rappel programmé du planificateur — postent désormais par le client
+    // REST normalisé, qui accepte l'embed neutre tel quel. Le vérifier ici,
+    // c'est empêcher qu'il revienne discrètement.
+    assert.equal(modEmbed.buildDiscordEmbed, undefined,
+        'buildDiscordEmbed ne doit plus exister : l\'embed neutre suffit');
 
     // Champs absents : aucune clé posée. Un `title: null` ferait échouer l'API.
     assert.deepEqual(corpsEnvoye(rendreEmbed(construireEmbedEnregistre({ description: 'Seule' }))), {
@@ -615,4 +620,51 @@ test('anti-raid — la voie neutre détecte la vague comme la voie historique', 
         { name: 'Sanction', value: 'Aucune : ce serveur est réglé en alerte seule.', inline: false },
         { name: 'Mode panique', value: 'Désactivé sur ce serveur (durée réglée à 0).', inline: false },
     ]);
+});
+
+// ── /cmd : l'enregistrement passe par l'adaptateur ───────────────────────────
+
+test('/cmd create|edit|delete enregistre par le contexte, jamais par un client REST monté à la main', async () => {
+    // `/cmd` montait son PROPRE `new REST()` sur DISCORD_TOKEN — une seconde
+    // authentification, et un fichier de commande qui redevient Discord-only.
+    // `ctx.deployerCommandeServeur` / `ctx.retirerCommandeServeur` délèguent à
+    // l'adaptateur actif, et sont inertes là où la plateforme n'a pas
+    // d'interactions. La route du dashboard, elle, garde l'ancienne voie
+    // jusqu'au lot 7.
+    const cmd = require('../bot/commands/customcmd');
+    const db = getDb();
+    const GUILDE = '700000000000000001';
+    db.prepare('INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)').run(GUILDE, 'Serveur de test');
+    db.prepare('DELETE FROM custom_commands WHERE guild_id = ?').run(GUILDE);
+
+    const appels = [];
+    const faireCtx = (sousCommande, options) => ({
+        plateforme: 'discord',
+        capacites: { interactions: true, ephemere: true },
+        guildeId: GUILDE,
+        canalId: '700000000000000002',
+        auteur: { id: '700000000000000003', nom: 'Leeva', mention: '<@700000000000000003>' },
+        db,
+        options: { sousCommande, get: (nom) => options[nom] ?? null },
+        async repondre() {},
+        async erreurUtilisateur(spec) { appels.push(['erreurUtilisateur', spec]); },
+        deployerCommandeServeur: async (commande) => { appels.push(['deployer', commande]); return true; },
+        retirerCommandeServeur: async (nom) => { appels.push(['retirer', nom]); return true; },
+    });
+
+    await cmd.executer(faireCtx('create', { nom: 'faq', reponse: 'La réponse à tout.' }));
+    await cmd.executer(faireCtx('edit', { nom: 'faq', nouveau_nom: 'aide' }));
+    await cmd.executer(faireCtx('delete', { nom: 'aide' }));
+
+    assert.deepEqual(appels.map(a => a[0]), ['deployer', 'deployer', 'retirer', 'retirer'],
+        'création, puis renommage (poser le nouveau + retirer l\'ancien), puis suppression');
+    assert.equal(appels[0][1].nom, 'faq');
+    // Renommage : on ENREGISTRE le nouveau nom, PUIS on retire l'ancien — dans
+    // cet ordre, au pire le serveur porte les deux entrées un moment.
+    assert.equal(appels[1][1].nom, 'aide');
+    assert.deepEqual(appels[2], ['retirer', 'faq']);
+    assert.deepEqual(appels[3], ['retirer', 'aide']);
+
+    // Et la base suit : la commande a bien été créée, renommée, puis supprimée.
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM custom_commands WHERE guild_id = ?').get(GUILDE).c, 0);
 });

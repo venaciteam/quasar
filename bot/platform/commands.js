@@ -7,10 +7,10 @@
 //  plateforme : il porte le vocabulaire du descripteur et sa validation.
 //
 //  La validation est volontairement stricte et exécutée AU CHARGEMENT du
-//  fichier de commande. Elle est le principal filet du chantier : 27 commandes
-//  restent à migrer, et une faute de frappe sur un type d'option produirait
-//  sinon une commande déployée sans son option, ou un lot entier refusé par
-//  Discord — deux symptômes qui ne désignent pas leur cause.
+//  fichier de commande. Elle est le principal filet de cette couche : une faute
+//  de frappe sur un type d'option produirait sinon une commande déployée sans
+//  son option, ou un lot entier refusé par Discord — deux symptômes qui ne
+//  désignent pas leur cause.
 // ═══════════════════════════════════════════════════════════════
 
 const { estPermissionCanonique, PERMISSIONS } = require('./permissions');
@@ -37,8 +37,7 @@ const PLATEFORMES_CONNUES = Object.freeze(['discord', 'fluxer']);
 // Sans cette sévérité, un `maxLength` écrit à la place de `max`, ou un
 // `autocomplete` à la place de `autocompletion`, serait accepté puis déployé
 // SANS la contrainte : l'option existerait, elle ne validerait simplement rien.
-// Vingt-sept commandes restent à migrer par cinq agents : c'est la faute la plus
-// probable du chantier, et la plus silencieuse.
+// C'est la faute la plus silencieuse qu'un descripteur puisse porter.
 
 /** Clés d'un descripteur de commande. */
 const CLES_COMMANDE = Object.freeze([
@@ -364,34 +363,18 @@ function definirCommande(descripteur) {
         validerOptions(nom, 'racine', descripteur.options);
     }
 
-    // ─── Pont de compatibilité, temporaire ───────────────────────────────────
-    // `reservedCommandNames()` (bot/commands/customcmd.js) établit la liste des
-    // noms déjà pris par Quasar en lisant `mod.data.name` sur chaque fichier de
-    // bot/commands/. Un descripteur neutre n'a pas de `data` : sans ce pont,
-    // /ping et /autorole sortiraient de cette liste et un homonyme personnalisé
-    // pourrait être créé — puis resterait inerte (bot/index.js résout d'abord
-    // ses propres commandes) et serait écarté au déploiement, sans qu'aucun
-    // message ne relie le symptôme à sa cause.
-    //
-    // Volontairement réduit à `{ name }` et non énumérable : ce n'est PAS le
-    // builder de la plateforme, et rien ne doit se mettre à appeler
-    // `data.toJSON()` dessus. Le rendu passe par platform/discord/commands.js.
-    // À retirer quand customcmd.js lira le registre (lot 3).
-    Object.defineProperty(descripteur, 'data', {
-        value: Object.freeze({ name: nom }),
-        enumerable: false,
-    });
-
     return descripteur;
 }
 
 /**
- * Descripteur neutre ou module discord.js historique ?
+ * Le module exporté est-il un descripteur neutre ?
  *
- * Les deux formats cohabitent pendant les lots 1 à 5. Le critère est `executer`
- * (français, neutre) contre `execute` (anglais, hérité) : un module qui porte
- * les deux est une migration à moitié faite, et on le signale plutôt que de
- * choisir à sa place.
+ * Le critère est `executer` (français, neutre) contre `execute` (anglais,
+ * hérité). Les deux formats ont cohabité pendant les lots 1 à 5 ; depuis la
+ * consolidation, le chargeur REFUSE le format historique — mais il doit encore
+ * savoir le reconnaître pour le nommer dans son message d'erreur. Un module qui
+ * porte les deux est une migration à moitié faite, et on le signale plutôt que
+ * de choisir à sa place.
  */
 function estDescripteurNeutre(mod) {
     if (!mod || typeof mod !== 'object') return false;

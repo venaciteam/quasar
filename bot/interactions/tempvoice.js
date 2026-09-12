@@ -7,6 +7,13 @@
 //  routage passe par la clé `panneaux` du descripteur de /tempvoice, et les
 //  composants par les primitives du contrat (`prompt`, `choisirMembre`).
 //
+//  Le routage `tv_` et le pont qui répondait aux anciens boutons ont été retirés
+//  à la consolidation : un panneau TempVoice vit dans son salon temporaire et
+//  meurt avec lui, donc seuls les salons encore occupés à l'instant du
+//  déploiement portent un panneau de l'ancienne forme. Leurs boutons affichent
+//  « L'interaction a échoué » ; `/voice` fait la même chose, et un salon recréé
+//  repart avec un panneau à jour.
+//
 //  Il n'est pas fusionné dans bot/commands/tempvoice.js à dessein : cette
 //  commande configure le SERVEUR (quels salons d'accueil, activés ou non),
 //  tandis que ce panneau pilote UN salon, pour son propriétaire. Deux durées de
@@ -31,17 +38,17 @@ const PANNEAU = 'tempvoice';
 // fichier qui sait ce que chaque clé déclenche, et une clé ajoutée d'un côté
 // sans handler de l'autre se verrait immédiatement.
 //
-// ⚠️ Le DÉCOUPAGE EN RANGÉES change : `rendreChoix` remplit cinq boutons par
-// rangée, là où le panneau historique était écrit en 4 + 3. Mêmes boutons,
-// mêmes libellés, mêmes emojis, mêmes styles, même ordre — seul le retour à la
-// ligne se déplace. Le contrat n'a pas de marqueur de rangée ; c'est consigné
-// au compte-rendu du lot avec la signature proposée.
+// Le découpage 4 + 3 est celui du panneau d'origine, et il est porté par
+// `nouvelleRangee` sur le bouton qui ouvre la seconde rangée. Sans ce marqueur,
+// `rendreChoix` remplit cinq boutons par rangée et le panneau sort en 5 + 2 :
+// mêmes boutons, même ordre, mais un regroupement qui ne veut plus rien dire —
+// les quatre réglages du salon d'un côté, les trois actions de l'autre.
 const BOUTONS_PANNEAU = Object.freeze([
     { cle: 'rename', libelle: 'Renommer', emoji: '✏️', style: 'primaire' },
     { cle: 'limit', libelle: 'Limite', emoji: '👥', style: 'primaire' },
     { cle: 'lock', libelle: 'Verrouiller', emoji: '🔒', style: 'secondaire' },
     { cle: 'unlock', libelle: 'Déverrouiller', emoji: '🔓', style: 'secondaire' },
-    { cle: 'permit', libelle: 'Autoriser', emoji: '✅', style: 'succes' },
+    { cle: 'permit', libelle: 'Autoriser', emoji: '✅', style: 'succes', nouvelleRangee: true },
     { cle: 'kick', libelle: 'Expulser', emoji: '👋', style: 'danger' },
     { cle: 'reset', libelle: 'Reset préfs', emoji: '🗑️', style: 'danger' },
 ]);
@@ -232,38 +239,9 @@ async function handlerPanneauTempVoice(ctx, cle) {
     return undefined;
 }
 
-/**
- * TRANSITION — panneaux `tv_*` posés AVANT la migration.
- *
- * `bot/index.js` requiert cette fonction et la branche sur le préfixe
- * historique `tv_`. Ce fichier ne lui est pas accessible : la ligne doit donc
- * continuer d'exister, et elle sera retirée au lot de consolidation avec le
- * routage qui l'appelle.
- *
- * Elle ne fait plus le travail — le panneau neutre s'en charge — mais elle ne
- * reste pas muette pour autant : un bouton qui ne répond rien laisse
- * « L'interaction a échoué » à l'écran, sans rien dire de la cause.
- *
- * La fenêtre concernée est courte : un panneau TempVoice vit dans le salon
- * temporaire, et disparaît avec lui dès qu'il se vide. Seuls les salons encore
- * occupés au moment du déploiement portent un panneau de l'ancienne forme.
- *
- * @param {import('discord.js').Interaction} interaction  interaction BRUTE,
- *   c'est la voie historique — aucun contexte neutre n'existe pour elle.
- */
-async function handleTempVoiceInteraction(interaction) {
-    const { userError } = require('../utils/errors');
-    return userError(interaction, {
-        title: 'Ce panneau a été remplacé',
-        cause: 'Il a été posé par une version antérieure de Quasar, et ses boutons ne sont plus reconnus.',
-        action: 'Utilisez les commandes `/voice`, ou quittez le salon et recréez-en un depuis le salon d\'accueil pour obtenir un panneau à jour.',
-    });
-}
-
 module.exports = {
     PANNEAU,
     BOUTONS_PANNEAU,
     handlerPanneauTempVoice,
-    handleTempVoiceInteraction,
     DELAI_SELECTION,
 };

@@ -2,15 +2,14 @@
 //  Événements normalisés — Discord
 //
 //  Table de correspondance de la DA §7.2, normalisation des payloads, et
-//  chargement de bot/events/ dans les deux formats.
+//  chargement de bot/events/.
 //
 //  Un handler neutre reçoit toujours `(ctx, ...donnees)`, où `ctx` porte
 //  l'accès à la plateforme et où `donnees` a la MÊME forme sur Discord et sur
 //  Fluxer. Les payloads sont documentés ci-dessous, à l'endroit qui les porte :
-//  c'est le contrat que consommeront les seize handlers de bot/events/ quand ils
-//  seront migrés (lots 1 à 5). Toute donnée absente de ces structures est
-//  inaccessible au code métier — si un handler en a besoin, elle s'ajoute ici
-//  pour les DEUX plateformes, jamais en lisant `brut`.
+//  c'est le contrat que consomment les seize handlers de bot/events/. Toute
+//  donnée absente de ces structures est inaccessible au code métier — si un
+//  handler en a besoin, elle s'ajoute ici pour les DEUX plateformes.
 //
 //  ⚠️ `sanctionAutomatique` n'existe que sur Discord (Fluxer n'a pas d'automod).
 //  Un handler qui s'y abonne déclare `capaciteRequise: 'automod'` : il n'est
@@ -369,7 +368,7 @@ function creerContexteEvenement(adaptateur) {
 }
 
 /**
- * Charge bot/events/ et branche chaque handler, dans LES DEUX formats.
+ * Charge bot/events/ et branche chaque handler — descripteurs neutres seulement.
  *
  * C'est le pendant de `chargerCommandes`, et il est aussi indispensable : sans
  * lui, un handler migré en `{ nom: 'roleCree', executer }` serait abonné à
@@ -406,18 +405,19 @@ function chargerEvenements({ dossier, adaptateur, surErreur } = {}) {
         }
 
         // Format historique : `{ name, once, execute }`, avec les objets
-        // discord.js bruts en argument. Même filet, pour que les deux voies
-        // produisent la même trace.
-        if (typeof mod?.name !== 'string' || typeof mod?.execute !== 'function') continue;
-
-        const pont = (...args) => {
-            Promise.resolve()
-                .then(() => mod.execute(...args))
-                .catch((err) => signaler(err, { evenement: mod.name }));
-        };
-        if (mod.once) client.once(mod.name, pont);
-        else client.on(mod.name, pont);
-        charges.push({ nom: mod.name, fichier, neutre: false, branche: true });
+        // discord.js bruts en argument. Accepté le temps des lots 1 à 5, REFUSÉ
+        // depuis la consolidation. On LÈVE plutôt que de passer au fichier
+        // suivant : un handler simplement ignoré, c'est une fonctionnalité du
+        // bot qui disparaît sans erreur, sans journal et sans symptôme qui
+        // désigne sa cause — exactement ce que ce chargeur existe pour empêcher.
+        if (typeof mod?.name === 'string' && typeof mod?.execute === 'function') {
+            throw new Error(
+                `bot/events/${fichier} : le handler « ${mod.name} » est au format historique `
+                + '`{ name, execute(...objets discord.js) }`, que le chargeur n\'accepte plus. '
+                + 'Décrivez-le avec `definirEvenement({ nom, executer(ctx, …) })` (bot/platform/events.js), '
+                + `en reprenant le nom NEUTRE de l'événement (${EVENEMENTS_NEUTRES.join(', ')}).`
+            );
+        }
     }
 
     return charges;

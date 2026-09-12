@@ -12,7 +12,7 @@ const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const creerAdaptateurDiscord = require('../bot/platform/discord');
-const { creerContexteCommande } = require('../bot/platform/discord/context');
+const { creerContexteCommande, creerContextePanneau } = require('../bot/platform/discord/context');
 const { rendreEmbed, rendreChoix, rendrePrompt } = require('../bot/platform/discord/render');
 const { embed } = require('../bot/platform/embed');
 const { getDb } = require('../api/services/database');
@@ -208,10 +208,12 @@ test('le contexte ne fuit rien de discord.js dans ses données', () => {
     assert.equal(ctx.canalId, SALON);
     assert.deepEqual(Object.keys(ctx.auteur).sort(), ['estBot', 'etiquette', 'id', 'mention', 'nom']);
     assert.equal(ctx.auteur.mention, `<@${AUTEUR}>`);
-    // `brut` reste accessible pour le code pas encore migré, mais invisible
-    // d'une sérialisation : rien ne peut le recopier par mégarde.
-    assert.equal(JSON.parse(JSON.stringify(ctx.auteur)).brut, undefined);
-    assert.ok(ctx.auteur.brut, 'échappatoire de transition encore disponible');
+    // L'échappatoire `brut` — l'objet discord.js d'origine, attaché en propriété
+    // non énumérable — a été RETIRÉE à la consolidation. Elle a servi le temps
+    // des lots 1 à 5 ; la garder aurait suffi à ce qu'une seule commande
+    // redevienne Discord-only sans que rien ne l'indique.
+    assert.equal(ctx.auteur.brut, undefined, '« brut » ne doit plus exister sur une entité normalisée');
+    assert.equal(ctx.membre.brut, undefined);
 });
 
 // ── Rendu ────────────────────────────────────────────────────────────────────
@@ -421,4 +423,186 @@ test('une « suite » inconnue est refusée avant que le panneau ne soit posté'
         /Valeurs acceptées : 'message', 'saisie'/,
     );
     assert.deepEqual(journal, [], 'aucun message ne doit avoir été posté');
+});
+
+// ── Panneaux persistants : poser, réécrire, acquitter ────────────────────────
+
+/** Clic de panneau, tel que `routerPanneau` le sert : NON acquitté. */
+function faireClicPanneau() {
+    const journal = [];
+    const interaction = {
+        id: '2', createdTimestamp: Date.now(),
+        client: { ws: { ping: 1 } },
+        guild: { id: GUILDE }, channel: { id: SALON }, channelId: SALON,
+        message: { id: 'PANNEAU-MSG' },
+        user: { id: AUTEUR, username: 'leeva' },
+        member: { id: AUTEUR, roles: { cache: new Map() }, permissions: { has: () => true } },
+        deferred: false, replied: false,
+        customId: 'defer:apply:42',
+        update(p) { journal.push(['update', p]); this.replied = true; return Promise.resolve(p); },
+        reply(p) { journal.push(['reply', p]); this.replied = true; return Promise.resolve(p); },
+        followUp(p) { journal.push(['followUp', p]); return Promise.resolve(p); },
+        editReply(p) { journal.push(['editReply', p]); return Promise.resolve(p); },
+        deferReply(p) { journal.push(['deferReply', p]); this.deferred = true; return Promise.resolve(p); },
+        deferUpdate() { journal.push(['deferUpdate']); this.deferred = true; return Promise.resolve(); },
+    };
+    return { interaction, journal };
+}
+
+test('ctx.modifierPanneau acquitte un clic vierge par update(), et complète par editReply()', async () => {
+    // C'est le BUG corrigé à la consolidation : `modifierPanneau` appelait
+    // `editReply` sans condition, ce qui échoue sur un clic de panneau — il
+    // arrive non acquitté. Le panneau d'arbitrage contournait par
+    // `differer({ ephemere: true })` + `api.modifierMessage` + `repondre()`, au
+    // prix de quatre messages éphémères que l'original n'avait pas.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, journal } = faireClicPanneau();
+    const ctx = creerContextePanneau(interaction, { adaptateur, panneau: 'defer', cle: 'apply:42' });
+
+    // 1. Rien n'est acquitté -> update(), qui réécrit ET acquitte en un appel.
+    await ctx.modifierPanneau(embed({ titre: 'Cas tranché' }));
+    assert.deepEqual(journal.map(l => l[0]), ['update']);
+    assert.equal(journal[0][1].embeds[0].toJSON().title, 'Cas tranché');
+
+    // 2. L'interaction est maintenant répondue -> editReply(), qui complète.
+    await ctx.modifierPanneau(embed({ titre: 'Cas tranché — résultat' }));
+    assert.deepEqual(journal.map(l => l[0]), ['update', 'editReply']);
+
+    // Et AUCUN message éphémère au passage.
+    assert.equal(journal.some(l => l[0] === 'reply' || l[0] === 'followUp' || l[0] === 'deferReply'), false);
+});
+
+test('ctx.modifierPanneau repose des choix désactivés, sans les retirer', async () => {
+    // Un panneau tranché doit continuer de dire à quoi le clic correspondait.
+    // Les boutons sont donc REPOSÉS `desactive: true`, jamais effacés — c'était
+    // le comportement d'origine du salon d'arbitrage.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction, journal } = faireClicPanneau();
+    const ctx = creerContextePanneau(interaction, { adaptateur, panneau: 'defer', cle: 'apply:42' });
+
+    await ctx.modifierPanneau(
+        embed({ titre: 'Cas tranché' }),
+        [
+            { cle: 'apply:42', libelle: 'Appliquer les sanctions', style: 'danger', desactive: true },
+            { cle: 'ignore:42', libelle: 'Ignorer le cas', style: 'secondaire', desactive: true },
+        ],
+        { panneau: 'defer' },
+    );
+
+    const [[, payload]] = journal;
+    assert.equal(payload.components.length, 1);
+    assert.deepEqual(payload.components[0].components.map(b => [b.custom_id, b.disabled]), [
+        ['defer:apply:42', true],
+        ['defer:ignore:42', true],
+    ]);
+});
+
+test('ctx.modifierPanneau refuse un nom de panneau invalide plutôt que de poser un customId illisible', async () => {
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction } = faireClicPanneau();
+    const ctx = creerContextePanneau(interaction, { adaptateur, panneau: 'defer', cle: 'apply:42' });
+
+    await assert.rejects(
+        async () => ctx.modifierPanneau('x', [{ cle: 'a', libelle: 'A' }], { panneau: 'a:b' }),
+        /nom de panneau invalide/,
+    );
+});
+
+test('ctx.poserPanneau accepte un corps composé : contenu + embeds + composants', async () => {
+    // Les mentions d'un embed NE NOTIFIENT PAS. Sans corps composé, l'ouverture
+    // d'un ticket devait poster les mentions dans un message séparé du panneau.
+    const envois = [];
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    adaptateur.api.envoyerMessage = async (canalId, corps) => {
+        envois.push([canalId, corps]);
+        return { id: 'M1', canalId };
+    };
+    const { interaction } = faireClicPanneau();
+    const ctx = creerContextePanneau(interaction, { adaptateur, panneau: 'ticket', cle: 'ouvrir' });
+
+    const pose = await ctx.poserPanneau(
+        'SALON-TICKET',
+        { contenu: '<@1> | <@&2>', embeds: [embed({ titre: 'Ticket #1' })] },
+        [{ cle: 'fermer', libelle: 'Fermer le ticket', style: 'danger' }],
+        { panneau: 'ticket' },
+    );
+
+    assert.deepEqual(pose, { canalId: 'SALON-TICKET', messageId: 'M1' });
+    assert.equal(envois.length, 1, 'un seul message, pas deux');
+    const [[canal, corps]] = envois;
+    assert.equal(canal, 'SALON-TICKET');
+    assert.equal(corps.contenu, '<@1> | <@&2>');
+    assert.equal(corps.embeds.length, 1);
+    assert.deepEqual(corps.composants[0].components.map(b => b.custom_id), ['ticket:fermer']);
+});
+
+test('ctx.poserPanneau refuse un corps qui déclare lui-même ses composants', async () => {
+    // Ce sont les choix qui décident des composants. Accepter les deux laisserait
+    // un panneau poser des boutons que personne ne route.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const { interaction } = faireClicPanneau();
+    const ctx = creerContextePanneau(interaction, { adaptateur, panneau: 'ticket', cle: 'ouvrir' });
+
+    await assert.rejects(
+        async () => ctx.poserPanneau('S', { contenu: 'x', composants: [] }, [{ cle: 'a', libelle: 'A' }], { panneau: 'ticket' }),
+        /composants/,
+    );
+});
+
+// ── Commandes personnalisées : le contexte délègue à l'adaptateur ────────────
+
+test('ctx.deployerCommandeServeur et ctx.retirerCommandeServeur passent par l\'adaptateur', async () => {
+    // `/cmd create|edit|delete` montait son PROPRE client REST discord.js, sur
+    // les variables d'environnement. Le contexte porte désormais les deux
+    // méthodes, et le serveur n'est pas un paramètre : une commande agit sur le
+    // sien, et le laisser choisir ouvrirait un déploiement sur n'importe quel
+    // serveur depuis n'importe quelle interaction.
+    const { client } = faireClient();
+    const adaptateur = creerAdaptateurDiscord({ client });
+    const appels = [];
+    adaptateur.deployerCommandeServeur = async (...args) => { appels.push(['deployer', ...args]); return true; };
+    adaptateur.retirerCommandeServeur = async (...args) => { appels.push(['retirer', ...args]); return true; };
+
+    const { interaction } = faireInteraction({ client });
+    const ctx = creerContexteCommande(interaction, {
+        adaptateur, descripteur: require('../bot/commands/ping'),
+    });
+
+    assert.equal(await ctx.deployerCommandeServeur({ nom: 'faq', description: 'La FAQ' }), true);
+    assert.equal(await ctx.retirerCommandeServeur('faq'), true);
+    assert.deepEqual(appels, [
+        ['deployer', GUILDE, { nom: 'faq', description: 'La FAQ' }],
+        ['retirer', GUILDE, 'faq'],
+    ]);
+});
+
+test('la voie d\'enregistrement de /cmd est celle du contexte, pas un client REST monté à la main', () => {
+    // `enregistrementNeutre(ctx)` est ce que `/cmd create|edit|delete` passe à
+    // `syncCustomCommandRename` : même signature que la voie du dashboard, donc
+    // les deux sont interchangeables et la route du lot 7 n'a rien à réécrire.
+    const { enregistrementNeutre } = require('../bot/commands/customcmd');
+    const vus = [];
+    const ctx = {
+        guildeId: GUILDE,
+        deployerCommandeServeur: (commande) => { vus.push(['deployer', commande]); return true; },
+        retirerCommandeServeur: (nom) => { vus.push(['retirer', nom]); return true; },
+    };
+
+    const voie = enregistrementNeutre(ctx);
+    voie.deployer(GUILDE, 'faq', 'Réponse à la FAQ');
+    voie.retirer(GUILDE, 'faq');
+
+    assert.equal(vus[0][0], 'deployer');
+    assert.equal(vus[0][1].nom, 'faq');
+    // La description vient de `buildCustomCommandDescription`, la même que le
+    // redéploiement au démarrage : sans ça, une commande changerait de libellé
+    // au premier reboot suivant sa création.
+    const { buildCustomCommandDescription } = require('../bot/utils/slashCommandSpec');
+    assert.equal(vus[0][1].description, buildCustomCommandDescription({ name: 'faq', response: 'Réponse à la FAQ' }));
+    assert.deepEqual(vus[1], ['retirer', 'faq']);
 });

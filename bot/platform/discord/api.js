@@ -26,7 +26,7 @@ const { CODES_NEUTRES, codeNeutre } = require('../erreurs');
 const { marquerErreur, marquerErreursApi } = require('./erreurs');
 const { exigerTypeCanalCanonique } = require('../channels');
 const { TYPES: TYPES_CANAL_DISCORD } = require('./channels');
-const { rendreContenu } = require('./render');
+const { rendreContenu, corpsPanneau } = require('./render');
 const { normaliserMembre, normaliserUtilisateur, normaliserRole, normaliserCanal, normaliserGuilde } = require('./context');
 const { normaliserMessage } = require('./events');
 const { dateDuSnowflake } = require('./snowflake');
@@ -280,6 +280,43 @@ function creerApi(client) {
 
         async modifierMessage(canalId, messageId, contenu) {
             return normaliserMessage(await rest().patch(Routes.channelMessage(canalId, messageId), requeteMessage(contenu)));
+        },
+
+        /**
+         * Réécrit un panneau persistant DÉJÀ POSÉ, par ses coordonnées.
+         * Symétrique de `ctx.poserPanneau` : même corps composé, mêmes choix
+         * neutres, même nom de panneau — donc les mêmes `customId`.
+         *
+         * Sa raison d'être est de pouvoir REPOSER des choix, et notamment des
+         * choix `desactive: true`. Sans elle, un panneau tranché ne pouvait que
+         * perdre ses boutons (`composants: []`), et le message cessait de dire
+         * ce qui avait été proposé — c'est le comportement d'origine du salon
+         * d'arbitrage qu'elle restitue.
+         *
+         * À distinguer de `ctx.modifierPanneau`, qui répond à une interaction en
+         * cours : ici il n'y en a pas, seulement un message à réécrire — le
+         * `interaction.message.edit()` d'avant migration.
+         *
+         * @param {string} canalId
+         * @param {string} messageId
+         * @param {string|object} contenuOuEmbed
+         * @param {Array} choix
+         * @param {{panneau: string}} options
+         * @returns {Promise<object>} le message réécrit, NORMALISÉ
+         */
+        async modifierPanneau(canalId, messageId, contenuOuEmbed, choix, { panneau } = {}) {
+            const { exigerNomPanneau } = require('./context');
+            exigerNomPanneau('api.modifierPanneau', panneau);
+            if (!canalId || !messageId) {
+                throw new Error('api.modifierPanneau : le salon et le message à réécrire sont obligatoires.');
+            }
+            // Appel direct et non `this.modifierMessage` : `marquerErreursApi`
+            // réenveloppe chaque méthode en fonction fléchée, sans receveur —
+            // un `this` y serait `undefined` à l'exécution.
+            return normaliserMessage(await rest().patch(
+                Routes.channelMessage(canalId, messageId),
+                requeteMessage(corpsPanneau(contenuOuEmbed, choix, panneau)),
+            ));
         },
 
         /**

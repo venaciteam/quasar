@@ -38,25 +38,17 @@
 //
 //  Les deux manques qui bloquaient ce module sont comblés : le membre normalisé
 //  porte `compteCreeLe` (création du COMPTE, distincte de `rejointLe`) et la
-//  guilde normalisée porte `membreCount`. `handleMemberJoin` accepte donc les
-//  deux mondes, comme `punishments.js` et `logger.js` :
+//  guilde normalisée porte `membreCount`.
 //
-//    voie neutre     — `handleMemberJoin(membre, portee)`, où `portee` est
-//                      `{ guildeId, guilde, api, moi }`. C'est ce que passe
-//                      `bot/events/guildMemberAdd.js` migré.
-//    voie historique — `handleMemberJoin(member)` avec un membre discord.js,
-//                      qui porte son `.guild`. Marquée
-//                      `// TRANSITION : format historique, à retirer au lot de
-//                      consolidation`.
+//  `handleMemberJoin(membre, portee)` n'accepte plus QUE la voie neutre, où
+//  `portee` est `{ guildeId, guilde, api, moi }` — ce que passe
+//  `bot/events/guildMemberAdd.js`. La voie historique (un `GuildMember`
+//  discord.js portant son `.guild`) a été retirée à la consolidation : son seul
+//  appelant était cet événement, et il est migré.
 //
-//  ⚠️ UNE SEULE DÉPENDANCE RESTE OUVERTE : le MODE PANIQUE. `panic.enterPanic`
-//  reçoit ce que cette fonction a reçu — une portée sur la voie neutre, une
-//  guilde discord.js sur la voie historique. Le contrat porte désormais ce qu'il
-//  lui faut (`api.mettreInvitationsEnPause`, `api.obtenirEtatInvitations`,
-//  `api.listerGuildes`), mais `panic.js` appartient à un autre lot : tant qu'il
-//  n'accepte pas la portée, une vague détectée par la voie neutre verra son mode
-//  panique échouer — visiblement, dans le champ « Mode panique » de l'alerte,
-//  jamais en silence. Voir le compte-rendu du lot 3.
+//  ⚠️ `panic.enterPanic` reçoit la portée telle quelle. Ce module est donc
+//  entièrement neutre ; c'est `panic.js` qui reste bi-format, et uniquement
+//  parce que `api/routes/antiraid.js` lui passe encore une `Guild`.
 // ═══════════════════════════════════════════════════════════════
 
 const { embed } = require('../../platform/embed');
@@ -184,14 +176,9 @@ async function punishBatch(batch, { scope, config, reason, currentMemberId }) {
     const results = [];
     let removedCurrent = false;
 
-    // `portee` ou `guild` selon la voie : `applyPunishments` accepte les deux et
-    // donne la priorité à la première. Les nommer ici, une fois, évite de
-    // tester la voie à chaque tour de boucle.
-    const voie = scope.neutre ? { portee: scope.cible } : { guild: scope.cible };
-
     for (const target of batch) {
         const outcome = await applyPunishments(config.punishments, {
-            ...voie,
+            portee: scope.cible,
             member: target,
             // `userId` est toujours transmis : un compte de raid a souvent déjà
             // quitté le serveur quand la sanction tombe, et le socle sait encore
@@ -217,54 +204,43 @@ async function punishBatch(batch, { scope, config, reason, currentMemberId }) {
 // ─── Point d'entrée ─────────────────────────────────────────────────────────
 
 /**
- * Réduit ce qu'on a reçu à ce dont ce module a besoin, quelle que soit la voie.
+ * Réduit la portée reçue à ce dont ce module a besoin.
  *
  * Le critère est celui du reste du dépôt : une portée neutre se reconnaît à son
- * client REST (`resoudrePorteeNeutre`), tout le reste retombe sur la voie
- * historique. L'inverse enverrait un objet inattendu vers le contrat neutre.
+ * client REST (`resoudrePorteeNeutre`). Tout le reste rend `null` — l'évaluation
+ * s'arrête, plutôt que d'envoyer un objet inattendu vers le contrat.
  *
- * @returns {null|{cible: object, neutre: boolean, guildeId: string,
+ * @returns {null|{cible: object, guildeId: string,
  *                 membreCount: number|null, moiId: string|null}}
  */
-function resoudreScope(membre, portee) {
+function resoudreScope(portee) {
     const neutre = resoudrePorteeNeutre(portee);
     if (neutre) {
         if (!neutre.guildeId) return null;
         return {
             cible: portee,
-            neutre: true,
             guildeId: neutre.guildeId,
             membreCount: portee.guilde?.membreCount ?? null,
             moiId: neutre.moiId,
         };
     }
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    const guild = membre?.guild;
-    if (!guild?.id) return null;
-    return {
-        cible: guild,
-        neutre: false,
-        guildeId: guild.id,
-        membreCount: guild.memberCount ?? null,
-        moiId: guild.client?.user?.id ?? null,
-    };
+    return null;
 }
 
 /**
  * Évalue une arrivée. Ne lève JAMAIS.
  *
- * @param {object} membre  membre NORMALISÉ (voie neutre) ou `GuildMember`
- *        discord.js (voie historique)
- * @param {object} [portee] VOIE NEUTRE : `{ guildeId, guilde, api, moi }`.
- *        Son absence bascule sur `membre.guild`.
+ * @param {object} membre  membre NORMALISÉ (bot/platform/discord/context.js)
+ * @param {object} portee  `{ guildeId, guilde, api, moi }` — obligatoire :
+ *        sans portée d'écriture, l'arrivée n'est pas évaluée.
  * @returns {Promise<{ removed: boolean }>} `removed` : le membre n'est plus sur
  *          le serveur du fait de l'anti-raid — l'événement d'arrivée s'arrête
  *          alors avant le message de bienvenue et les autorôles.
  */
 async function handleMemberJoin(membre, portee = null) {
     try {
-        const scope = resoudreScope(membre, portee);
+        const scope = resoudreScope(portee);
         if (!scope || !membre?.id) return { removed: false };
 
         // Un bot ne peut être ajouté que par quelqu'un ayant « Gérer le
@@ -272,10 +248,8 @@ async function handleMemberJoin(membre, portee = null) {
         // d'une vague ou d'un âge de compte serait absurde. Il ne compte donc
         // pas non plus dans la fenêtre.
         //
-        // `estBot` sur le membre normalisé ; `??` et non `||` : le champ neutre
-        // vaut `false` pour une personne, et le confondre avec « absent » ferait
-        // relire la forme historique pour rien.
-        if (membre.estBot ?? membre.user?.bot) return { removed: false };
+        // `estBot` vient du membre normalisé : toujours un booléen.
+        if (membre.estBot) return { removed: false };
 
         const config = getConfig(scope.guildeId);
         if (!config || !config.enabled) return { removed: false };
@@ -366,10 +340,9 @@ async function handleAccountAge(scope, config, member, now) {
     if (!config.minAccountAgeMs) return { removed: false };
 
     // Date de création du COMPTE, à ne pas confondre avec l'arrivée sur le
-    // serveur. `compteCreeLe` sur le membre normalisé (l'adaptateur la déduit du
-    // snowflake au besoin, la convention lui appartient) ;
-    // `user.createdTimestamp` sur la voie historique.
-    const createdAt = member.compteCreeLe ?? member.user?.createdTimestamp;
+    // serveur. `compteCreeLe` vient du membre normalisé (l'adaptateur la déduit du
+    // snowflake au besoin, la convention lui appartient).
+    const createdAt = member.compteCreeLe;
     // Horodatage absent (cache partiel, structure incomplète) : on ne devine
     // pas un âge, et surtout on ne sanctionne pas sur une supposition.
     if (!Number.isFinite(createdAt)) return { removed: false };

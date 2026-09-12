@@ -16,15 +16,19 @@
 //   3. Les erreurs Discord et SQLite sont traduites en langage humain. Personne
 //      ne devrait avoir à chercher ce que signifie « DiscordAPIError[50013] ».
 //
-//  ─── Bi-format, le temps de la migration multiplateforme ───────────────────
+//  ─── Bi-format, et il le reste ─────────────────────────────────────────────
 //
-//  Ce fichier est importé par 23 autres, migrés ou non. Pendant la transition il
-//  est donc appelé des DEUX côtés à la fois : avec une `interaction` discord.js
-//  par le code historique, avec un `ctx` neutre par le code migré. Chaque
-//  fonction publique détecte donc son format d'entrée avant d'agir, et la voie
-//  historique est marquée `// TRANSITION : format historique, à retirer au lot
-//  de consolidation` — un seul `grep` sur cette phrase donnera tout ce qu'il
-//  reste à nettoyer.
+//  Ce fichier est importé par 23 autres et appelé des DEUX côtés : avec un `ctx`
+//  neutre par le code métier, avec une `interaction` ou une `Guild` discord.js
+//  par les deux endroits qui n'en ont pas — l'ADAPTATEUR lui-même
+//  (`ctx.erreurUtilisateur` rappelle `userError` avec son interaction, pour ne
+//  pas reboucler) et le DISPATCH de `bot/index.js`, qui signale un incident
+//  avant d'avoir construit un contexte. Ce n'est donc pas une transition à
+//  retirer : c'est la frontière de la couche, et elle a deux côtés par nature.
+//
+//  Ce qui a disparu à la consolidation, en revanche, c'est l'import de
+//  `discord.js` en tête : le rendu passe par `versEmbedDiscord`, donc par
+//  l'adaptateur, en require différé.
 //
 //  C'est ici que vivent les DEUX détecteurs de format du dépôt, et nulle part
 //  ailleurs : `estContexteNeutre` (« est-ce un ctx ? ») et
@@ -34,7 +38,6 @@
 //  exactement le genre de bug qu'on ne voit pas passer.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder } = require('discord.js');
 const { embed, estEmbed, ressembleAEmbedDiscord } = require('../platform/embed');
 // Une seule implémentation du code d'incident dans le projet : le dashboard en
 // génère aussi (gestionnaire d'erreurs de l'API, filet global du processus), et
@@ -104,15 +107,18 @@ function resoudrePorteeNeutre(valeur) {
 }
 
 /**
- * Embed neutre -> EmbedBuilder, pour la voie historique uniquement.
+ * Embed neutre -> EmbedBuilder, pour la voie native uniquement.
  *
  * Laisse passer tel quel ce qui n'est pas un embed neutre : un `EmbedBuilder`
- * écrit par du code pas encore migré doit continuer à voyager sans être touché.
- * Dans l'autre sens, un fichier à demi migré qui construirait son embed avec
- * `embed()` tout en gardant une `Guild` discord.js sous la main fonctionne
- * quand même — c'est le cas de figure le plus probable pendant les six lots.
+ * déjà construit doit continuer à voyager sans être touché.
+ *
+ * ⚠️ Retenue par `api/**` (lot 7), pas par une transition en cours : le mode
+ * panique (`bot/modules/antiraid/panic.js`) reçoit encore une `Guild` de
+ * `api/routes/antiraid.js`, et la notification de violation une `Client` tant
+ * que `api/routes/breach.js` n'est pas migrée. Les deux finissent ici.
+ * Le require de l'adaptateur est différé : ce fichier est chargé par 23 autres,
+ * y compris dans un processus Fluxer qui ne doit jamais évaluer discord.js.
  */
-// TRANSITION : format historique, à retirer au lot de consolidation
 function versEmbedDiscord(valeur) {
     if (!estEmbed(valeur)) return valeur;
     const { rendreEmbed } = require('../platform/discord/render');
@@ -299,24 +305,21 @@ function construireEmbedErreur({ title, cause, action, code }) {
  * Même embed, au format Discord. Construit à partir du neutre : il n'y a qu'un
  * seul endroit où le TEXTE d'une erreur est décidé.
  *
- * Le builder est monté à la main plutôt que par `rendreEmbed` pour deux
- * fidélités que le rendu générique ne garantit pas : `setDescription` est appelé
- * MÊME sur une chaîne vide (le corps envoyé porte alors `description: ""`, et
- * non pas rien), et l'ordre de pose des champs reste celui d'avant.
+ * ⚠️ VOIE NATIVE, et elle ne disparaîtra pas — ce n'est pas une transition.
+ * Deux appelants la retiennent, tous deux par construction :
+ *   • `bot/platform/discord/context.js` : `ctx.erreurUtilisateur` rappelle
+ *     `userError` avec son INTERACTION, précisément pour ne pas reboucler sur
+ *     lui-même. C'est l'adaptateur qui rend, c'est son droit.
+ *   • `bot/index.js` : le dispatch natif (`interactionCreate`) signale ses
+ *     incidents avant d'avoir construit le moindre contexte.
+ *
+ * Le rendu passe par `versEmbedDiscord`, donc par `rendreEmbed` de l'adaptateur :
+ * ce fichier n'importe plus `discord.js`. Seule nuance, sans effet visible : un
+ * embed d'erreur SANS cause ni action porte désormais une description absente
+ * là où le builder écrit à la main envoyait `description: ""`.
  */
-// TRANSITION : format historique, à retirer au lot de consolidation
 function buildErrorEmbed(spec) {
-    const neutre = construireEmbedErreur(spec);
-    const construit = new EmbedBuilder()
-        .setTitle(neutre.titre)
-        .setColor(neutre.couleur);
-
-    construit.setDescription(neutre.description);
-
-    if (neutre.pied) {
-        construit.setFooter({ text: neutre.pied.texte });
-    }
-    return construit;
+    return versEmbedDiscord(construireEmbedErreur(spec));
 }
 
 /**
@@ -325,7 +328,7 @@ function buildErrorEmbed(spec) {
  * après un deferReply produit une seconde erreur qui masque la première.
  *
  * @param {object} cible  `ctx` neutre, ou interaction discord.js
- * @param {object} contenu  embed neutre, ou EmbedBuilder sur la voie historique
+ * @param {object} contenu  embed neutre, ou EmbedBuilder sur la voie native
  */
 async function replyWithEmbed(cible, contenu, { ephemeral = true } = {}) {
     if (estContexteNeutre(cible)) {
@@ -341,7 +344,8 @@ async function replyWithEmbed(cible, contenu, { ephemeral = true } = {}) {
         return undefined;
     }
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
+    // Voie native : une interaction discord.js. Retenue par l'adaptateur
+    // lui-même (`ctx.erreurUtilisateur`) et par le dispatch de `bot/index.js`.
     const embedDiscord = versEmbedDiscord(contenu);
     const payload = { embeds: [embedDiscord], ephemeral };
     try {
@@ -364,7 +368,7 @@ async function replyWithEmbed(cible, contenu, { ephemeral = true } = {}) {
  *
  * ⚠️ Corollaire pour les adaptateurs : `ctx.erreurUtilisateur` ne doit JAMAIS
  * rappeler `userError(ctx, …)`, sous peine de boucle. L'adaptateur Discord
- * rappelle `userError` avec son INTERACTION, qui repart par la voie historique.
+ * rappelle `userError` avec son INTERACTION, qui repart par la voie native.
  *
  * @param {object} cible  `ctx` neutre, ou interaction discord.js
  * @param {{title?: string, titre?: string, cause?: string, action?: string,
@@ -388,7 +392,7 @@ function userError(cible, spec = {}) {
         return replyWithEmbed(cible, construireEmbedErreur({ title, cause, action }), { ephemeral });
     }
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
+    // Voie native : interaction discord.js (adaptateur, bootstrap).
     return replyWithEmbed(cible, buildErrorEmbed({ title, cause, action }), { ephemeral });
 }
 
@@ -398,7 +402,7 @@ function userError(cible, spec = {}) {
  *
  * La ligne de journal est identique quel que soit le format : ce sont les mêmes
  * trois informations, lues à des endroits différents. `commandName` et `customId`
- * côté discord.js, `commande` et `panneau.prefixe` côté neutre — les noms que
+ * côté discord.js, `commande` et `panneau.nom` côté neutre — les noms que
  * `creerContexteCommande` et `creerContextePanneau` posent sur le contexte.
  *
  * @param {object} cible — `ctx` neutre, interaction discord.js, ou null
@@ -410,7 +414,7 @@ function reportIncident(cible, error, context = {}) {
     const neutre = estContexteNeutre(cible);
 
     const where = context.command
-        || (neutre ? (cible.commande || cible.panneau?.prefixe) : (cible?.commandName || cible?.customId))
+        || (neutre ? (cible.commande || cible.panneau?.nom) : (cible?.commandName || cible?.customId))
         || 'inconnu';
     const guildId = context.guildId || (neutre ? cible.guildeId : cible?.guild?.id) || 'aucun';
     const userId = context.userId || (neutre ? cible.auteur?.id : cible?.user?.id) || 'inconnu';
@@ -427,7 +431,7 @@ function reportIncident(cible, error, context = {}) {
     if (cible) {
         const contenu = neutre
             ? construireEmbedErreur({ ...explained, code })
-            // TRANSITION : format historique, à retirer au lot de consolidation
+            // Voie native : interaction discord.js (adaptateur, bootstrap).
             : buildErrorEmbed({ ...explained, code });
         replyWithEmbed(cible, contenu).catch(() => {});
     }

@@ -114,6 +114,18 @@ function buildCaseEmbed(row, { evidence } = {}) {
     });
 }
 
+/**
+ * Les mêmes actions, DÉSACTIVÉES — un cas tranché.
+ *
+ * Reposées et non retirées : le message d'arbitrage doit continuer de dire ce
+ * qui avait été proposé, et à quoi le clic correspondait. C'était le
+ * comportement d'avant migration (`buildDisabledComponents`), rendu de nouveau
+ * possible par `api.modifierPanneau` et par `ctx.modifierPanneau`.
+ */
+function buildCaseChoixResolus(caseId) {
+    return buildCaseChoix(caseId).map(choix => ({ ...choix, desactive: true }));
+}
+
 /** Les deux actions offertes à l'équipe, au format neutre des choix. */
 function buildCaseChoix(caseId) {
     return [
@@ -168,51 +180,35 @@ function buildResolvedEmbed(row, { resolvedBy, outcomeLines }) {
 }
 
 /**
- * Portée d'écriture du module, quelle que soit la forme reçue.
+ * Portée d'écriture du module.
  *
- * `applyPunishments` transmet sa cible telle quelle : un `ctx` neutre depuis
- * l'escalade d'avertissements et le panneau d'arbitrage, une `Guild` discord.js
- * depuis l'anti-raid et le salon piège, qui ne sont pas encore migrés.
+ * `applyPunishments` transmet sa cible telle quelle, et elle est désormais
+ * TOUJOURS neutre : escalade d'avertissements, panneau d'arbitrage, anti-raid et
+ * salon piège passent tous une portée. La dérivation d'une `Guild` discord.js —
+ * qui montait un client REST au vol — est tombée avec la voie `guild:` de
+ * `bot/utils/punishments.js`.
  *
  * @returns {null|{guildeId, api, moiId, poserPanneau}}
  */
 function resoudrePortee(cible) {
     const portee = resoudrePorteeNeutre(cible);
-    if (portee) {
-        return {
-            ...portee,
-            // `poserPanneau` est exposé par tous les contextes neutres —
-            // commande, panneau, événement. Une portée littérale
-            // `{ guildeId, api }` n'en a pas : elle ne peut pas poser de boutons,
-            // et on le dira plutôt que de poster un cas inarbitrable.
-            poserPanneau: typeof cible.poserPanneau === 'function'
-                ? cible.poserPanneau.bind(cible)
-                : null,
-        };
-    }
-
-    // TRANSITION : format historique, à retirer au lot de consolidation.
-    // Une `Guild` discord.js, reçue de l'anti-raid et du salon piège. On en
-    // dérive une portée neutre plutôt que de dupliquer tout l'envoi : le corps
-    // de `sendDeferCase` reste alors unique, et les deux voies produisent le
-    // même message et le même `customId`. Requires différés, comme le fait déjà
-    // `versEmbedDiscord` dans bot/utils/errors.js.
-    if (!cible || typeof cible !== 'object' || !cible.id || !cible.client) return null;
-    const { creerApi } = require('../../platform/discord/api');
-    const { poserPanneau } = require('../../platform/discord/context');
-    const api = creerApi(cible.client);
+    if (!portee) return null;
     return {
-        guildeId: cible.id,
-        api,
-        moiId: cible.client?.user?.id ?? null,
-        poserPanneau: (canalId, contenu, choix, options) => poserPanneau({ api }, canalId, contenu, choix, options),
+        ...portee,
+        // `poserPanneau` est exposé par tous les contextes neutres — commande,
+        // panneau, événement. Une portée littérale `{ guildeId, api }` n'en a
+        // pas : elle ne peut pas poser de boutons, et on le dira plutôt que de
+        // poster un cas inarbitrable.
+        poserPanneau: typeof cible.poserPanneau === 'function'
+            ? cible.poserPanneau.bind(cible)
+            : null,
     };
 }
 
 /**
  * Pose un cas dans le salon d'arbitrage. Ne lève jamais.
  *
- * @param {object} cible  portée neutre (`ctx`) ou `Guild` discord.js
+ * @param {object} cible  portée neutre (`ctx`, `{ guildeId, api }`)
  * @param {object} caseData
  * @param {string} caseData.targetUserId
  * @param {string} caseData.source — 'automod' | 'escalation' | 'antiraid' | 'honeypot'
@@ -311,5 +307,6 @@ module.exports = {
     sendDeferCase,
     buildCaseEmbed,
     buildCaseChoix,
+    buildCaseChoixResolus,
     buildResolvedEmbed,
 };

@@ -52,6 +52,10 @@ function faireCtx({
         async creerCanal(guilde, spec) { journal.push(['creerCanal', guilde, spec]); return { id: 'TICKET1', nom: spec.nom }; },
         async envoyerMessage(canal, contenu) { journal.push(['envoyerMessage', canal, contenu]); return { id: 'MSG1' }; },
         async modifierMessage(canal, message, contenu) { journal.push(['modifierMessage', canal, message, contenu]); return { id: message }; },
+        async modifierPanneau(canal, message, contenu, choix, opts) {
+            journal.push(['api.modifierPanneau', canal, message, contenu, choix, opts]);
+            return { id: message };
+        },
         async definirOverwrite(canal, cible, deltas, opts) { journal.push(['definirOverwrite', canal, cible, deltas, opts]); },
         async supprimerOverwrite(canal, cible) { journal.push(['supprimerOverwrite', canal, cible]); },
         async permissionsSurCanal(canal) {
@@ -80,7 +84,10 @@ function faireCtx({
         options: { get: (nom) => options[nom] ?? null },
         differer(opts = {}) { journal.push(['differer', opts]); return Promise.resolve(); },
         repondre(contenu, opts = {}) { journal.push(['repondre', contenu, opts]); return Promise.resolve(); },
-        modifierPanneau(contenu) { journal.push(['modifierPanneau', contenu]); return Promise.resolve(); },
+        modifierPanneau(contenu, choix = null, opts = {}) {
+            journal.push(['modifierPanneau', contenu, choix, opts]);
+            return Promise.resolve();
+        },
         erreurUtilisateur(spec) { journal.push(['erreurUtilisateur', spec]); return Promise.resolve(); },
         poserPanneau(canal, contenu, choix, opts) {
             journal.push(['poserPanneau', canal, contenu, choix, opts]);
@@ -296,13 +303,19 @@ test('le message d\'accueil garde ses mentions, son embed et son bouton de ferme
     const ctx = faireCtx({ guildeId: 'G-ACC', auteurId: 'U-ACC' });
     await ticket.panneaux.ticket(ctx, 'ouvrir');
 
-    // Les mentions notifient ; celles d'un embed ne notifient pas. Elles partent
-    // donc dans leur propre message, faute de corps composé sur `poserPanneau`.
-    assert.deepEqual(premier(ctx, 'envoyerMessage').slice(1), ['TICKET1', '<@U-ACC> | <@&R1>']);
+    // UN SEUL message : les mentions notifient, celles d'un embed non — elles
+    // doivent donc voyager DANS le message du panneau, comme avant migration.
+    // Le corps composé de `poserPanneau` le permet ; il a fallu deux envois
+    // séparés le temps que le contrat ne l'accepte pas.
+    assert.equal(premier(ctx, 'envoyerMessage'), undefined,
+        'les mentions ne doivent plus partir dans un message séparé');
 
-    const [, canal, contenu, choix, opts] = premier(ctx, 'poserPanneau');
+    const [, canal, corps, choix, opts] = premier(ctx, 'poserPanneau');
     assert.equal(canal, 'TICKET1');
     assert.deepEqual(opts, { panneau: 'ticket' });
+    assert.equal(corps.contenu, '<@U-ACC> | <@&R1>');
+    assert.equal(corps.embeds.length, 1);
+    const [contenu] = corps.embeds;
     const ticketId = db.prepare('SELECT id FROM tickets WHERE guild_id = ? AND user_id = ?').get('G-ACC', 'U-ACC').id;
     assert.equal(contenu.titre, `🎫 Ticket #${ticketId}`);
     assert.equal(contenu.description,
@@ -316,6 +329,35 @@ test('le message d\'accueil garde ses mentions, son embed et son bouton de ferme
     const [, accuse, optionsAccuse] = premier(ctx, 'repondre');
     assert.equal(accuse, '✅ Votre ticket a été créé : <#TICKET1>');
     assert.deepEqual(optionsAccuse, { ephemere: true });
+});
+
+test('le corps posé par poserPanneau porte bien content + embeds + components', async () => {
+    // Preuve au niveau du CORPS REST, et pas seulement de l'intention : c'est
+    // `api.envoyerMessage` qui décide, et une clé oubliée en chemin ferait
+    // repartir les mentions dans le vide sans erreur.
+    const { creerApi } = require('../bot/platform/discord/api');
+    const envois = [];
+    const api = creerApi({
+        rest: {
+            post: async (route, requete) => { envois.push([route, requete]); return { id: 'M1', channel_id: 'TICKET1' }; },
+        },
+    });
+    const { creerContexteEvenement } = require('../bot/platform/discord/events');
+    const ctxEvenement = creerContexteEvenement({ nom: 'discord', capacites: {}, moi: { id: 'BOT' }, api });
+
+    await ctxEvenement.poserPanneau(
+        'TICKET1',
+        { contenu: '<@U> | <@&R>', embeds: [embed({ titre: 'T' })] },
+        [{ cle: 'fermer', libelle: 'Fermer le ticket', emoji: '🔒', style: 'danger' }],
+        { panneau: 'ticket' },
+    );
+
+    assert.equal(envois.length, 1, 'un seul appel REST, donc un seul message');
+    const [, { body }] = envois[0];
+    assert.equal(body.content, '<@U> | <@&R>');
+    assert.equal(body.embeds.length, 1);
+    assert.equal(body.embeds[0].title, 'T');
+    assert.deepEqual(body.components[0].components.map(b => b.custom_id), ['ticket:fermer']);
 });
 
 test('un second ticket est refusé tant que le premier est ouvert', async () => {
@@ -704,13 +746,25 @@ test('ignorer un cas le clôt, réécrit le message et n\'applique rien', async 
     assert.equal(apres.status, 'rejected');
     assert.equal(apres.resolved_by, 'U-MOD');
 
-    const [, canal, message, corps] = premier(ctx, 'modifierMessage');
-    assert.deepEqual([canal, message], ['ARB', 'ARBMSG']);
-    assert.equal(corps.embeds[0].titre, `⚖️ Cas d'arbitrage #${cas.id} — cas ignoré`);
-    assert.deepEqual(corps.embeds[0].champs.map(c => c.nom),
+    // Le clic est acquitté PAR la réécriture du panneau (`update()`), et rien
+    // d'autre n'est posté : le contournement `differer` + `api.modifierMessage`
+    // + `repondre` coûtait un message éphémère que l'original n'avait pas.
+    assert.equal(premier(ctx, 'differer'), undefined, 'aucun acquittement différé');
+    assert.equal(premier(ctx, 'repondre'), undefined, 'aucun message éphémère');
+    assert.equal(premier(ctx, 'modifierMessage'), undefined);
+
+    const [, contenu, choix, opts] = premier(ctx, 'modifierPanneau');
+    assert.deepEqual(opts, { panneau: 'defer' });
+    assert.equal(contenu.titre, `⚖️ Cas d'arbitrage #${cas.id} — cas ignoré`);
+    assert.deepEqual(contenu.champs.map(c => c.nom),
         ['Membre', 'Déclencheur', 'Motif', 'Sanctions proposées', 'Arbitrage', 'Résultat']);
-    assert.equal(corps.embeds[0].champs.at(-1).valeur, 'Aucune sanction appliquée.');
-    assert.deepEqual(corps.composants, [], 'les boutons ne doivent plus être cliquables');
+    assert.equal(contenu.champs.at(-1).valeur, 'Aucune sanction appliquée.');
+    // Les boutons sont REPOSÉS désactivés, pas retirés : le message doit
+    // continuer de dire à quoi le clic correspondait.
+    assert.deepEqual(choix.map(c => [c.cle, c.desactive]), [
+        [`apply:${cas.id}`, true],
+        [`ignore:${cas.id}`, true],
+    ]);
 });
 
 test('deux clics simultanés ne tranchent qu\'une fois', async () => {
@@ -723,39 +777,73 @@ test('deux clics simultanés ne tranchent qu\'une fois', async () => {
 
     const apres = getDb().prepare('SELECT * FROM defer_cases WHERE id = ?').get(cas.id);
     assert.equal(apres.resolved_by, 'MOD-A', 'la base départage, le second clic ne réécrit pas la décision');
-    // Le salon cesse de mentir sur l'état du cas : le message est rafraîchi.
-    assert.ok(premier(secondCtx, 'modifierMessage'));
+    // Le salon cesse de mentir sur l'état du cas : le message est rafraîchi, et
+    // le second clic est acquitté par cette réécriture — pas par un éphémère.
+    assert.ok(premier(secondCtx, 'modifierPanneau'));
+    assert.equal(premier(secondCtx, 'repondre'), undefined);
+});
+
+test('appliquer un cas : deux écritures, aucun message éphémère', async () => {
+    const cas = poserCas('G-APPLY');
+    const ctx = faireCtx({
+        guildeId: 'G-APPLY', canalId: 'ARB', auteurId: 'U-MOD',
+        permissions: { MODERATE_MEMBERS: true },
+    });
+    ctx.panneau = { nom: 'defer', cle: `apply:${cas.id}`, messageId: 'ARBMSG' };
+    await panneauDefer.executer(ctx, `apply:${cas.id}`);
+
+    // 1. Acquittement + état « tranché » sur le panneau, dans les trois secondes.
+    const acquittement = premier(ctx, 'modifierPanneau');
+    assert.ok(acquittement, 'le clic doit être acquitté par la réécriture du panneau');
+    assert.match(acquittement[1].titre, /sanctions appliquées/);
+
+    // 2. Le résultat des sanctions, une fois connu, par les coordonnées du
+    //    message — c'est le `interaction.message.edit()` d'avant migration.
+    const [, canal, message, contenu, choix, opts] = premier(ctx, 'api.modifierPanneau');
+    assert.deepEqual([canal, message], ['ARB', 'ARBMSG']);
+    assert.deepEqual(opts, { panneau: 'defer' });
+    assert.equal(contenu.champs.at(-1).nom, 'Résultat');
+    assert.deepEqual(choix.map(c => c.desactive), [true, true]);
+
+    // Et toujours aucun éphémère, ni acquittement différé.
+    assert.equal(premier(ctx, 'differer'), undefined);
+    assert.equal(premier(ctx, 'repondre'), undefined);
 });
 
 // ── 12. Découplage ───────────────────────────────────────────────────────────
 
 test('aucun fichier du lot 5 n\'importe discord.js', () => {
+    // `bot/interactions/{ticket,defer}.js` ont été SUPPRIMÉS à la consolidation
+    // avec le routage par préfixes qui les alimentait : ils ne répondaient plus
+    // qu'« ce bouton date d'une version antérieure ».
     const fichiers = [
         'bot/commands/ticket.js', 'bot/commands/signaler.js', 'bot/commands/mesdonnees.js',
-        'bot/interactions/ticket.js', 'bot/interactions/defer.js',
         'bot/modules/defer/index.js', 'bot/panneaux/defer.js', 'bot/utils/transcriptArchive.js',
     ];
+    for (const disparu of ['bot/interactions/ticket.js', 'bot/interactions/defer.js']) {
+        assert.equal(fs.existsSync(path.join(__dirname, '..', disparu)), false,
+            `${disparu} ne devrait plus exister`);
+    }
     for (const relatif of fichiers) {
         const source = fs.readFileSync(path.join(__dirname, '..', relatif), 'utf8');
         assert.equal(/require\(['"]discord\.js['"]\)/.test(source), false, `${relatif} importe discord.js`);
     }
 });
 
-test('une seule dérogation : la voie historique de sendDeferCase', () => {
-    // `applyPunishments` transmet encore une `Guild` discord.js depuis
-    // l'anti-raid et le salon piège, qui ne sont pas migrés. Plutôt que de
-    // dupliquer tout l'envoi, on en dérive une portée neutre — d'où ce require
-    // différé de l'adaptateur, marqué TRANSITION, qui disparaît avec ces deux
-    // appelants. Aucun autre fichier du lot n'y touche.
+test('plus aucune dérogation : sendDeferCase n\'accepte que la portée neutre', () => {
+    // `sendDeferCase` dérivait une portée neutre d'une `Guild` discord.js, en
+    // montant un client REST au vol, parce que `applyPunishments` en recevait
+    // encore une de l'anti-raid et du salon piège. Les deux sont migrés, la voie
+    // `guild:` de `applyPunishments` est tombée, et cette dérivation avec elle :
+    // AUCUN fichier de l'arbitrage n'importe plus l'adaptateur.
     const fichiers = [
-        'bot/commands/ticket.js', 'bot/interactions/ticket.js', 'bot/interactions/defer.js',
+        'bot/commands/ticket.js', 'bot/modules/defer/index.js',
         'bot/panneaux/defer.js', 'bot/utils/transcriptArchive.js',
     ];
     for (const relatif of fichiers) {
         const source = fs.readFileSync(path.join(__dirname, '..', relatif), 'utf8');
         assert.equal(/require\(['"][^'"]*platform\/discord/.test(source), false,
             `${relatif} importe l'adaptateur Discord`);
+        assert.equal(/TRANSITION/.test(source), false, `${relatif} porte encore un marqueur TRANSITION`);
     }
-    const defer = fs.readFileSync(path.join(__dirname, '..', 'bot/modules/defer/index.js'), 'utf8');
-    assert.match(defer, /TRANSITION : format historique/);
 });

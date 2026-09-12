@@ -56,13 +56,17 @@ test('une plateforme inconnue lève, et nomme les valeurs acceptées', () => {
 });
 
 test('un adaptateur pas encore livré est annoncé comme tel, pas en MODULE_NOT_FOUND', () => {
-    // L'adaptateur Fluxer arrive au lot 6. D'ici là, un chemin de fichier dans
-    // la pile d'appel laisserait croire à une installation cassée.
+    // Un chemin de fichier dans la pile d'appel laisserait croire à une
+    // installation cassée. Le contrôle porte sur le MÉCANISME, pas sur une
+    // plateforme précise : nommer « fluxer » ici a fait tomber ce test le jour
+    // de la livraison du lot 6, alors qu'il ne vérifie rien de Fluxer.
+    const { chargerAdaptateur } = require('../bot/platform');
     assert.throws(
-        () => resolvePlatform({ QUASAR_PLATFORM: 'fluxer' }),
+        () => chargerAdaptateur('mastodon'),
         (err) => {
             assert.match(err.message, /pas encore livré/);
             assert.match(err.message, /QUASAR_PLATFORM=discord/);
+            assert.match(err.message, /bot\/platform\/mastodon\//);
             return true;
         },
     );

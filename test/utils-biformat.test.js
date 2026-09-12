@@ -26,6 +26,7 @@ const { getDb } = require('../api/services/database');
 const { embed, estEmbed } = require('../bot/platform/embed');
 const creerAdaptateurDiscord = require('../bot/platform/discord');
 const { creerContexteCommande } = require('../bot/platform/discord/context');
+const { rendreEmbed } = require('../bot/platform/discord/render');
 
 const {
     estContexteNeutre, resoudrePorteeNeutre, versEmbedDiscord,
@@ -343,17 +344,26 @@ test('errors — reportIncident lit la trace au bon endroit selon le format', as
 //  3. logger.js
 // ═══════════════════════════════════════════════════════════════
 
-test('logger — sendLog, voie historique : capture de référence inchangée', async () => {
+test('logger — une guilde discord.js n\'est plus une portée d\'écriture', async () => {
+    // La voie historique de `sendLog` — `guild.channels.cache.get(...)` — a été
+    // retirée à la consolidation. Son dernier appelant était
+    // `bot/modules/music/player.js`, famille coupée et jamais chargée.
+    // On ne poste PAS en silence : on refuse, en nommant ce qu'il fallait
+    // passer. Sinon la réactivation de la musique perdrait ses journaux sans
+    // qu'aucune trace ne le dise.
     const { guild, envois } = faireGuilde();
-    const e = new EmbedBuilder().setTitle('📥 Membre rejoint').setColor(1).addFields({ name: 'n', value: 'v' });
+    const erreurs = [];
+    const original = console.error;
+    console.error = (...args) => erreurs.push(args.join(' '));
+    try {
+        await sendLog(guild, 'member_join', embed({ titre: '📥 Membre rejoint' }));
+    } finally {
+        console.error = original;
+    }
 
-    await sendLog(guild, 'member_join', e);
-    assert.equal(envois.length, 1);
-    assert.deepEqual(envois[0], { embeds: [e] }, 'l\'EmbedBuilder doit voyager tel quel, sans passer par un rendu');
-
-    // Type désactivé : rien ne part, comme avant.
-    await sendLog(guild, 'msg_edit', e);
-    assert.equal(envois.length, 1);
+    assert.equal(envois.length, 0);
+    assert.equal(erreurs.length, 1);
+    assert.match(erreurs[0], /portée d'écriture non neutre/);
 });
 
 test('logger — sendLog, voie neutre : passe par api.envoyerMessage', async () => {
@@ -368,25 +378,28 @@ test('logger — sendLog, voie neutre : passe par api.envoyerMessage', async () 
     assert.equal(appels.length, 1);
 });
 
-test('logger — un embed neutre posté avec une guilde discord.js est rendu au vol', async () => {
-    // Le cas de figure le plus probable pendant les six lots : un fichier à
-    // demi migré, qui construit avec embed() mais tient encore une Guild.
-    const { guild, envois } = faireGuilde();
-    await sendLog(guild, 'member_join', embed({ titre: 'T', couleur: 0x112233 }));
+test('logger — voie neutre : les réglages du serveur départagent, embed inchangé', async () => {
+    const { portee, appels } = fairePortee();
+    const neutre = embed({ titre: 'T', couleur: 0x112233 });
 
-    assert.equal(envois.length, 1);
-    assert.deepEqual(embedsEnvoyes(envois[0]), [{ title: 'T', color: 0x112233 }]);
+    await sendLog(portee, 'member_join', neutre);
+    assert.deepEqual(appels[0], ['envoyerMessage', SALON_LOG, neutre]);
+    // L'embed voyage neutre jusqu'au client REST : c'est lui qui rend.
+    assert.deepEqual(embedsEnvoyes({ embeds: [rendreEmbed(neutre)] }), [{ title: 'T', color: 0x112233 }]);
 });
 
 // ═══════════════════════════════════════════════════════════════
 //  4. punishments.js
 // ═══════════════════════════════════════════════════════════════
 
-test('punishments — embed de sanction, voie historique : capture de référence inchangée', async () => {
-    const { guild, envois } = faireGuilde();
+test('punishments — embed de sanction : capture de référence inchangée', async () => {
+    // La voie `guild:` a été retirée à la consolidation ; la capture, elle, ne
+    // bouge pas. C'est `buildLogEmbed` — l'embed NEUTRE — qui est la source
+    // unique, et son rendu doit rester celui d'avant migration.
+    const { portee, appels } = fairePortee();
 
     await applyPunishments('warn', {
-        guild,
+        portee,
         member: { id: CIBLE },
         userId: CIBLE,
         reason: 'Test de non-régression',
@@ -394,23 +407,27 @@ test('punishments — embed de sanction, voie historique : capture de référenc
         moderatorId: BOT,
     });
 
-    assert.equal(envois.length, 1);
-    const [envoye] = embedsEnvoyes(envois[0]);
+    const logs = appels.filter(a => a[0] === 'envoyerMessage' && a[1] === SALON_LOG);
+    assert.equal(logs.length, 1);
+    const envoye = JSON.parse(JSON.stringify(rendreEmbed(logs[0][2]).toJSON()));
     assert.equal(envoye.title, '⚠️ Avertissement automatique');
     assert.equal(envoye.color, 15844367);
+    // ⚠️ ÉCART DE CORPS ASSUMÉ, déjà consigné par les six lots : `rendreEmbed`
+    // pose `inline: Boolean(champ.enLigne)` sur TOUS les champs, là où le
+    // builder monté à la main laissait la clé absente quand elle valait faux.
+    // L'affichage est identique — Discord traite l'absence comme `false` — mais
+    // le JSON diffère. C'était le seul motif d'existence de
+    // `buildLogEmbedHistorique`, retiré à la consolidation avec la voie
+    // `guild:` qui l'empruntait.
     assert.deepEqual(envoye.fields.slice(0, 3), [
         { name: 'Membre', value: `<@${CIBLE}> (${CIBLE})`, inline: true },
         { name: 'Déclencheur', value: 'AutoMod Discord', inline: true },
-        // ⚠️ AUCUNE clé `inline` sur ce champ : c'était déjà le cas, et un
-        // `inline: false` ajouté ici changerait le corps envoyé à Discord.
-        { name: 'Raison', value: 'Test de non-régression' },
+        { name: 'Raison', value: 'Test de non-régression', inline: false },
     ]);
-    assert.equal('inline' in envoye.fields[2], false);
     assert.match(envoye.fields[3].name, /ID sanction/);
 
     // L'horodatage est bien posé, comme avant.
-    const json = envois[0].embeds[0].toJSON();
-    assert.equal(typeof json.timestamp, 'string');
+    assert.equal(typeof envoye.timestamp, 'string');
 });
 
 test('punishments — voie neutre : chaque action passe par le client REST', async () => {
@@ -479,12 +496,14 @@ test('punishments — voie neutre : le nom du serveur du MP vient du contrat', a
     assert.match(mp[2], /Motif : Spam/);
 });
 
-test('punishments — unreachableTarget dans les deux formats', () => {
+test('punishments — unreachableTarget : une cible non neutre ne décide de rien', () => {
     const { guild } = faireGuilde();
+    // Plus de voie historique : une `Guild` n'est pas une portée d'écriture, et
+    // on ne bloque PAS sur cette base. Inventer un refus empêcherait une
+    // sanction légitime ; la plateforme tranchera, et son erreur est traduite.
     assert.equal(unreachableTarget(guild, null), 'Cible inconnue.');
-    assert.match(unreachableTarget(guild, guild.ownerId), /propriétaire du serveur/);
-    assert.match(unreachableTarget(guild, BOT), /moi-même/);
-    assert.equal(unreachableTarget(guild, CIBLE), null);
+    assert.equal(unreachableTarget(guild, guild.ownerId), null);
+    assert.equal(unreachableTarget(guild, BOT), null);
 
     const { portee } = fairePortee();
     assert.match(unreachableTarget(portee, BOT), /moi-même/, 'l\'identité du bot vient de portee.moi');

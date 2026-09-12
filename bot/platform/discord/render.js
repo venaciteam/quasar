@@ -190,6 +190,98 @@ function rendreContenu(contenuOuEmbed) {
 }
 
 /**
+ * Corps d'un panneau persistant : contenu + choix, prêt pour `api.envoyerMessage`
+ * ou `api.modifierMessage`.
+ *
+ * Écrit une seule fois parce qu'il sert aux DEUX sens — poser un panneau
+ * (`ctx.poserPanneau`) et le réécrire (`api.modifierPanneau`). Deux
+ * constructions séparées finiraient par diverger d'une clé, et un panneau
+ * réécrit sans ses boutons est un panneau mort.
+ *
+ * Le contenu accepte les trois formes de `rendreContenu` — chaîne, embed neutre,
+ * corps composé `{ contenu, embeds, fichiers }` — parce qu'un panneau porte
+ * parfois les deux à la fois : à l'ouverture d'un ticket, les mentions doivent
+ * être dans le MÊME message que l'embed d'accueil, sans quoi elles ne notifient
+ * personne (celles d'un embed ne notifient pas).
+ *
+ * @param {string|object} contenuOuEmbed
+ * @param {Array} choix
+ * @param {string} panneau  nom du panneau, préfixe des `customId`
+ * @returns {object} corps NEUTRE composé, `composants` compris
+ */
+function corpsPanneau(contenuOuEmbed, choix, panneau) {
+    let corps;
+    if (typeof contenuOuEmbed === 'string') {
+        corps = { contenu: contenuOuEmbed };
+    } else if (contenuOuEmbed && typeof contenuOuEmbed === 'object'
+        && !estEmbed(contenuOuEmbed) && CLES_CORPS.some(cle => cle in contenuOuEmbed)) {
+        corps = { ...contenuOuEmbed };
+    } else {
+        corps = { embeds: [contenuOuEmbed] };
+    }
+
+    if (corps.composants !== undefined) {
+        throw new Error(
+            'Panneau : « composants » n\'a pas à être fourni — ce sont les choix qui les décident. '
+            + 'Passez-les dans l\'argument `choix`.'
+        );
+    }
+
+    // `toJSON()` explicite : un `ActionRowBuilder` sérialisé tel quel par
+    // `JSON.stringify` ressort en `{ data: … }`, que l'API ignore — le panneau
+    // partirait sans aucun bouton, sans erreur.
+    corps.composants = rendreChoix(choix, panneau).map(rangee => rangee.toJSON());
+    return corps;
+}
+
+/**
+ * Découpe une liste de choix en rangées.
+ *
+ * Le découpage est une donnée de MISE EN PAGE, pas de plateforme : « ces trois
+ * boutons vont ensemble » se dit de la même façon partout, et un adaptateur qui
+ * n'a pas de rangées (Fluxer, où un choix est une réaction) l'ignore simplement.
+ * Trois écritures, pour la même chose :
+ *
+ *   • un tableau PLAT — rempli à cinq boutons par rangée, le défaut ;
+ *   • un tableau de RANGÉES, `[[a, b, c], [d, e]]` — découpage explicite ;
+ *   • un tableau plat dont un choix porte `nouvelleRangee: true` — il ouvre une
+ *     rangée. C'est la forme la plus légère quand une seule coupure compte, et
+ *     c'est celle du panneau des salons vocaux temporaires (4 + 3).
+ *
+ * @param {Array} choix
+ * @returns {Array<Array>} les rangées, vides écartées
+ */
+function decouperRangees(choix) {
+    const rangeesExplicites = choix.filter(entree => Array.isArray(entree));
+    if (rangeesExplicites.length > 0) {
+        if (rangeesExplicites.length !== choix.length) {
+            throw new Error(
+                'ctx.choose : mélange de choix et de rangées. Passez un tableau PLAT de choix, '
+                + 'ou un tableau de rangées — jamais les deux dans la même liste.'
+            );
+        }
+        return choix.filter(rangee => rangee.length > 0);
+    }
+
+    // Marqueur de rangée porté par le choix qui l'ouvre. Un marqueur posé sur le
+    // premier choix n'ouvre rien : la rangée courante est déjà vide.
+    if (!choix.some(option => option?.nouvelleRangee)) {
+        const rangees = [];
+        for (let debut = 0; debut < choix.length; debut += BOUTONS_PAR_RANGEE) {
+            rangees.push(choix.slice(debut, debut + BOUTONS_PAR_RANGEE));
+        }
+        return rangees;
+    }
+
+    const rangees = [[]];
+    for (const option of choix) {
+        if (option?.nouvelleRangee && rangees[rangees.length - 1].length > 0) rangees.push([]);
+        rangees[rangees.length - 1].push(option);
+    }
+    return rangees.filter(rangee => rangee.length > 0);
+}
+
+/**
  * Choix neutres -> rangées de boutons.
  *
  * `prefixe` est le préfixe de `customId`. Il porte l'identité de l'appel :
@@ -198,23 +290,40 @@ function rendreContenu(contenuOuEmbed) {
  * stable pour un panneau persistant, qui doit rester reconnaissable après un
  * redémarrage.
  *
- * @param {Array<{cle: string, libelle: string, emoji?: string, style?: string, url?: string, desactive?: boolean}>} choix
+ * @param {Array<{cle: string, libelle: string, emoji?: string, style?: string, url?: string, desactive?: boolean, nouvelleRangee?: boolean}>|Array<Array>} choix
+ *   tableau plat, ou tableau de rangées — cf. `decouperRangees`.
  * @param {string} prefixe
  * @returns {ActionRowBuilder[]}
  */
 function rendreChoix(choix, prefixe) {
     if (!Array.isArray(choix) || choix.length === 0) return [];
-    if (choix.length > BOUTONS_PAR_RANGEE * RANGEES_MAX) {
+
+    const decoupe = decouperRangees(choix);
+    const total = decoupe.reduce((somme, rangee) => somme + rangee.length, 0);
+    if (total > BOUTONS_PAR_RANGEE * RANGEES_MAX) {
         throw new Error(
-            `ctx.choose : ${choix.length} choix demandés, Discord en accepte ${BOUTONS_PAR_RANGEE * RANGEES_MAX} au maximum. `
+            `ctx.choose : ${total} choix demandés, Discord en accepte ${BOUTONS_PAR_RANGEE * RANGEES_MAX} au maximum. `
             + 'Découpez le panneau en plusieurs messages.'
+        );
+    }
+    if (decoupe.length > RANGEES_MAX) {
+        throw new Error(
+            `ctx.choose : ${decoupe.length} rangées demandées, Discord en accepte ${RANGEES_MAX} au maximum. `
+            + 'Regroupez des choix, ou découpez le panneau en plusieurs messages.'
+        );
+    }
+    const tropPleine = decoupe.findIndex(rangee => rangee.length > BOUTONS_PAR_RANGEE);
+    if (tropPleine !== -1) {
+        throw new Error(
+            `ctx.choose : la rangée ${tropPleine + 1} porte ${decoupe[tropPleine].length} choix, `
+            + `Discord en accepte ${BOUTONS_PAR_RANGEE} par rangée.`
         );
     }
 
     const rangees = [];
-    for (let debut = 0; debut < choix.length; debut += BOUTONS_PAR_RANGEE) {
+    for (const contenuRangee of decoupe) {
         const rangee = new ActionRowBuilder();
-        for (const option of choix.slice(debut, debut + BOUTONS_PAR_RANGEE)) {
+        for (const option of contenuRangee) {
             const style = STYLES_BOUTON[option.style] || ButtonStyle.Secondary;
             const bouton = new ButtonBuilder().setStyle(style);
 
@@ -315,6 +424,8 @@ module.exports = {
     rendreContenu,
     rendreFichier,
     CLES_CORPS,
+    corpsPanneau,
+    decouperRangees,
     rendreChoix,
     rendrePrompt,
     couleurVersEntier,

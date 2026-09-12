@@ -1,11 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
 //  Journal de modération
 //
-//  Bi-format le temps de la migration multiplateforme, pour la même raison que
-//  `bot/utils/logger.js` : `sendModLog` garde un appelant non migré,
-//  `sendAutomodLog` de bot/utils/punishments.js, qui lui passe encore une
-//  `Guild` discord.js et un `EmbedBuilder` sur sa voie historique. La détection
-//  vient de `bot/utils/errors.js`, seul endroit du dépôt où elle est écrite.
+//  Bi-format, et RETENU par `api/**` (lot 7). Une seule chaîne y mène encore :
+//
+//    api/routes/antiraid.js  -> antiraid.enterPanic(guild) / liftPanic(guild)
+//    -> bot/modules/antiraid/panic.js (voie Guild)
+//    -> punishments.sendAutomodLog(guild, ...)
+//    -> sendModLog(guild, ...)
+//
+//  Le jour ou cette route recoit l'adaptateur au lieu du client, la voie
+//  historique tombe ici comme elle est deja tombee dans `bot/utils/logger.js`.
+//  La detection de portee vient de `bot/utils/errors.js`, seul endroit du depot
+//  ou elle est ecrite.
 // ═══════════════════════════════════════════════════════════════
 
 const { isLogEnabled, getLogConfig } = require('./logger');
@@ -22,10 +28,10 @@ const { resoudrePorteeNeutre, versEmbedDiscord } = require('./errors');
  *
  * @param {object} cible   portée neutre (un `ctx`, ou `{ guildeId, api }`),
  *   reconnue à la présence d'un client REST normalisé ; ou `Guild` discord.js
- *   sur la voie historique.
- * @param {object} contenu embed neutre, ou `EmbedBuilder` sur la voie historique.
- *   Un embed neutre passé avec une `Guild` est rendu au vol, comme dans `sendLog` :
- *   un fichier à demi migré reste fonctionnel.
+ *   sur la voie retenue par `api/routes/antiraid.js` (cf. en-tête).
+ * @param {object} contenu embed neutre, ou `EmbedBuilder`. Un embed neutre passé
+ *   avec une `Guild` est rendu au vol : c'est exactement ce que fait le mode
+ *   panique, dont les embeds sont neutres depuis le lot 5b.
  * @param {string} logType — clé de LOG_CATEGORIES : mod_warn, mod_mute, mod_kick, mod_ban…
  */
 async function sendModLog(cible, contenu, logType) {
@@ -56,7 +62,12 @@ async function sendModLog(cible, contenu, logType) {
         return;
     }
 
-    // TRANSITION : format historique, à retirer au lot de consolidation
+    // ⚠️ VOIE NATIVE — une `Guild` discord.js — RETENUE par `api/**`, lot 7 :
+    //   api/routes/antiraid.js  -> antiraid.enterPanic(guild) / liftPanic(guild)
+    //   -> bot/modules/antiraid/panic.js (voie Guild)
+    //   -> punishments.sendAutomodLog(guild) -> ICI.
+    // C'est la seule chaîne qui y mène encore. Elle tombe le jour où la route du
+    // dashboard passe l'adaptateur au lieu du client.
     const channel = cible.channels.cache.get(config.logChannel);
     if (!channel) return;
 

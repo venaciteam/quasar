@@ -33,7 +33,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const { InteractionResponse } = require('discord.js');
-const { rendreContenu, rendreChoix, rendrePrompt, rendreSelecteurMembre } = require('./render');
+const { rendreContenu, rendreChoix, rendrePrompt, rendreSelecteurMembre, corpsPanneau } = require('./render');
 const { aPermission, BITS } = require('./permissions');
 const { versNomCanonique } = require('./channels');
 const { dateDuSnowflake } = require('./snowflake');
@@ -73,16 +73,12 @@ const SUITES_CHOOSE = Object.freeze(['message', 'saisie']);
 
 let compteurInteractions = 0;
 
-/** Attache une référence native sans la rendre visible d'un log ou d'un JSON. */
-function avecBrut(objet, brut) {
-    // ⚠️ Échappatoire de transition. `brut` porte l'objet discord.js d'origine
-    // pour le code pas encore migré ; il vaut `undefined` sur Fluxer. Une
-    // commande migrée ne doit JAMAIS s'en servir — c'est exactement ce que ce
-    // chantier retire, et un test l'interdit hors de bot/platform/.
-    // À supprimer à la fin des lots 1 à 5.
-    Object.defineProperty(objet, 'brut', { value: brut, enumerable: false });
-    return objet;
-}
+// ⚠️ Il n'y a PLUS d'échappatoire `brut` sur les entités normalisées. Elle a
+// existé le temps des lots 1 à 5, pour que du code à demi migré retrouve
+// l'objet discord.js d'origine ; elle est retirée à la consolidation, et
+// `test/platform-etancheite.test.js` interdit désormais `.brut` dans tout
+// `bot/`. Une information qui manque au code métier s'AJOUTE au normaliseur,
+// pour les deux plateformes — c'est tout l'objet de cette couche.
 
 // ─── Normalisation des entités ───────────────────────────────────────────────
 //
@@ -94,13 +90,13 @@ function avecBrut(objet, brut) {
 
 function normaliserUtilisateur(user) {
     if (!user) return null;
-    return avecBrut({
+    return {
         id: user.id,
         nom: user.globalName ?? user.global_name ?? user.username ?? null,
         etiquette: user.tag ?? user.username ?? null,
         mention: `<@${user.id}>`,
         estBot: Boolean(user.bot),
-    }, user);
+    };
 }
 
 /**
@@ -190,7 +186,7 @@ function couleurRole(role) {
  */
 function normaliserRole(role) {
     if (!role) return null;
-    return avecBrut({
+    return {
         id: role.id,
         nom: role.name,
         mention: `<@&${role.id}>`,
@@ -198,23 +194,25 @@ function normaliserRole(role) {
         gere: Boolean(role.managed),
         couleur: couleurRole(role),
         guildeId: role.guildId ?? role.guild_id ?? role.guild?.id ?? null,
-    }, role);
+    };
 }
 
 function normaliserCanal(canal) {
     if (!canal) return null;
-    return avecBrut({
+    return {
         id: canal.id,
         nom: canal.name,
         // Nom canonique quand Quasar connaît ce type, `null` sinon (forum, fil,
-        // annonce). Le type natif reste lisible par `typeNatif` pour le code de
-        // transition qui filtre encore sur `ChannelType`.
+        // annonce). `typeNatif` reste lisible pour les journaux de structure,
+        // qui AFFICHENT « Type 15 » plutôt que de taire un salon dont le type
+        // n'a pas de nom canonique. Rien ne doit en DÉCIDER : une branche sur
+        // cette valeur serait un `ChannelType` déguisé.
         type: versNomCanonique(canal.type),
         typeNatif: canal.type,
         guildeId: canal.guildId ?? canal.guild_id ?? canal.guild?.id ?? null,
         parentId: canal.parentId ?? canal.parent_id ?? null,
         mention: `<#${canal.id}>`,
-    }, canal);
+    };
 }
 
 function normaliserMembre(membre) {
@@ -223,7 +221,7 @@ function normaliserMembre(membre) {
         ? membre.roles
         : [...(membre.roles?.cache?.keys?.() || [])];
 
-    return avecBrut({
+    return {
         id: membre.id ?? membre.user?.id,
         nom: membre.displayName ?? membre.nick ?? membre.user?.username ?? null,
         pseudo: membre.nickname ?? membre.nick ?? null,
@@ -253,7 +251,7 @@ function normaliserMembre(membre) {
         // Salon vocal où le membre se trouve, ou null. Croisé avec la base par
         // les commandes vocales : sans lui, on piloterait son salon sans y être.
         canalVocalId: membre.voice?.channelId ?? membre.voice_state?.channel_id ?? null,
-    }, membre);
+    };
 }
 
 /**
@@ -268,7 +266,7 @@ function normaliserMembre(membre) {
  */
 function normaliserGuilde(guilde) {
     if (!guilde) return null;
-    return avecBrut({
+    return {
         id: guilde.id,
         nom: guilde.name,
         proprietaireId: guilde.ownerId ?? guilde.owner_id ?? null,
@@ -284,7 +282,7 @@ function normaliserGuilde(guilde) {
         // c'est une connaissance de PLATEFORME : un verrouillage de salon qui
         // écrirait `guilde.id` en dur cesserait d'être portable.
         roleParDefautId: guilde.roles?.everyone?.id ?? guilde.id ?? null,
-    }, guilde);
+    };
 }
 
 // ─── Lecture des options ─────────────────────────────────────────────────────
@@ -390,29 +388,39 @@ function validerSuite(suite) {
  *
  * @param {object} adaptateur
  * @param {string} canalId
- * @param {string|object} contenuOuEmbed
- * @param {Array<{cle, libelle, emoji?, style?}>} choix
+ * @param {string|object} contenuOuEmbed  chaîne, embed neutre, ou corps composé
+ *   `{ contenu, embeds, fichiers }`. Le corps composé n'est pas une commodité :
+ *   les mentions d'un embed NE NOTIFIENT PAS, et l'ouverture d'un ticket doit
+ *   pouvoir mettre `content` et `embeds` dans le même message que ses boutons.
+ * @param {Array<{cle, libelle, emoji?, style?, desactive?, nouvelleRangee?}>|Array<Array>} choix
  * @param {{panneau: string}} options
  * @returns {Promise<{canalId: string, messageId: string|null}>}
  */
 async function poserPanneau(adaptateur, canalId, contenuOuEmbed, choix, { panneau } = {}) {
+    exigerNomPanneau('poserPanneau', panneau);
+    if (!canalId) throw new Error('poserPanneau : le salon de destination est obligatoire.');
+
+    const message = await adaptateur.api.envoyerMessage(
+        canalId,
+        corpsPanneau(contenuOuEmbed, choix, panneau),
+    );
+    return { canalId, messageId: message?.id ?? null };
+}
+
+/**
+ * Un nom de panneau ne peut pas contenir le séparateur que l'adaptateur place
+ * entre le panneau et la clé du choix : `ticket:ouvrir` ne serait plus
+ * déchiffrable si le panneau s'appelait `a:b`. Écrit une fois, appliqué partout
+ * où un nom de panneau entre dans la couche.
+ */
+function exigerNomPanneau(appelant, panneau) {
     if (typeof panneau !== 'string' || !panneau || panneau.includes(':')) {
         throw new Error(
-            `poserPanneau : nom de panneau invalide « ${panneau} ». Attendu une chaîne non vide `
+            `${appelant} : nom de panneau invalide « ${panneau} ». Attendu une chaîne non vide `
             + 'et sans « : », qui sépare le panneau de la clé du choix.'
         );
     }
-    if (!canalId) throw new Error('poserPanneau : le salon de destination est obligatoire.');
-
-    const corps = typeof contenuOuEmbed === 'string'
-        ? { contenu: contenuOuEmbed }
-        : { embeds: [contenuOuEmbed] };
-
-    const message = await adaptateur.api.envoyerMessage(canalId, {
-        ...corps,
-        composants: rendreChoix(choix, panneau).map(rangee => rangee.toJSON()),
-    });
-    return { canalId, messageId: message?.id ?? null };
+    return panneau;
 }
 
 /**
@@ -598,14 +606,41 @@ function creerNoyauContexte(interaction, { adaptateur, etiquette }) {
 
         /**
          * Réécrit le message du panneau lui-même — pour le griser, afficher le
-         * choix retenu, ou retirer ses boutons. À ne pas confondre avec
-         * `repondre`, qui poste une suite.
+         * choix retenu, reposer ses boutons désactivés, ou les retirer. À ne pas
+         * confondre avec `repondre`, qui poste une suite.
+         *
+         * ⚠️ Deux mécaniques, choisies sur l'ÉTAT de l'interaction et non sur un
+         * drapeau de l'appelant :
+         *
+         *   • rien n'est encore acquitté — le cas d'un clic de panneau, qui
+         *     arrive vierge : `update()`. C'est la seule forme qui réécrive le
+         *     message ET acquitte le clic en un seul appel, sans laisser le
+         *     moindre message éphémère derrière elle ;
+         *   • l'interaction est déjà différée ou répondue : `editReply()`, qui
+         *     complète la réponse en cours.
+         *
+         * Appeler `editReply` sur un clic vierge échoue (« interaction has not
+         * been replied to »), et c'est ce qui obligeait le panneau d'arbitrage à
+         * contourner par `differer()` + `api.modifierMessage` — au prix de
+         * quatre messages éphémères que l'original n'avait pas.
+         *
+         * @param {string|object} contenuOuEmbed
+         * @param {Array} [choix]  choix neutres à (re)poser. Omis, le panneau
+         *   garde ses boutons ; les enlever demande `{ composants: [] }` dans un
+         *   corps composé. Les retirer implicitement casserait un panneau
+         *   persistant.
+         * @param {{panneau?: string}} [options] nom du panneau, à défaut celui
+         *   du contexte courant.
          */
-        modifierPanneau(contenuOuEmbed) {
-            const payload = rendreContenu(contenuOuEmbed);
-            // Un panneau sans `composants` déclarés garde ses boutons : les
-            // retirer implicitement casserait un panneau persistant. Pour les
-            // enlever, passer `{ composants: [] }`.
+        modifierPanneau(contenuOuEmbed, choix = null, options = {}) {
+            const corps = choix
+                ? corpsPanneau(contenuOuEmbed, choix, exigerNomPanneau('modifierPanneau', options.panneau || etiquette))
+                : contenuOuEmbed;
+            const payload = rendreContenu(corps);
+
+            if (typeof courante.update === 'function' && !courante.deferred && !courante.replied) {
+                return courante.update(payload);
+            }
             return courante.editReply(payload);
         },
 
@@ -906,6 +941,31 @@ function creerContexteCommande(interaction, { adaptateur, descripteur, sousComma
     const ctx = creerNoyauContexte(interaction, { adaptateur, etiquette: `qpanel:${descripteur.nom}` });
     ctx.options = creerLecteurOptions(interaction, descripteur, sousCommande);
     ctx.commande = descripteur.nom;
+
+    // ─── Commandes personnalisées, serveur par serveur ───────────────────────
+    //
+    // `/cmd create|edit|delete` enregistre et retire des commandes auprès de la
+    // plateforme. Sans ces deux méthodes, la seule issue depuis une commande
+    // était de monter son PROPRE client REST discord.js sur les variables
+    // d'environnement — un second client, une seconde authentification, et un
+    // fichier de commande qui redevient Discord-only.
+    //
+    // Le serveur n'est pas un paramètre : une commande agit sur le sien, et le
+    // laisser choisir ouvrirait un déploiement sur n'importe quel serveur depuis
+    // n'importe quelle interaction.
+    //
+    // Inertes — et rendant `true` — là où `capacites.interactions` est faux :
+    // côté Fluxer, une commande personnalisée sera résolue en base par le
+    // parseur, il n'y a rien à enregistrer. « Rien à faire » est un succès.
+
+    /** @param {{nom: string, description: string}} commande */
+    ctx.deployerCommandeServeur = (commande) =>
+        adaptateur.deployerCommandeServeur(ctx.guildeId, commande);
+
+    /** @param {string} nom */
+    ctx.retirerCommandeServeur = (nom) =>
+        adaptateur.retirerCommandeServeur(ctx.guildeId, nom);
+
     return ctx;
 }
 
@@ -929,11 +989,6 @@ function creerContextePanneau(interaction, { adaptateur, panneau, cle }) {
         nom: panneau,
         cle,
         messageId: interaction.message?.id ?? null,
-        // TRANSITION : `bot/utils/errors.js` lit encore `panneau.prefixe` pour
-        // nommer la source d'un incident. Alias conservé le temps que ce fichier
-        // passe à `nom` — le retirer maintenant ferait retomber la ligne de
-        // journal sur « inconnu », sans que rien ne le signale.
-        prefixe: panneau,
     };
     return ctx;
 }
@@ -962,6 +1017,7 @@ function creerContexteCompletion(interaction, { adaptateur, descripteur }) {
 
 module.exports = {
     creerContexteCommande,
+    exigerNomPanneau,
     creerContextePanneau,
     creerContexteCompletion,
     creerNoyauContexte,

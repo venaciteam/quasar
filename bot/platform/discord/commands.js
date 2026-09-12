@@ -4,8 +4,11 @@
 //  Deux responsabilités :
 //    1. dériver un `SlashCommandBuilder` d'un descripteur neutre, à l'identique
 //       de ce que produisaient les builders écrits à la main ;
-//    2. charger bot/commands/ en acceptant LES DEUX formats — descripteur
-//       neutre et module discord.js historique — pendant la migration.
+//    2. charger bot/commands/ — descripteurs neutres EXCLUSIVEMENT. Le format
+//       historique `{ data, execute }` a été accepté le temps des lots 1 à 5 ;
+//       il est désormais REFUSÉ, avec un message qui nomme le fichier et dit
+//       quoi faire. L'accepter encore laisserait une commande Discord-only
+//       passer inaperçue jusqu'au premier démarrage en mode Fluxer.
 //
 //  Ce chargeur est le seul du projet à parcourir bot/commands/ : `bot/index.js`
 //  (exécution) et `./deploy.js` (déploiement) en avaient chacun
@@ -133,8 +136,10 @@ function construireSlashCommand(descripteur) {
  * @property {Function} [execute]    (interaction) => Promise<void>
  * @property {Function} [autocomplete]
  * @property {string}   fichier      nom du fichier d'origine, pour les journaux
- * @property {boolean}  neutre       true si issue d'un descripteur du registre
- * @property {object}   [descripteur]
+ * @property {boolean}  neutre       toujours true — la clé survit parce que
+ *   `deploy.js` et les tests la lisent, et parce qu'elle dit explicitement que
+ *   l'entrée vient du registre et non d'un builder écrit à la main.
+ * @property {object}   descripteur
  */
 
 /** Construit l'entrée d'un descripteur neutre. */
@@ -184,21 +189,27 @@ function entreeDepuisDescripteur(descripteur, fichier, adaptateur) {
     return entree;
 }
 
-/** Construit l'entrée d'un module discord.js historique. */
-function entreeDepuisModuleHistorique(mod, fichier) {
-    return {
-        nom: mod.data.name,
-        data: mod.data,
-        execute: typeof mod.execute === 'function' ? mod.execute.bind(mod) : undefined,
-        autocomplete: typeof mod.autocomplete === 'function' ? mod.autocomplete.bind(mod) : undefined,
-        fichier,
-        neutre: false,
-    };
+/**
+ * Refus d'un module resté au format historique.
+ *
+ * Nomme le fichier ET la correction : un « commande ignorée » anonyme
+ * enverrait chercher le défaut dans le chargeur, et un simple `continue`
+ * silencieux ferait disparaître une commande du bot sans un mot.
+ */
+function refuserModuleHistorique(nom, fichier) {
+    return new Error(
+        `bot/commands/${fichier} : la commande « ${nom} » est au format historique `
+        + '`{ data: SlashCommandBuilder, execute(interaction) }`, que le chargeur n\'accepte plus. '
+        + 'Décrivez-la avec `definirCommande({ nom, description, permission | accesParDefaut, options, executer(ctx) })` '
+        + '(bot/platform/commands.js) : c\'est le descripteur que les deux plateformes dérivent.'
+    );
 }
 
 /**
  * Convertit un objet exporté par un fichier de bot/commands/ en entrée, ou rend
  * `null` si ce n'en est pas une.
+ *
+ * @throws {Error} si la valeur est une commande au format historique.
  */
 function entreeDepuisExport(valeur, fichier, adaptateur) {
     if (estDescripteurNeutre(valeur)) {
@@ -209,7 +220,12 @@ function entreeDepuisExport(valeur, fichier, adaptateur) {
         if (!commandeDisponible(valeur, NOM_PLATEFORME)) return null;
         return entreeDepuisDescripteur(valeur, fichier, adaptateur);
     }
-    if (valeur?.data?.name) return entreeDepuisModuleHistorique(valeur, fichier);
+    // Le format historique se reconnaît à son builder. On LÈVE plutôt que de
+    // rendre `null` : rendre `null` ici, c'est une commande qui disparaît du
+    // bot et du déploiement sans erreur ni journal.
+    if (typeof valeur?.data?.name === 'string' && typeof valeur?.execute === 'function') {
+        throw refuserModuleHistorique(valeur.data.name, fichier);
+    }
     return null;
 }
 

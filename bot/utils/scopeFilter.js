@@ -48,9 +48,10 @@ function readIdList(raw) {
  * Identifiants de rôles d'un membre.
  *
  * Le tableau d'identifiants est la forme du contrat neutre (`membre.roles`,
- * bot/platform/discord/context.js) et celle du membre brut de l'API. Le
- * gestionnaire à cache est la forme discord.js, encore servie par les modules
- * pas migrés.
+ * bot/platform/discord/context.js) et celle du membre brut de l'API. La forme
+ * discord.js — un gestionnaire à cache — n'a plus d'appelant : les deux seuls,
+ * `bot/utils/warnEscalation.js` et `bot/events/messageCreate.js`, passent
+ * désormais un membre normalisé.
  *
  * @returns {string[] | null} null = rôles non déterminables.
  */
@@ -58,8 +59,6 @@ function memberRoleIds(member) {
     if (!member) return null;
     const roles = member.roles;
     if (Array.isArray(roles)) return roles.map(String);
-    // TRANSITION : format historique, à retirer au lot de consolidation
-    if (roles?.cache) return [...roles.cache.keys()].map(String);
     return null;
 }
 

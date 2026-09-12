@@ -5,9 +5,11 @@
 //  (cf. `bot/platform/erreurs.js`). Même rôle que `discord/permissions.js` et
 //  `discord/channels.js` : la plateforme parle son dialecte, la couche traduit.
 //
-//  ⚠️ `err.code` n'est JAMAIS modifié. Le code pas encore migré le lit toujours
-//  — `punishments.js` teste encore `err.code === 10026` sur sa voie historique —
-//  et l'écraser casserait la moitié du dépôt d'un coup.
+//  ⚠️ `err.code` n'est JAMAIS modifié, seulement DOUBLÉ par `codeNeutre`. Deux
+//  raisons : le numéro reste la seule trace exploitable dans un journal
+//  (`breach/notify.js` le stocke tel quel), et une contrainte propre à Discord
+//  comme 30035 — limite de bannissements du serveur — n'a aucun équivalent
+//  neutre. L'écraser ferait disparaître les deux.
 // ═══════════════════════════════════════════════════════════════
 
 const { CODES_NEUTRES, estCodeNeutre } = require('../erreurs');

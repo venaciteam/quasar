@@ -5,13 +5,16 @@
 
 const { getDb } = require('../../../api/services/database');
 const { buildMentionPayload, hasMentions } = require('../../../api/services/mentions');
-const { buildDiscordEmbed } = require('../../commands/embed');
+const { construireEmbedEnregistre } = require('../../commands/embed');
 
 const DEFAULT_TIMEZONE = 'Europe/Paris';
 const TICK_MS = 60_000;
 
 let tickHandle = null;
-let clientRef = null;
+// Adaptateur de plateforme, posé par `start()`. Nommé `plateformeRef` et non
+// `clientRef` depuis la consolidation : ce module ne touche plus le client
+// natif, il poste par le client REST normalisé.
+let plateformeRef = null;
 
 // Verrou de ré-entrance. Le tick est de 60 s, mais un lot de rappels réglés à la
 // même heure part en série : sous limitation de débit Discord, un tour peut
@@ -162,20 +165,30 @@ function computeNextRun(row, fromMs = Date.now(), timezone = DEFAULT_TIMEZONE) {
 
 // ─── Envoi d'un message programmé ─────────────────────────────
 
-async function sendScheduledMessage(row, client = clientRef) {
-    const guild = client.guilds.cache.get(row.guild_id);
-    if (!guild) throw new Error(`guild ${row.guild_id} introuvable`);
-    const channel = guild.channels.cache.get(row.channel_id);
-    if (!channel || typeof channel.isTextBased !== 'function' || !channel.isTextBased()) {
-        throw new Error(`channel ${row.channel_id} introuvable ou non textuel`);
-    }
+/**
+ * Poste un rappel programmé, par le client REST normalisé.
+ *
+ * ⚠️ Le contrôle « salon textuel » a disparu, et c'est volontaire : il passait
+ * par `channel.isTextBased()`, une question qu'aucun nom canonique ne pose sans
+ * perte — les fils et les salons d'annonce, qui fonctionnent aujourd'hui,
+ * n'ont pas de type canonique et seraient refusés. Un salon inadapté est
+ * désormais refusé par la plateforme elle-même, et l'erreur est journalisée
+ * comme n'importe quel autre échec d'envoi. Le contrôle d'existence, lui, est
+ * conservé : `obtenirCanal` rend `null` quand le salon n'existe plus.
+ *
+ * @param {object} row
+ * @param {object} [plateforme] adaptateur ; celui de `start()` par défaut
+ */
+async function sendScheduledMessage(row, plateforme = plateformeRef) {
+    const canal = await plateforme.api.obtenirCanal(row.channel_id);
+    if (!canal) throw new Error(`channel ${row.channel_id} introuvable`);
 
     // Un embed sauvegardé peut lui aussi porter des mentions (cf. builder du
     // dashboard). Précédence explicite : les mentions du rappel gagnent ; on ne
     // retombe sur celles de l'embed que si le rappel n'en définit aucune. Sans
     // cette règle, les deux configurations s'additionneraient = double ping.
     let mentionSource = row;
-    let discordEmbed = null;
+    let embedNeutre = null;
 
     if (row.content_type === 'embed' && row.embed_id) {
         const db = getDb();
@@ -186,23 +199,23 @@ async function sendScheduledMessage(row, client = clientRef) {
         let embedData;
         try { embedData = JSON.parse(embedRow.data); }
         catch { throw new Error(`embed ${row.embed_id} données invalides`); }
-        discordEmbed = buildDiscordEmbed(embedData);
+        embedNeutre = construireEmbedEnregistre(embedData);
         if (!hasMentions(row)) mentionSource = embedRow;
     }
 
     const { content: mentionsStr, allowedMentions } = buildMentionPayload(mentionSource);
-    const payload = { allowedMentions };
+    const corps = { mentionsAutorisees: allowedMentions };
 
-    if (discordEmbed) {
-        payload.embeds = [discordEmbed];
-        if (mentionsStr) payload.content = mentionsStr;
+    if (embedNeutre) {
+        corps.embeds = [embedNeutre];
+        if (mentionsStr) corps.contenu = mentionsStr;
     } else {
         const text = row.content_text || '';
-        payload.content = mentionsStr ? `${mentionsStr}\n${text}`.trim() : text;
-        if (!payload.content) throw new Error('contenu vide');
+        corps.contenu = mentionsStr ? `${mentionsStr}\n${text}`.trim() : text;
+        if (!corps.contenu) throw new Error('contenu vide');
     }
 
-    await channel.send(payload);
+    await plateforme.api.envoyerMessage(row.channel_id, corps);
 }
 
 // ─── Tick ─────────────────────────────────────────────────────
@@ -212,8 +225,8 @@ async function sendScheduledMessage(row, client = clientRef) {
  * @returns {Promise<{ claimed:number, sent:number, failed:number, reentrant?:boolean }>}
  *          — compte rendu du tour, utile aux tests et à un déclenchement manuel.
  */
-async function runDueMessages(client = clientRef) {
-    if (!client) return { claimed: 0, sent: 0, failed: 0 };
+async function runDueMessages(plateforme = plateformeRef) {
+    if (!plateforme) return { claimed: 0, sent: 0, failed: 0 };
 
     // Verrou de ré-entrance : si le tour précédent envoie encore (série longue,
     // limitation de débit), ne pas relire la file en parallèle. Le tour en cours
@@ -225,11 +238,13 @@ async function runDueMessages(client = clientRef) {
     let sent = 0;
     let failed = 0;
     try {
-        // Garde-fou repris de breach/retention : un cache de serveurs vide, c'est
-        // une connexion incomplète, pas un bot sans serveur. L'échéance étant
-        // désormais avancée AVANT l'envoi, traiter la file dans cet état
-        // consommerait des rappels sans rien envoyer.
-        if (!client?.guilds?.cache || client.guilds.cache.size === 0) return { claimed, sent, failed };
+        // Garde-fou : tant que l'adaptateur ne connaît pas l'identité du bot, la
+        // connexion n'est pas faite. L'échéance étant avancée AVANT l'envoi,
+        // traiter la file dans cet état consommerait des rappels sans rien
+        // envoyer. C'est le même signal que le balayeur de bannissements
+        // temporaires — et il ne confond pas, lui, « pas connecté » et « sur
+        // aucun serveur ».
+        if (!plateforme.moi?.id) return { claimed, sent, failed };
 
         const db = getDb();
         const now = Date.now();
@@ -298,7 +313,7 @@ async function runDueMessages(client = clientRef) {
             // `last_run` marque la tentative, pas le succès : le rappel a bien été
             // consommé pour ce tour, que l'envoi aboutisse ou non.
             try {
-                await sendScheduledMessage(row, client);
+                await sendScheduledMessage(row, plateforme);
                 sent++;
                 console.log(`[Quasar Planificateur] Rappel envoyé id=${row.id} guild=${row.guild_id} channel=${row.channel_id}`);
             } catch (err) {
@@ -319,8 +334,9 @@ async function runDueMessages(client = clientRef) {
 
 // ─── Lifecycle ────────────────────────────────────────────────
 
-function start(client) {
-    clientRef = client;
+/** @param {object} plateforme adaptateur de plateforme (bot/platform/index.js) */
+function start(plateforme) {
+    plateformeRef = plateforme;
     const db = getDb();
 
     // Recalcul next_run au boot pour tous les rappels enabled sans next_run
@@ -358,7 +374,7 @@ function start(client) {
 function stop() {
     if (tickHandle) clearInterval(tickHandle);
     tickHandle = null;
-    clientRef = null;
+    plateformeRef = null;
 }
 
 module.exports = {

@@ -1089,27 +1089,43 @@ test('describeError raisonne sur le code NEUTRE, pas sur le numéro Discord', ()
     }));
 });
 
-test('describeError garde les phrases d\'origine pour une erreur NON marquée', async () => {
-    // TRANSITION : antiraid, automod et honeypot passent encore une `Guild`
-    // discord.js, donc lèvent des erreurs brutes, jamais marquées par `api.*`.
-    // Sans le repli sur le numéro, leurs échecs ressortiraient en anglais.
+test('une portée non neutre ne sanctionne rien, et le dit', async () => {
+    // La voie `guild:` de `applyPunishments` a été retirée à la consolidation :
+    // anti-raid, AutoMod et salon piège passent tous une portée. Une `Guild`
+    // discord.js n'en est pas une — elle n'a pas d'`api` — et l'appel doit
+    // échouer en le disant, jamais partir à l'aveugle sur un serveur deviné.
     const { applyPunishments } = require('../bot/utils/punishments');
-    const brute = Object.assign(new Error('Missing Permissions'), { code: 50013 });
 
     const [resultat] = await applyPunishments([{ action: 'kick' }], {
-        guild: {
+        portee: {
             id: GUILDE,
             ownerId: PROPRIETAIRE,
             client: { user: { id: BOT } },
             channels: { cache: new Map() },
             members: { me: { permissions: { has: () => true } } },
         },
-        member: { id: CIBLE, kickable: true, kick: async () => { throw brute; } },
+        member: { id: CIBLE },
         reason: 'test',
         source: 'automod',
         moderatorId: BOT,
     });
-    assert.equal(resultat.error, 'Permission manquante côté bot.');
+    assert.deepEqual(resultat, { action: 'kick', ok: false, error: 'Serveur indisponible.' });
+});
+
+test('describeError traduit un code NEUTRE, et retombe sur le message sinon', () => {
+    // La table des numéros Discord en repli est tombée avec la voie historique :
+    // toutes les écritures passent désormais par `api.*`, donc toutes leurs
+    // erreurs portent un `codeNeutre`. Seul 30035 garde son numéro — la limite
+    // de bannissements d'un serveur n'a pas d'équivalent neutre.
+    const { describeError } = require('../bot/utils/punishments');
+    assert.equal(describeError(Object.assign(new Error('x'), { codeNeutre: 'permission' })),
+        'Permission manquante côté bot.');
+    assert.equal(describeError(Object.assign(new Error('x'), { codeNeutre: 'introuvable' })),
+        'La cible n\'existe plus : membre parti, message ou salon supprimé.');
+    assert.equal(describeError(Object.assign(new Error('x'), { code: 30035 })),
+        'Limite de bannissements atteinte pour ce serveur.');
+    // Erreur non marquée : son message, jamais un « Erreur inconnue » muet.
+    assert.equal(describeError(new Error('Panne réseau')), 'Panne réseau');
 });
 
 test('la voie neutre refuse une sanction AVANT de la tenter, comme la voie historique', async () => {
@@ -1220,21 +1236,26 @@ test('un membre déjà parti reste bannissable : pas de contrôle de hiérarchie
     assert.equal(bannis.length, 1);
 });
 
-test('la voie historique garde ses propres pré-contrôles, inchangés', async () => {
-    // `moderatable` / `kickable` / `bannable` restent la source de vérité tant
-    // qu'anti-raid, automod et honeypot passent une `Guild` discord.js.
+test('les pré-contrôles rendent les MÊMES phrases qu\'avant migration', async () => {
+    // `moderatable` / `kickable` / `bannable` étaient la source de vérité de la
+    // voie historique, retirée à la consolidation. Le pré-contrôle neutre
+    // (`api.verifierMembreSanctionnable`) doit rendre les phrases à l'identique :
+    // ce sont elles que lit une personne qui modère, et elles nomment la
+    // correction à faire.
     const { applyPunishments } = require('../bot/utils/punishments');
-    const guild = {
-        id: GUILDE,
-        ownerId: PROPRIETAIRE,
-        client: { user: { id: BOT } },
-        channels: { cache: new Map() },
-        members: { me: { permissions: { has: () => true } } },
+    const portee = {
+        guildeId: GUILDE,
+        moi: { id: BOT },
+        api: {
+            async verifierMembreSanctionnable() { return 'hierarchie'; },
+            async envoyerMessage() { return { id: '1' }; },
+            async obtenirMembre(g, m) { return { id: m, aPermission: () => true }; },
+        },
     };
 
     const [expulsion] = await applyPunishments([{ action: 'kick' }], {
-        guild,
-        member: { id: CIBLE, kickable: false },
+        portee,
+        member: { id: CIBLE },
         reason: 'test',
         source: 'automod',
         moderatorId: BOT,
@@ -1242,8 +1263,8 @@ test('la voie historique garde ses propres pré-contrôles, inchangés', async (
     assert.equal(expulsion.error, 'Hiérarchie des rôles ou permission « Expulser des membres » manquante.');
 
     const [exclusion] = await applyPunishments([{ action: 'timeout', durationMs: 60000 }], {
-        guild,
-        member: { id: CIBLE, moderatable: false },
+        portee,
+        member: { id: CIBLE },
         reason: 'test',
         source: 'automod',
         moderatorId: BOT,

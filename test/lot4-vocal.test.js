@@ -878,11 +878,12 @@ test('les boutons du panneau sont ceux d\'avant migration, dans le même ordre',
         REFERENCE,
     );
 
-    // ⚠️ SEULE différence visible du panneau : le découpage en rangées. Le
-    // panneau historique était écrit 4 + 3 ; `rendreChoix` remplit cinq boutons
-    // par rangée, d'où 5 + 2. Assertion volontaire : cette bascule doit être
-    // un choix relu, pas une dérive constatée en production.
-    assert.deepEqual(rangees.map(r => r.components.length), [5, 2]);
+    // Découpage en rangées : 4 + 3, celui du panneau d'avant migration. Il a
+    // valu 5 + 2 le temps que le contrat n'ait pas de marqueur de rangée ; le
+    // marqueur `nouvelleRangee` sur « Autoriser » l'a restitué à la
+    // consolidation. Les quatre réglages du salon d'un côté, les trois actions
+    // de l'autre.
+    assert.deepEqual(rangees.map(r => r.components.length), [4, 3]);
 
     // Chaque bouton a un handler, et chaque handler un bouton.
     assert.deepEqual(
@@ -1308,24 +1309,31 @@ test('les rôles vocaux suivent les déplacements', async () => {
     assert.deepEqual(appels, [['ajouterRole', G, MEMBRE, ROLE]]);
 });
 
-// ── Le pont vers le routage historique ──────────────────────────────────────
+// ── Ce qui a disparu avec le routage historique ─────────────────────────────
 
-test('le préfixe historique tv_ garde un point d\'entrée, sans discord.js', () => {
-    // `bot/index.js` déstructure `handleTempVoiceInteraction` au chargement :
-    // supprimer l'export ferait échouer le DÉMARRAGE du bot, pas seulement le
-    // panneau. Ce fichier est interdit au lot, le routage `tv_` y reste jusqu'à
-    // la consolidation, et cette fonction doit donc exister d'ici là.
+test('le pont vers le préfixe historique tv_ a bien disparu', () => {
+    // `handleTempVoiceInteraction` répondait « ce panneau a été remplacé » aux
+    // boutons `tv_*` posés avant la migration. Le routage par préfixes de
+    // `bot/index.js` est tombé à la consolidation, et ce pont avec lui : le
+    // laisser aurait été du code sans appelant. Conséquence assumée et portée
+    // par la note de version : un panneau TempVoice antérieur affiche
+    // « L'interaction a échoué ». Sa durée de vie est celle de son salon.
     const mod = require('../bot/interactions/tempvoice');
-    assert.equal(typeof mod.handleTempVoiceInteraction, 'function');
+    assert.equal(mod.handleTempVoiceInteraction, undefined);
 
-    // Et elle n'a plus le droit de construire quoi que ce soit : plus un seul
-    // composant discord.js dans ce fichier.
     const fs = require('node:fs');
     const path = require('node:path');
     const source = fs.readFileSync(path.join(__dirname, '..', 'bot', 'interactions', 'tempvoice.js'), 'utf8');
     assert.equal(/require\(['"]discord\.js['"]\)/.test(source), false);
     for (const constructeur of ['ModalBuilder', 'ActionRowBuilder', 'UserSelectMenuBuilder', 'ButtonBuilder']) {
         assert.equal(source.includes(constructeur), false, `${constructeur} subsiste`);
+    }
+
+    // Et `bot/index.js` ne route plus aucun préfixe historique.
+    const bootstrap = fs.readFileSync(path.join(__dirname, '..', 'bot', 'index.js'), 'utf8');
+    for (const prefixe of ['tv_', 'ticket_', 'defer_', 'signaler_', 'mesdonnees_']) {
+        assert.equal(bootstrap.includes(`startsWith('${prefixe}')`), false,
+            `bot/index.js route encore le préfixe ${prefixe}`);
     }
 });
 

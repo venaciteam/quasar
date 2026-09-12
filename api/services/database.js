@@ -318,6 +318,18 @@ function initTables() {
             created_at INTEGER DEFAULT (unixepoch())
         );
 
+        -- Rôles vocaux : un rôle attribué à l'entrée dans un salon vocal, retiré
+        -- à la sortie. La table était créée À LA VOLÉE par /voicerole, à chaque
+        -- exécution de la commande, et par la route du dashboard. Deux
+        -- déclarations pour une même table, et un schéma qui ne la connaissait
+        -- pas : elle est déclarée ICI depuis la consolidation, avec les autres.
+        CREATE TABLE IF NOT EXISTS voice_roles (
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            PRIMARY KEY (guild_id, channel_id)
+        );
+
         -- Présence du bot (config globale, une seule ligne)
         CREATE TABLE IF NOT EXISTS bot_presence (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -377,6 +389,7 @@ function initTables() {
         CREATE INDEX IF NOT EXISTS idx_tickets_guild ON tickets(guild_id);
         CREATE INDEX IF NOT EXISTS idx_tickets_guild_closed ON tickets(guild_id, closed_at);
         CREATE INDEX IF NOT EXISTS idx_tempvoice_active_guild ON tempvoice_active(guild_id);
+        CREATE INDEX IF NOT EXISTS idx_voice_roles_guild ON voice_roles(guild_id);
         CREATE INDEX IF NOT EXISTS idx_tempvoice_prefs_updated ON tempvoice_preferences(updated_at);
         CREATE INDEX IF NOT EXISTS idx_scheduled_guild ON scheduled_messages(guild_id);
         CREATE INDEX IF NOT EXISTS idx_scheduled_next_run ON scheduled_messages(enabled, next_run);

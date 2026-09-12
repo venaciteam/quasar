@@ -75,10 +75,10 @@ let _reservedNames = null;
  * ils ne réservent donc pas leur nom — et prise en charge des fichiers à
  * exports multiples (ex : musiccontrols.js).
  *
- * Le nom NEUTRE (`mod.nom`) est lu en premier, `mod.data.name` en repli pour les
- * commandes pas encore migrées. Le pont `data.name` posé par `definirCommande`
- * n'existait que pour cette fonction : il devient inutile le jour où la dernière
- * commande est migrée, et sa suppression appartient à la consolidation.
+ * Le nom se lit sur le descripteur (`mod.nom`). Le repli sur `mod.data.name`, et
+ * le pont `data` que `definirCommande` posait pour lui, ont été retirés à la
+ * consolidation : les 26 commandes actives sont des descripteurs neutres, et le
+ * chargeur refuse désormais tout autre format.
  *
  * Un fichier illisible n'interrompt pas le calcul : perdre une entrée de la
  * liste ne coûte au pire qu'une commande personnalisée inerte, alors qu'une
@@ -87,11 +87,8 @@ let _reservedNames = null;
 function reservedCommandNames() {
     if (_reservedNames) return _reservedNames;
 
-    // Le nom d'une commande, quel que soit le format du module qui la porte.
-    const nomDe = (valeur) => (typeof valeur?.nom === 'string' && valeur.nom)
-        ? valeur.nom
-        // TRANSITION : format historique, à retirer au lot de consolidation
-        : (typeof valeur?.data?.name === 'string' ? valeur.data.name : null);
+    // Le nom d'une commande, tel que son descripteur le déclare.
+    const nomDe = (valeur) => ((typeof valeur?.nom === 'string' && valeur.nom) ? valeur.nom : null);
 
     const noms = new Set();
     for (const fichier of fs.readdirSync(__dirname).filter(f => f.endsWith('.js') && !DISABLED_COMMAND_FILES.includes(f))) {
@@ -445,8 +442,9 @@ module.exports = definirCommande({
                 db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
                     .run(ctx.guildeId, nom, reponse || null, embedId, modeCree, accesRoleId);
 
-                // Déployer la commande slash
-                await deployCustomCommand(ctx.guildeId, nom, reponse);
+                // Déployer la commande slash, par l'adaptateur actif — jamais
+                // par un client REST monté ici.
+                await enregistrementNeutre(ctx).deployer(ctx.guildeId, nom, reponse);
 
                 await ctx.repondre(embed({
                     titre: '✅ Commande créée',
@@ -514,7 +512,7 @@ module.exports = definirCommande({
                 let avertissement = null;
                 if (renommage) {
                     ({ warning: avertissement } = await syncCustomCommandRename(
-                        ctx.guildeId, nom, nomFinal, apres?.response
+                        ctx.guildeId, nom, nomFinal, apres?.response, enregistrementNeutre(ctx),
                     ));
                 }
 
@@ -539,8 +537,8 @@ module.exports = definirCommande({
                     action: 'Consultez la liste avec `/cmd list`.',
                 });
 
-            // Retirer la commande slash de la guild
-            await removeCustomCommand(ctx.guildeId, nom);
+            // Retirer la commande slash de la guild, par l'adaptateur actif.
+            await enregistrementNeutre(ctx).retirer(ctx.guildeId, nom);
 
             await ctx.repondre(`🗑️ Commande \`/${nom}\` supprimée.`, { ephemere: true });
 
@@ -574,23 +572,52 @@ function versErreurNeutre({ title, cause, action }) {
     return { titre: title, cause, action };
 }
 
-// ⚠️ Les quatre fonctions qui suivent enregistrent et retirent une commande
-// d'application auprès de Discord. Le contrat les porte désormais —
-// `adaptateur.deployerCommandeServeur()` et `adaptateur.retirerCommandeServeur()`,
-// inertes là où `capacites.interactions` est faux — mais elles restent
-// INATTEIGNABLES d'ici, et ce n'est pas un oubli de migration :
+// ═══════════════════════════════════════════════════════════════
+//  Enregistrement d'une commande personnalisée auprès de la plateforme
 //
-//   • le contexte d'une commande n'expose ni l'adaptateur ni ces deux méthodes ;
-//   • `api/routes/customcmds.js`, qui appelle les mêmes fonctions, ne reçoit ni
-//     adaptateur ni client — `createApi()` ne reçoit que le client natif.
+//  DEUX VOIES, et c'est temporaire :
 //
-// `resolvePlatform()` n'est pas une issue : il INSTANCIE un adaptateur, donc un
-// second client discord.js. Elles gardent donc leur client REST monté sur les
-// variables d'environnement, seule voie qui fonctionne des deux côtés. Les deux
-// signatures manquantes sont consignées au compte-rendu du lot 3.
+//   • depuis la COMMANDE (`/cmd create|edit|delete`) — `ctx.deployerCommandeServeur`
+//     et `ctx.retirerCommandeServeur`, qui délèguent à l'adaptateur actif. Rien
+//     n'est monté, rien n'est authentifié une seconde fois, et l'appel est
+//     inerte là où `capacites.interactions` est faux. C'est la voie normale ;
+//     `enregistrementNeutre(ctx)` ci-dessous la construit.
+//
+//   • depuis le DASHBOARD (`api/routes/customcmds.js`) — les quatre fonctions
+//     qui suivent, avec leur propre client REST monté sur les variables
+//     d'environnement. La route ne reçoit ni adaptateur ni client (`createApi()`
+//     ne reçoit que le client natif), et `resolvePlatform()` n'est pas une
+//     issue : il INSTANCIE un adaptateur, donc un second client discord.js.
+//
+//  ⚠️ TRANSITION : la seconde voie est RETENUE par `api/routes/customcmds.js`.
+//  Elle tombe au lot 7, quand la route recevra l'adaptateur — et avec elle les
+//  trois `require('discord.js')` différés de ce fichier, les derniers de
+//  bot/commands/ hors famille musique.
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Voie d'enregistrement portée par le contexte neutre d'une commande.
+ *
+ * La description est construite par `buildCustomCommandDescription()`, la même
+ * fonction qu'utilise le redéploiement au démarrage : sans ça, une commande
+ * changerait de libellé au premier reboot suivant sa création.
+ *
+ * @param {object} ctx contexte de commande
+ * @returns {{deployer: Function, retirer: Function}} même signature que
+ *   `deployCustomCommand` / `removeCustomCommand`, pour être interchangeables.
+ */
+function enregistrementNeutre(ctx) {
+    return {
+        deployer: (guildId, name, response) => ctx.deployerCommandeServeur({
+            nom: name,
+            description: buildCustomCommandDescription({ name, response }),
+        }),
+        retirer: (guildId, name) => ctx.retirerCommandeServeur(name),
+    };
+}
 
 /** Client REST Discord, construit à la demande (le token n'est lu qu'à l'appel). */
-// TRANSITION : format historique, à retirer au lot de consolidation
+// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
 function restClient() {
     const { REST } = require('discord.js');
     return new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -607,6 +634,7 @@ function restClient() {
  * @returns {Promise<boolean>} false si Discord a refusé — l'appelant décide quoi
  *          en dire, il n'y a rien à annuler côté base (cf. syncCustomCommandRename).
  */
+// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
 async function deployCustomCommand(guildId, name, response) {
     const { Routes } = require('discord.js');
 
@@ -626,6 +654,7 @@ async function deployCustomCommand(guildId, name, response) {
  * @returns {Promise<boolean>} true si la commande n'est plus enregistrée (y
  *          compris quand elle n'y était déjà pas).
  */
+// TRANSITION : format historique, retenu par api/routes/customcmds.js (lot 7)
 async function removeCustomCommand(guildId, name) {
     const { Routes } = require('discord.js');
 
@@ -669,13 +698,21 @@ async function removeCustomCommand(guildId, name) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
+ * @param {{deployer: Function, retirer: Function}} [enregistrement] voie
+ *   d'enregistrement. Par défaut le client REST monté sur l'environnement —
+ *   celle de la route du dashboard ; la commande passe celle de son contexte
+ *   neutre (`enregistrementNeutre`). Les deux ont la même signature, et cette
+ *   fonction n'a donc pas à savoir laquelle elle emprunte.
  * @returns {Promise<{warning:string|null}>} avertissement à afficher, ou null.
  */
-async function syncCustomCommandRename(guildId, oldName, newName, response) {
-    const posee = await deployCustomCommand(guildId, newName, response);
+async function syncCustomCommandRename(guildId, oldName, newName, response, enregistrement = null) {
+    const deployer = enregistrement?.deployer || deployCustomCommand;
+    const retirer = enregistrement?.retirer || removeCustomCommand;
+
+    const posee = await deployer(guildId, newName, response);
     // Tentée quoi qu'il arrive : l'ancienne entrée ne correspond plus à aucune
     // ligne en base, la laisser sur le serveur ne ferait qu'égarer les membres.
-    const retiree = await removeCustomCommand(guildId, oldName);
+    const retiree = await retirer(guildId, oldName);
 
     if (posee && retiree) return { warning: null };
     return {
@@ -691,6 +728,7 @@ async function syncCustomCommandRename(guildId, oldName, newName, response) {
 Object.assign(module.exports, {
     normalizeCustomCommandName,
     reservedCommandNames,
+    enregistrementNeutre,
     validateCustomCommandCreate,
     validateCustomCommandRename,
     updateCustomCommand,
