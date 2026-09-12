@@ -33,9 +33,35 @@
 //      doit sortir sur une lecture de cache mémoire, sans requête.
 //   3. NE JAMAIS AGIR SUR UNE CONFIGURATION QU'ON NE COMPREND PAS. Seuil hors
 //      bornes, sanctions illisibles : j'alerte et je m'abstiens.
+//
+//  ─── Migration multiplateforme : PARTIELLE, et ce qui la bloque ────────────
+//
+//  Les embeds sont neutres et `discord.js` n'est plus importé ici. Le module
+//  reste pourtant nourri d'objets discord.js (`member`, `member.guild`), et
+//  `handleMemberJoin` GARDE sa signature historique, pour trois manques du
+//  contrat neutre qui ne se contournent pas :
+//
+//   1. DATE DE CRÉATION DU COMPTE. `handleAccountAge` lit
+//      `member.user.createdTimestamp`. Le membre normalisé porte `rejointLe`
+//      (arrivée sur le serveur) mais pas la création du compte, et la déduire du
+//      snowflake exigerait l'époque de la plateforme — donc de connaître la
+//      plateforme. Sans ce champ, la moitié « âge du compte » de l'anti-raid
+//      disparaît en silence.
+//   2. NOMBRE DE MEMBRES. `sendWaveAlert` affiche `guild.memberCount`. La guilde
+//      normalisée ne le porte pas : l'alerte de vague perdrait ce repère.
+//   3. MODE PANIQUE. `panic.enterPanic` a besoin d'écritures de serveur que le
+//      client REST normalisé n'expose pas du tout (voir l'en-tête de panic.js).
+//
+//  ⚠️ CONSÉQUENCE POUR LE LOT « ACCUEIL » : `bot/events/guildMemberAdd.js`
+//  appelle `handleMemberJoin(member)` avec un membre discord.js. Migrer cet
+//  événement en `membreRejoint` lui ferait passer un membre NORMALISÉ, qui n'a
+//  pas de `.guild` : `handleMemberJoin` sortirait alors sur `{ removed: false }`
+//  à chaque arrivée, sans erreur ni journal — l'anti-raid s'éteindrait en
+//  silence. Les deux migrations doivent être faites ENSEMBLE, une fois les trois
+//  manques ci-dessus comblés.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder } = require('discord.js');
+const { embed } = require('../../platform/embed');
 const { applyPunishments, sendAutomodLog, SOURCE_LABELS } = require('../../utils/punishments');
 const { getConfig, invalidateConfig, LIMITS } = require('./config');
 const { registerJoin, MAX_PUNISHED_PER_WAVE } = require('./window');
@@ -84,62 +110,63 @@ function describeResults(results) {
  * sans rien dire ne se distingue pas d'un module en panne.
  */
 async function sendWaveAlert(guild, config, { size, punishedCount, outcome, panicResult }) {
-    const fields = [
-        { name: 'Arrivées', value: `${size} en moins de ${config.windowSeconds} s`, inline: true },
-        { name: 'Déclencheur', value: SOURCE_LABELS[SOURCE], inline: true },
-        { name: 'Membres du serveur', value: `${guild.memberCount ?? '?'}`, inline: true },
+    const champs = [
+        { nom: 'Arrivées', valeur: `${size} en moins de ${config.windowSeconds} s`, enLigne: true },
+        { nom: 'Déclencheur', valeur: SOURCE_LABELS[SOURCE], enLigne: true },
+        // ⚠️ Manque du contrat : la guilde normalisée ne porte pas le nombre de
+        // membres. C'est l'une des trois raisons pour lesquelles ce module reçoit
+        // encore une guilde discord.js (cf. en-tête).
+        { nom: 'Membres du serveur', valeur: `${guild.memberCount ?? '?'}`, enLigne: true },
     ];
 
     if (config.alertOnly) {
-        fields.push({
-            name: 'Sanction',
-            value: 'Aucune : ce serveur est réglé en alerte seule.',
+        champs.push({
+            nom: 'Sanction',
+            valeur: 'Aucune : ce serveur est réglé en alerte seule.',
         });
     } else {
-        fields.push({
-            name: `Comptes traités (${punishedCount})`,
-            value: outcome || 'Aucune sanction appliquée.',
+        champs.push({
+            nom: `Comptes traités (${punishedCount})`,
+            valeur: outcome || 'Aucune sanction appliquée.',
         });
         if (size >= MAX_PUNISHED_PER_WAVE) {
-            fields.push({
-                name: 'Plafond atteint',
-                value: `Je sanctionne au plus ${MAX_PUNISHED_PER_WAVE} comptes par vague. `
+            champs.push({
+                nom: 'Plafond atteint',
+                valeur: `Je sanctionne au plus ${MAX_PUNISHED_PER_WAVE} comptes par vague. `
                     + 'Au-delà, c\'est la mise en pause des invitations qui coupe la vague à la source.',
             });
         }
     }
 
     if (panicResult?.ok) {
-        fields.push({ name: 'Mode panique', value: `Activé, levée automatique <t:${panicResult.expiresAt}:R>.` });
+        champs.push({ nom: 'Mode panique', valeur: `Activé, levée automatique <t:${panicResult.expiresAt}:R>.` });
     } else if (panicResult?.error) {
-        fields.push({ name: 'Mode panique', value: `❌ ${panicResult.error}` });
+        champs.push({ nom: 'Mode panique', valeur: `❌ ${panicResult.error}` });
     } else if (panicResult?.skipped === 'disabled') {
-        fields.push({ name: 'Mode panique', value: 'Désactivé sur ce serveur (durée réglée à 0).' });
+        champs.push({ nom: 'Mode panique', valeur: 'Désactivé sur ce serveur (durée réglée à 0).' });
     }
 
-    const embed = new EmbedBuilder()
-        .setTitle('🚨 Vague d\'arrivées détectée')
-        .setColor(0xe74c3c)
-        .addFields(fields)
-        .setTimestamp();
-
-    await sendAutomodLog(guild, embed, 'mod_ban', config.logChannelId);
+    await sendAutomodLog(guild, embed({
+        titre: '🚨 Vague d\'arrivées détectée',
+        couleur: 0xe74c3c,
+        champs,
+        horodatage: true,
+    }), 'mod_ban', config.logChannelId);
 }
 
 /** Alerte d'un compte trop récent, quand aucune sanction n'est configurée. */
 async function sendAccountAgeAlert(guild, config, member, ageHours) {
-    const embed = new EmbedBuilder()
-        .setTitle('⚠️ Compte trop récent')
-        .setColor(0xf1c40f)
-        .addFields(
-            { name: 'Membre', value: `<@${member.id}> (${member.id})`, inline: true },
-            { name: 'Déclencheur', value: SOURCE_LABELS[SOURCE], inline: true },
-            { name: 'Âge du compte', value: `${ageHours} h (minimum exigé : ${config.accountAgeHours} h)`, inline: true },
-            { name: 'Sanction', value: 'Aucune : ce serveur est réglé en alerte seule.' }
-        )
-        .setTimestamp();
-
-    await sendAutomodLog(guild, embed, 'mod_warn', config.logChannelId);
+    await sendAutomodLog(guild, embed({
+        titre: '⚠️ Compte trop récent',
+        couleur: 0xf1c40f,
+        champs: [
+            { nom: 'Membre', valeur: `<@${member.id}> (${member.id})`, enLigne: true },
+            { nom: 'Déclencheur', valeur: SOURCE_LABELS[SOURCE], enLigne: true },
+            { nom: 'Âge du compte', valeur: `${ageHours} h (minimum exigé : ${config.accountAgeHours} h)`, enLigne: true },
+            { nom: 'Sanction', valeur: 'Aucune : ce serveur est réglé en alerte seule.' },
+        ],
+        horodatage: true,
+    }), 'mod_warn', config.logChannelId);
 }
 
 // ─── Application ────────────────────────────────────────────────────────────

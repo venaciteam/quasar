@@ -26,6 +26,32 @@
 //  utiliser `warn` ici ferait sanctionner à nouveau, par un autre module, un
 //  message que Discord avait déjà bloqué. C'est exactement la double punition que
 //  l'architecture de ce module cherche à éviter.
+//
+//  ─── Migration multiplateforme : BLOQUÉE sur le payload ───────────────────
+//
+//  Cet événement doit devenir `definirEvenement({ nom: 'sanctionAutomatique',
+//  capaciteRequise: 'automod', executer(ctx, sanction) })` : c'est `capaciteRequise`
+//  qui le cantonne aux plateformes dotées d'un AutoMod, sans qu'une seule ligne
+//  n'ait à nommer Discord.
+//
+//  Il n'est pas converti parce que TROIS informations qu'il affiche ou enregistre
+//  sont absentes du payload normalisé (`normaliserSanction`, bot/platform/
+//  discord/events.js), qui rend `{ guildeId, membreId, regleId, action, contenu,
+//  canalId }` :
+//
+//    • `execution.ruleTriggerType` — le type de filtre. Sans lui, le champ
+//      « Filtre » et le motif écrit dans `sanctions.reason` tombent à
+//      « déclencheur inconnu » pour TOUTE règle non enregistrée dans Quasar ;
+//    • `execution.matchedKeyword` — le champ « Terme détecté » disparaîtrait ;
+//    • `execution.action.metadata.durationSeconds` — le champ « Durée » et la
+//      colonne `sanctions.duration` d'une exclusion temporaire disparaîtraient.
+//
+//  Trois régressions visibles dans le salon de logs : la conversion attend
+//  l'extension du payload. Signatures proposées au compte-rendu du lot 5b.
+//  Le reste est prêt : `ACTION_VIEW` peut se reclé sur
+//  `automodSync.ACTION_BY_DISCORD_TYPE`, qui évite d'importer
+//  `AutoModerationActionType` ici, et `automodSync` se chargera alors
+//  paresseusement, à l'appel, sous la garde de `ctx.capacites.automod`.
 // ═══════════════════════════════════════════════════════════════
 
 const { EmbedBuilder, Events, AutoModerationActionType } = require('discord.js');

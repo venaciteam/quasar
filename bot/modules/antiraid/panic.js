@@ -36,9 +36,37 @@
 //  ─── L'état d'origine est mémorisé ───
 //  Si les invitations étaient DÉJÀ en pause avant mon intervention, la levée ne
 //  les rouvre pas : ce n'était pas ma décision, ce n'est pas à moi de la défaire.
+//
+//  ─── Migration multiplateforme : NON MIGRÉ, et ce n'est pas un oubli ───────
+//
+//  Les embeds sont passés au format neutre, mais TOUT le reste de ce fichier
+//  reste discord.js, faute d'équivalent dans le contrat. Quatre opérations, pas
+//  une seule, n'ont aucune traduction dans le client REST normalisé :
+//
+//    • `guild.setIncidentActions({ invitesDisabledUntil })` — la mesure elle-même ;
+//    • `guild.disableInvites(bool)` — le repli ;
+//    • `guild.features` / `guild.incidentsData.invitesDisabledUntil` — l'état
+//      d'origine, sans lequel la levée rouvrirait des invitations que quelqu'un
+//      d'autre avait fermées ;
+//    • `client.guilds.cache` — l'énumération des serveurs du balayage, et son
+//      garde-fou « cache vide = connexion incomplète, pas un bot sans serveur ».
+//
+//  Le contrat n'expose AUCUNE écriture de serveur : `api.*` va du message au
+//  membre, jamais à la guilde. Ce n'est donc pas un champ qui manque, c'est une
+//  famille entière — et écrire ici un repli neutre qui échouerait proprement
+//  reviendrait à éteindre le mode panique sur Discord, en production.
+//
+//  ⚠️ La signature publique est en outre VERROUILLÉE hors de ce lot :
+//  `api/routes/antiraid.js` appelle `enterPanic(guild, …)` / `liftPanic(guild, …)`
+//  et `bot/index.js` appelle `startPanicSweeper(client)`. Ces deux fichiers
+//  n'appartiennent au périmètre d'aucun lot parallèle : changer la signature ici
+//  les casserait sans que personne n'ait le droit de les corriger.
+//
+//  Voir le compte-rendu du lot 5b pour les signatures proposées.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder, PermissionFlagsBits, GuildFeature } = require('discord.js');
+const { PermissionFlagsBits, GuildFeature } = require('discord.js');
+const { embed } = require('../../platform/embed');
 const { getDb } = require('../../../api/services/database');
 const { sendAutomodLog, formatDuration } = require('../../utils/punishments');
 
@@ -320,42 +348,40 @@ async function sendPanicLog(guild, opts) {
         durationSeconds, liftedBy, restoredNothing, logChannelId,
     } = opts;
 
-    const embed = new EmbedBuilder()
-        .setColor(entering ? 0xe74c3c : 0x2ecc71)
-        .setTitle(entering
-            ? (extended ? '🚨 Mode panique prolongé' : '🚨 Mode panique activé')
-            : '✅ Mode panique levé')
-        .setTimestamp();
-
-    if (entering) {
-        embed.addFields(
-            { name: 'Mesure', value: METHOD_LABELS[method] || method, inline: false },
-            { name: 'Durée', value: formatDuration(durationSeconds * 1000), inline: true },
-            { name: 'Levée automatique', value: `<t:${expiresAt}:R>`, inline: true },
+    const champs = entering
+        ? [
+            { nom: 'Mesure', valeur: METHOD_LABELS[method] || method, enLigne: false },
+            { nom: 'Durée', valeur: formatDuration(durationSeconds * 1000), enLigne: true },
+            { nom: 'Levée automatique', valeur: `<t:${expiresAt}:R>`, enLigne: true },
             {
-                name: 'Déclenchement',
-                value: triggeredBy && triggeredBy !== 'detection' ? `<@${triggeredBy}>` : 'Détection automatique',
-                inline: true,
+                nom: 'Déclenchement',
+                valeur: triggeredBy && triggeredBy !== 'detection' ? `<@${triggeredBy}>` : 'Détection automatique',
+                enLigne: true,
             },
-            { name: 'Motif', value: (reason || 'Vague d\'arrivées détectée').slice(0, 1024) }
-        );
-    } else {
-        embed.addFields(
+            { nom: 'Motif', valeur: (reason || 'Vague d\'arrivées détectée').slice(0, 1024) },
+        ]
+        : [
             {
-                name: 'Levée',
-                value: liftedBy ? `Manuelle, par <@${liftedBy}>` : 'Automatique, à l\'échéance',
-                inline: true,
+                nom: 'Levée',
+                valeur: liftedBy ? `Manuelle, par <@${liftedBy}>` : 'Automatique, à l\'échéance',
+                enLigne: true,
             },
             {
-                name: 'Invitations',
-                value: restoredNothing
+                nom: 'Invitations',
+                valeur: restoredNothing
                     ? 'Laissées en pause : elles l\'étaient déjà avant le mode panique.'
                     : 'Rouvertes.',
-            }
-        );
-    }
+            },
+        ];
 
-    await sendAutomodLog(guild, embed, 'mod_ban', logChannelId);
+    await sendAutomodLog(guild, embed({
+        couleur: entering ? 0xe74c3c : 0x2ecc71,
+        titre: entering
+            ? (extended ? '🚨 Mode panique prolongé' : '🚨 Mode panique activé')
+            : '✅ Mode panique levé',
+        champs,
+        horodatage: true,
+    }), 'mod_ban', logChannelId);
 }
 
 // ─── Balayage ───────────────────────────────────────────────────────────────
