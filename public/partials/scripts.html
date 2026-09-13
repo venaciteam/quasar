@@ -28,6 +28,8 @@
 <script src="/vnct-ds-guard.js?v=__VERSION__" defer></script>
 <script>
   (function () {
+    // DS non chargé : ni config ni délégation (l'écran de secours vnct-ds-guard.js prend le relais).
+    if (!window.VNCT) return;
     VNCT.config.serviceName = 'Quasar';
     VNCT.config.serviceVersion = '__VERSION__';
     // Backend des signalements = Sema. JAMAIS dev.vena.city (hôte mort qui
