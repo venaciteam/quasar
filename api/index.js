@@ -921,7 +921,7 @@ function createApi(adaptateur, mode = 'bot') {
     app.use('/api/guilds/:guildId', (req, res, next) => {
         const isErasure = req.path.includes('/erasure');
         if (!isErasure && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method) && isSuspended(req.params.guildId)) {
-            return res.status(403).json({ error: 'Serveur suspendu par la proprietaire : configuration en lecture seule.' });
+            return res.status(403).json({ error: 'Serveur suspendu par la propriétaire : configuration en lecture seule.' });
         }
         next();
     });
