@@ -167,7 +167,7 @@ function createBot({ plateforme = null } = {}) {
             if (interaction.isAutocomplete && interaction.isAutocomplete()) return; // pas de reply possible
             try {
                 await interaction.reply({
-                    content: 'Quasar est temporairement suspendu sur ce serveur par la proprietaire de l\'instance.',
+                    content: 'Quasar est temporairement suspendu sur ce serveur par la propriétaire de l\'instance.',
                     ephemeral: true,
                 });
             } catch {}
