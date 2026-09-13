@@ -54,7 +54,7 @@ async function loadEmbeds(container, guildId) {
                         <label style="font-size:.8rem;color:var(--text-secondary);margin-bottom:.3rem;display:block">Thumbnail (URL, petit coin haut droite)</label>
                         <input class="input" id="embed-thumbnail" placeholder="https://..." oninput="updatePreview()">
                     </div>
-                    <p style="font-size:.75rem;color:var(--text-muted)">💡 Astuce : poste une image dans Discord, clic droit → Copier le lien de l'image.</p>
+                    <p style="font-size:.75rem;color:var(--text-muted)">💡 Astuce : postez une image dans Discord, clic droit → Copier le lien de l'image.</p>
 
                     <hr style="border:none;border-top:1px solid var(--border-default);margin:.25rem 0">
 

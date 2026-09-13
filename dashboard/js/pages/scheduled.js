@@ -53,7 +53,7 @@ async function loadScheduled(container, guildId) {
     container.innerHTML = `
         <div class="main-header">
             <h1 class="main-title">⏰ Rappels</h1>
-            <p class="main-subtitle">Programme l'envoi automatique de messages dans vos channels, avec mentions et récurrence.</p>
+            <p class="main-subtitle">Programmez l'envoi automatique de messages dans vos channels, avec mentions et récurrence.</p>
         </div>
         <div id="scheduled-tz-bar"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start" id="scheduled-grid">
