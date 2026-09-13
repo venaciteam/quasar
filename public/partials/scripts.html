@@ -17,8 +17,15 @@
     - Le relais de signalement vit sur /api/feedback/vnct (cf. api/index.js) :
       il est monté dans les DEUX modes qui servent la vitrine (`site` et
       `public`), le drapeau fonctionne donc même sans bot ni base.
+    - vnct-ds-guard.js : écran de secours « design system indisponible ».
+      COPIE VERBATIM de venaciteam/vncterrors (public/vnct-ds-guard.js), servie
+      depuis l'origine de la vitrine (script-src 'self') pour fonctionner même
+      quand design.vena.city est en panne. Ne pas l'éditer ici : corriger la
+      source canonique puis recopier. Placé ici, il couvre toutes les pages
+      qui incluent ce partial.
 -->
 <script src="__VNCT_JS_URL__" data-disable-fab="true"></script>
+<script src="/vnct-ds-guard.js?v=__VERSION__" defer></script>
 <script>
   (function () {
     VNCT.config.serviceName = 'Quasar';
