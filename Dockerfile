@@ -15,11 +15,27 @@ RUN npm ci --omit=dev && rm -rf /root/.npm
 COPY . .
 
 # User node (UID 1000) existe dans node:22-alpine — match le user host
-# Groupe docker pour accéder au socket Docker monté
-# Le GID est défini via DOCKER_GID au build (défaut: 972)
+# Groupe docker pour accéder au socket Docker monté.
+#
+# Le GID vient de docker-compose.yml, qui le lit dans .env, où setup.sh écrit
+# celui de la machine. La valeur par défaut ne vaut que pour une construction
+# faite à la main sans rien passer : elle sera presque toujours fausse, et le
+# socket restera alors inaccessible au processus node.
 ARG DOCKER_GID=972
-RUN addgroup -g ${DOCKER_GID} -S docker \
-    && addgroup node docker \
+# Trois pièges évités ici, tous fatals à la construction :
+#   • un GID déjà pris dans l'image (999 = ping, 20 = dialout chez Alpine) fait
+#     échouer « addgroup -g », alors que ce sont des valeurs courantes côté hôte.
+#     Le groupe existant est donc réutilisé tel quel : ce qui compte est que node
+#     appartienne AU GROUPE QUI POSSÈDE LE SOCKET, pas son nom ;
+#   • getent n'existe pas partout : /etc/group se lit très bien avec awk ;
+#   • un DOCKER_GID vide (construction à la main, .env sans la variable) ferait
+#     échouer « addgroup -g "" » : aucun groupe n'est alors ajouté, et seule
+#     la mise à jour depuis le dashboard s'en trouve privée.
+RUN if [ -n "${DOCKER_GID}" ]; then \
+        GROUPE=$(awk -F: -v g="${DOCKER_GID}" '$3 == g { print $1; exit }' /etc/group); \
+        if [ -z "$GROUPE" ]; then addgroup -g "${DOCKER_GID}" -S docker; GROUPE=docker; fi; \
+        addgroup node "$GROUPE"; \
+    fi \
     && mkdir -p /app/data \
     && chown -R node:node /app \
     && git config --system --add safe.directory '*'

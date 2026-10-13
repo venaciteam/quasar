@@ -23,6 +23,24 @@
   « ## » est ignoré.
 -->
 
+## 🌌 Quasar — v4.10.0
+### Installer Quasar est enfin une expérience agréable
+> *9 septembre 2026*
+
+**✨ Nouveautés**
+- Le script d'installation a été entièrement repensé. Il contrôle les prérequis, vous demande vos identifiants Discord en vous expliquant où les trouver, **vérifie votre jeton auprès de Discord avant de construire quoi que ce soit**, vous donne le lien d'invitation du bot tout prêt, puis contrôle à la fin que le dashboard répond et que le bot est bien connecté.
+- Si vous installez à distance en SSH, sur un Raspberry Pi par exemple, le script s'en aperçoit. Il vous explique que le dashboard ne serait joignable que depuis la machine elle-même, et vous propose d'ouvrir l'accès au réseau local. Il ne le fait jamais sans votre accord.
+- L'installation prend désormais la **dernière version publiée** et non l'état courant du dépôt : deux personnes qui installent le même jour obtiennent le même code. L'option `--dev` reste là pour qui veut la version en cours.
+- Un mode sans aucune question, pour réinstaller ou automatiser : `./setup.sh --non-interactive`, avec la configuration lue dans l'environnement. Et `--reconfigure` pour régénérer la configuration d'une installation existante.
+
+**🐛 Corrections**
+- **L'installation en une commande ne fonctionnait pas.** Le script s'arrêtait sans un mot au moment de demander le jeton du bot : pas de configuration, pas de conteneur, aucun message d'erreur. C'était le tout premier contact avec Quasar, et il était muet.
+- **L'installation assistée ne fonctionnait pas sur macOS**, pour une différence de syntaxe entre deux versions d'un outil système.
+- **Le bot arrivait sans ses commandes.** Invité après le démarrage, il apparaissait en ligne, le dashboard fonctionnait, mais aucune commande n'existait sur le serveur, et rien n'indiquait qu'il fallait redémarrer. Les commandes sont maintenant déployées dès que le bot rejoint un serveur.
+- **La mise à jour en un clic ne pouvait pas fonctionner** sur la plupart des installations : le script ne transmettait pas le groupe propriétaire du socket Docker, et le conteneur n'avait donc aucun droit dessus. L'échec n'arrivait qu'au milieu de la reconstruction.
+- Une valeur de configuration contenant certains caractères pouvait corrompre le fichier `.env` en silence. Il est désormais écrit sans passer par un outil de substitution, et n'est plus lisible que par vous.
+- La liste des permissions minimales du bot, dans la documentation, était incomplète : la suivre donnait un bot incapable d'envoyer le moindre message. Elle est corrigée, avec un lien d'invitation tout prêt.
+
 ## 🌌 Quasar — v4.9.0
 ### Quasar refuse de démarrer mal configuré, et s'arrête proprement
 > *9 septembre 2026*
