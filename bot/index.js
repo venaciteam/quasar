@@ -386,7 +386,10 @@ function createBot({ plateforme = null } = {}) {
  *   et le déploiement retombe alors sur `deployCommands`.
  */
 async function demarrerServices(client, platform = null) {
-    console.log(`[Quasar] Connecté en tant que ${client.user.tag}`);
+    // `tag` est une propriété de discord.js. Le client Fluxer porte l'utilisateur
+    // tel que la passerelle l'envoie, sans elle : on retombe sur son nom, puis
+    // sur son identifiant, plutôt que d'afficher « undefined ».
+    console.log(`[Quasar] Connecté en tant que ${client.user?.tag || client.user?.username || client.user?.id}`);
     console.log(`[Quasar] Présent sur ${client.guilds.cache.size} serveur(s)`);
 
     // Aucune télémétrie. Le heartbeat vers un hub central (identifiant d'instance
@@ -429,33 +432,48 @@ async function demarrerServices(client, platform = null) {
     }
 
     // Charger la présence depuis la DB (ou fallback)
-    try {
-        const presence = db.prepare('SELECT * FROM bot_presence WHERE id = 1').get();
-        if (presence) {
-            if (presence.activity_type === -1) {
-                // Aucune activité — statut uniquement
-                client.user.setPresence({
-                    status: presence.status,
-                    activities: []
-                });
-                console.log(`[Quasar] Présence chargée: ${presence.status} (aucune activité)`);
+    //
+    // ⚠️ Le contrat de plateforme ne couvre pas la présence, et `setPresence`
+    // est une méthode de discord.js : le client Fluxer ne l'a pas. Ce bloc
+    // l'appelait sans condition, y compris dans son propre `catch`, si bien que
+    // l'exception sortait de `demarrerServices` et arrêtait le processus : sur
+    // Fluxer, le bot redémarrait en boucle dès la connexion. Même règle que
+    // `definirPresenceNative` côté API : une plateforme qui ne sait pas définir
+    // la présence s'en passe, et le démarrage continue.
+    if (typeof client.user?.setPresence !== 'function') {
+        console.log('[Quasar] Présence : non définissable sur cette plateforme, étape ignorée.');
+    } else {
+        const PRESENCE_PAR_DEFAUT = { status: 'online', activities: [{ name: 'atlas.vena.city', type: 3 }] };
+        try {
+            const presence = db.prepare('SELECT * FROM bot_presence WHERE id = 1').get();
+            if (presence) {
+                if (presence.activity_type === -1) {
+                    // Aucune activité — statut uniquement
+                    client.user.setPresence({
+                        status: presence.status,
+                        activities: []
+                    });
+                    console.log(`[Quasar] Présence chargée: ${presence.status} (aucune activité)`);
+                } else {
+                    client.user.setPresence({
+                        status: presence.status,
+                        activities: [{
+                            name: presence.activity_text,
+                            type: presence.activity_type
+                        }]
+                    });
+                    console.log(`[Quasar] Présence chargée: ${presence.status} — ${presence.activity_text}`);
+                }
             } else {
-                client.user.setPresence({
-                    status: presence.status,
-                    activities: [{
-                        name: presence.activity_text,
-                        type: presence.activity_type
-                    }]
-                });
-                console.log(`[Quasar] Présence chargée: ${presence.status} — ${presence.activity_text}`);
+                client.user.setPresence(PRESENCE_PAR_DEFAUT);
+                console.log('[Quasar] Présence par défaut: Watching atlas.vena.city');
             }
-        } else {
-            client.user.setActivity('atlas.vena.city', { type: 3 });
-            console.log('[Quasar] Présence par défaut: Watching atlas.vena.city');
+        } catch (e) {
+            // Jamais fatal : une présence qui ne s'applique pas ne doit pas
+            // priver le bot de ses balayages.
+            console.log('[Quasar] Présence fallback (erreur DB):', e.message);
+            try { client.user.setPresence(PRESENCE_PAR_DEFAUT); } catch { /* rien à faire de plus */ }
         }
-    } catch (e) {
-        client.user.setActivity('atlas.vena.city', { type: 3 });
-        console.log('[Quasar] Présence fallback (erreur DB):', e.message);
     }
 
     // TempVoice — Charger les IDs actifs dans le Set (pour filtrage channelCreate/Delete)
