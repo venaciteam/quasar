@@ -2,18 +2,21 @@
 //  Archivage des transcripts de tickets
 //
 //  Un ticket contient une conversation privée entre un membre et le staff. À la
-//  fermeture, le salon Discord est supprimé : si le transcript était conservé en
-//  base, celle-ci deviendrait la seule copie subsistante de cette conversation.
+//  fermeture, le salon est supprimé : si le transcript était conservé en base,
+//  celle-ci deviendrait la seule copie subsistante de cette conversation.
 //  Quasar ne veut pas de ce rôle — d'autant que la Discord Developer Policy
 //  (point 16) interdit d'obtenir via l'API des données sensibles au sens des lois
 //  applicables, ce qu'une conversation de support peut parfaitement contenir.
 //
-//  Le transcript est donc remis à l'administrateur, dans Discord, sous sa
-//  responsabilité, et n'est jamais écrit en base.
+//  Le transcript est donc remis à l'administrateur, dans le salon de logs ou en
+//  message privé, sous sa responsabilité, et n'est jamais écrit en base.
+//
+//  Entièrement neutre : la pièce jointe voyage sous la forme `{ nom, donnees,
+//  description }` du contrat, et les deux envois passent par `api.envoyerMessage`.
 // ═══════════════════════════════════════════════════════════════
 
-const { AttachmentBuilder } = require('discord.js');
 const { getLogConfig } = require('./logger');
+const { resoudrePorteeNeutre } = require('./errors');
 
 // Marge très en dessous de la limite d'upload Discord la plus basse (8 Mo sur les
 // anciens paliers). Un transcript de 500 messages pèse en pratique quelques dizaines
@@ -25,12 +28,15 @@ const MAX_ATTACHMENT_BYTES = 7 * 1024 * 1024;
  * Le format texte est délibéré : lisible tel quel dans Discord, et aucun risque
  * d'interprétation du contenu (contrairement à du HTML).
  *
- * @returns {{ attachment: AttachmentBuilder, truncated: boolean, bytes: number }}
+ * @param {object} spec
+ * @param {{id: string, nom: string}} spec.guilde  guilde NORMALISÉE (`ctx.guilde`)
+ * @returns {{ fichier: {nom: string, donnees: Buffer, description: string},
+ *             truncated: boolean, bytes: number }}
  */
-function buildTranscriptFile({ ticketId, guild, ticket, closedBy, reason, transcript, messageCount }) {
+function buildTranscriptFile({ ticketId, guilde, ticket, closedBy, reason, transcript, messageCount }) {
     const header = [
         `Transcript du ticket #${ticketId}`,
-        `Serveur      : ${guild.name} (${guild.id})`,
+        `Serveur      : ${guilde.nom} (${guilde.id})`,
         `Ouvert par   : ${ticket.user_id}`,
         `Ouvert le    : ${ticket.opened_at || 'inconnu'}`,
         `Fermé par    : ${closedBy}`,
@@ -61,12 +67,16 @@ function buildTranscriptFile({ ticketId, guild, ticket, closedBy, reason, transc
 
     const content = header + body;
     const safeDate = new Date().toISOString().slice(0, 10);
-    const attachment = new AttachmentBuilder(Buffer.from(content, 'utf8'), {
-        name: `ticket-${ticketId}-${safeDate}.txt`,
-        description: `Transcript du ticket #${ticketId}`,
-    });
 
-    return { attachment, truncated, bytes: Buffer.byteLength(content, 'utf8') };
+    return {
+        fichier: {
+            nom: `ticket-${ticketId}-${safeDate}.txt`,
+            donnees: Buffer.from(content, 'utf8'),
+            description: `Transcript du ticket #${ticketId}`,
+        },
+        truncated,
+        bytes: Buffer.byteLength(content, 'utf8'),
+    };
 }
 
 /**
@@ -84,42 +94,55 @@ function buildTranscriptFile({ ticketId, guild, ticket, closedBy, reason, transc
  * même s'il a désactivé la notification — sans quoi le comportement par défaut
  * (notification désactivée) enverrait un message privé à chaque fermeture.
  *
+ * ⚠️ Le salon de logs disparu ne se distingue plus d'un envoi refusé : la voie
+ * historique consultait le cache de discord.js avant d'écrire, le client REST
+ * neutre n'a pas de cache. Les deux cas mènent au même repli — le message privé —
+ * et à la même ligne de journal.
+ *
+ * @param {object} spec
+ * @param {object} spec.portee         `ctx` neutre, ou `{ guildeId, api }`
+ * @param {string} spec.moderateurId   destinataire du repli en message privé
+ * @param {object} spec.embed          embed NEUTRE de notification
+ * @param {object} spec.fichier        { nom, donnees, description }
  * @returns {Promise<{ ok: boolean, via: 'log'|'dm'|null, truncated: boolean, error: string|null }>}
  */
-async function deliverTranscript({ guild, moderator, embed, file }) {
-    const attachments = [file.attachment];
+async function deliverTranscript({ portee, moderateurId, embed, fichier, truncated = false }) {
+    const resolue = resoudrePorteeNeutre(portee);
+    if (!resolue || !resolue.guildeId) {
+        return { ok: false, via: null, truncated, error: 'portée neutre inutilisable' };
+    }
+
+    const fichiers = [fichier];
 
     // 1. Salon de logs
-    const config = getLogConfig(guild.id);
+    const config = getLogConfig(resolue.guildeId);
     if (config.logChannel) {
-        const channel = guild.channels.cache.get(config.logChannel);
-        if (channel) {
-            try {
-                await channel.send({ embeds: [embed], files: attachments });
-                return { ok: true, via: 'log', truncated: file.truncated, error: null };
-            } catch (err) {
-                console.error(`[Quasar] Transcript : envoi au salon de logs impossible (${err.message}) — repli sur message privé.`);
-            }
+        try {
+            await resolue.api.envoyerMessage(config.logChannel, { embeds: [embed], fichiers });
+            return { ok: true, via: 'log', truncated, error: null };
+        } catch (err) {
+            console.error(`[Quasar] Transcript : envoi au salon de logs impossible (${err.message}) — repli sur message privé.`);
         }
     }
 
     // 2. Message privé au modérateur
     try {
-        await moderator.send({
-            content:
+        const canalPrive = await resolue.api.ouvrirMessagePrive(moderateurId);
+        await resolue.api.envoyerMessage(canalPrive, {
+            contenu:
                 '📄 Transcript du ticket que vous venez de fermer.\n' +
                 'Il t\'arrive en privé parce que ce serveur n\'a pas de salon de logs configuré, ' +
                 'ou que Quasar ne peut pas y écrire. Ce fichier est la seule copie de la conversation : ' +
                 'le bot n\'en garde aucune.',
             embeds: [embed],
-            files: attachments,
+            fichiers,
         });
-        return { ok: true, via: 'dm', truncated: file.truncated, error: null };
+        return { ok: true, via: 'dm', truncated, error: null };
     } catch (err) {
         return {
             ok: false,
             via: null,
-            truncated: file.truncated,
+            truncated,
             error: err.message,
         };
     }

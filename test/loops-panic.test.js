@@ -39,31 +39,48 @@ function seedPanic(db, method = 'incident_actions') {
 }
 
 /**
- * Client Discord minimal. `onLift` permet de bloquer ou de faire échouer la
- * levée, `onLog` l'envoi du message de levée.
+ * Adaptateur de plateforme minimal — la seule forme que ce module accepte
+ * depuis que sa voie `Guild` discord.js est tombée (lot 7). `onLift` permet de
+ * bloquer ou de faire échouer la levée, `onLog` l'envoi du message de levée.
+ *
+ * `portee` est ce que la route du dashboard passe pour une levée MANUELLE :
+ * `{ guildeId, api, moiId, capacites }`, la portée neutre de bot/utils/errors.js.
  */
-function makeClient({ onLift = null, onLog = null } = {}) {
+function makeClient({ onLift = null, onLog = null, guildes = [GUILD] } = {}) {
     const lifts = [];
     const logs = [];
-    const logChannel = {
-        send: async (payload) => {
-            logs.push(payload);
+
+    const api = {
+        async envoyerMessage(canalId, contenu) {
+            logs.push({ canalId, contenu });
             if (onLog) await onLog();
+            return { id: '1' };
+        },
+        async mettreInvitationsEnPause(guildeId, jusquA, raison) {
+            lifts.push({ guildeId, jusquA, raison });
+            if (onLift) await onLift();
+            return jusquA === null ? 'levee' : 'incident';
+        },
+        async obtenirEtatInvitations() {
+            return { enPauseJusqua: null, desactiveesEnDur: false };
+        },
+        async obtenirMembre() {
+            return { id: 'moi', aPermission: () => true };
+        },
+        async listerGuildes() {
+            return guildes;
         },
     };
-    const guild = {
-        id: GUILD,
-        channels: { cache: new Map([[LOG_CHANNEL, logChannel]]) },
-        setIncidentActions: async (opts) => {
-            lifts.push(opts);
-            if (onLift) await onLift();
-        },
-        disableInvites: async (value) => {
-            lifts.push({ disableInvites: value });
-            if (onLift) await onLift();
-        },
+
+    const client = {
+        nom: 'test',
+        capacites: { pauseInvitations: true },
+        moi: { id: 'moi' },
+        api,
     };
-    return { client: { guilds: { cache: new Map([[GUILD, guild]]) } }, guild, lifts, logs };
+    const portee = { guildeId: GUILD, api, moiId: 'moi', capacites: client.capacites };
+
+    return { client, portee, lifts, logs };
 }
 
 function panicRow(db) {
@@ -76,10 +93,17 @@ test('un balayage lent n\'est pas doublé par le suivant', async () => {
     seedPanic(db);
 
     let release;
+    let signalerEntree;
     const gate = new Promise((resolve) => { release = resolve; });
-    const { client, lifts, logs } = makeClient({ onLift: () => gate });
+    const entree = new Promise((resolve) => { signalerEntree = resolve; });
+    const { client, lifts, logs } = makeClient({
+        onLift: () => { signalerEntree(); return gate; },
+    });
 
     const slow = sweepExpiredPanics(client);
+    // Le second tour ne doit partir qu'une fois le premier ENGAGÉ : c'est le
+    // verrou de ré-entrance qu'on éprouve, pas l'ordonnancement des promesses.
+    await entree;
     await sweepExpiredPanics(client);
     release();
     await slow;
@@ -95,11 +119,19 @@ test('une levée manuelle simultanée ne produit pas un second message', async (
     seedPanic(db);
 
     let release;
+    let signalerEntree;
     const gate = new Promise((resolve) => { release = resolve; });
-    const { client, guild, lifts, logs } = makeClient({ onLift: () => gate });
+    // Le balayage doit tenir le verrou AVANT que la levée manuelle ne parte,
+    // sinon les deux s'attendent : `listerGuildes` est asynchrone, la course
+    // n'est plus décidée par l'ordre des lignes.
+    const entree = new Promise((resolve) => { signalerEntree = resolve; });
+    const { client, portee, lifts, logs } = makeClient({
+        onLift: () => { signalerEntree(); return gate; },
+    });
 
     const sweeping = sweepExpiredPanics(client);
-    const manual = await liftPanic(guild, { liftedBy: '424242424242424242' });
+    await entree;
+    const manual = await liftPanic(portee, { liftedBy: '424242424242424242' });
     release();
     await sweeping;
 
@@ -149,7 +181,15 @@ test('une exception dans un balayage ne bloque pas la boucle pour toujours', asy
     seedGuild(db);
     seedPanic(db);
 
-    const poison = { get guilds() { throw new Error('cache indisponible'); } };
+    // Le client REST lève : c'est l'équivalent exact d'un cache illisible sur
+    // l'ancienne voie — la question « quels serveurs ? » n'a pas de réponse.
+    const poison = {
+        capacites: { pauseInvitations: true },
+        api: {
+            envoyerMessage: async () => ({ id: '1' }),
+            listerGuildes: async () => { throw new Error('passerelle indisponible'); },
+        },
+    };
     await assert.rejects(() => sweepExpiredPanics(poison));
 
     const { client, lifts } = makeClient();
@@ -162,9 +202,11 @@ test('connexion incomplète : aucune échéance supprimée', async () => {
     seedGuild(db);
     seedPanic(db);
 
-    // Cache vide : le bot n'a pas fini de se connecter. Sans garde-fou, la ligne
-    // serait supprimée comme si le bot avait été retiré du serveur, et un repli
-    // INVITES_DISABLED ne serait jamais levé.
-    await sweepExpiredPanics({ guilds: { cache: new Map() } });
+    // `listerGuildes()` rend `null` : le bot n'a pas fini de se connecter, la
+    // liste est INDÉTERMINABLE. Sans garde-fou, la ligne serait supprimée comme
+    // si le bot avait été retiré du serveur, et un repli INVITES_DISABLED ne
+    // serait jamais levé. `[]`, lui, veut dire « connecté, aucun serveur ».
+    const { client } = makeClient({ guildes: null });
+    await sweepExpiredPanics(client);
     assert.ok(panicRow(db), 'l\'échéance doit survivre à une connexion incomplète');
 });

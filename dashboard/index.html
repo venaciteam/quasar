@@ -18,16 +18,22 @@
 <body>
     <div class="landing" id="landing">
         <div class="landing-top">
-            <button class="theme-toggle" onclick="VNCT.Theme.toggle()" aria-label="Changer de theme">
+            <button class="theme-toggle" onclick="VNCT.Theme.toggle()" aria-label="Changer de thème">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             </button>
         </div>
         <div class="landing-logo">Qua<span>sar</span></div>
         <p class="landing-subtitle">Connectez-vous pour accéder au dashboard</p>
 
-        <a href="/auth/login" class="landing-btn">
-            <img src="/dashboard/img/discord-logo.png" style="width:22px;height:22px;filter:brightness(0) invert(1)" alt="">
-            Se connecter avec Discord
+        <!-- Marque de la plateforme active. Les valeurs écrites ici sont celles
+             de Discord : c'est ce qui s'affiche avant la réponse de
+             /api/plateforme, et sur une instance qui n'aurait pas encore cette
+             route. Le script plus bas les remplace si la plateforme diffère —
+             côté Discord, il ne change rien, pas un caractère. -->
+        <a href="/auth/login" class="landing-btn" id="login-btn">
+            <img src="/dashboard/img/discord-logo.png" id="login-logo"
+                 style="width:22px;height:22px;filter:brightness(0) invert(1)" alt="">
+            <span id="login-label">Se connecter avec Discord</span>
         </a>
     </div>
 
@@ -68,6 +74,23 @@
         VNCT.config.discordWebhookUrl = '/api/feedback/vnct';
     </script>
     <script src="/dashboard/js/instance.js?v=__VERSION__"></script>
+    <script src="/dashboard/js/plateforme.js?v=__VERSION__"></script>
+    <script>
+        // Marque de la plateforme active : le bouton, son logo et son libellé.
+        // Le texte porte le nom, il ne dépend pas de l'image — un logo qui ne
+        // charge pas ne doit pas laisser un bouton muet.
+        QuasarPlateforme.charger().then(function () {
+            var nom = QuasarPlateforme.libelle();
+            var label = document.getElementById('login-label');
+            if (label) label.textContent = 'Se connecter avec ' + nom;
+            var logo = document.getElementById('login-logo');
+            if (!logo) return;
+            if (QuasarPlateforme.nom === 'discord') return;
+            // Pas de logo pour cette plateforme : on retire l'image plutôt que
+            // d'afficher celle d'une autre marque.
+            logo.remove();
+        });
+    </script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/dashboard/sw.js').then(function(reg) {

@@ -9,6 +9,13 @@
 //
 //  L'inaction de l'admin reste SA responsabilité (il est responsable de traitement).
 //  Rythme large (6 h) : ces échéances se comptent en jours.
+//
+//  ⚠️ Ce module reçoit l'ADAPTATEUR de plateforme, pas le client natif. Il
+//  appelait `client.users.fetch()` puis `user.send()` : aucune importation de
+//  discord.js, donc invisible au test d'étanchéité, mais muet hors Discord — et
+//  ce qu'il fait taire, c'est la relance d'une demande d'effacement au-delà du
+//  délai légal d'un mois. La notification passe désormais par deux méthodes du
+//  contrat, `ouvrirMessagePrive` puis `envoyerMessage`.
 // ═══════════════════════════════════════════════════════════════
 
 const { getDb } = require('../../../api/services/database');
@@ -47,23 +54,26 @@ function checkOverdue() {
 }
 
 /**
- * Notifie le propriétaire du bot (BOT_OWNER_ID) par message direct — best-effort.
+ * Notifie le propriétaire du bot (BOT_OWNER_ID) par message privé — best-effort.
  * Contenu minimal : identifiants de demande, serveur et échéance. Pas de subject_id
- * (donnée nominative) dans le DM : l'owner le retrouve dans le dashboard s'il agit.
+ * (donnée nominative) dans le message : l'owner le retrouve dans le dashboard s'il agit.
+ *
+ * @param {object} adaptateur adaptateur de plateforme
  */
-async function notifyOwner(client, pending) {
+async function notifyOwner(adaptateur, pending) {
     const ownerId = process.env.BOT_OWNER_ID;
-    if (!ownerId || !client?.users) return;
+    const api = adaptateur?.api;
+    if (!ownerId || !api) return;
 
     try {
-        const owner = await client.users.fetch(ownerId);
+        const canal = await api.ouvrirMessagePrive(ownerId);
         const lines = pending.map(p => {
             const dueStr = new Date(p.due_at * 1000).toISOString().slice(0, 10);
             const state = p.overdue ? 'DÉPASSÉE' : 'proche';
             return `• Demande #${p.id} — serveur \`${p.guild_id}\` — échéance ${dueStr} (${state})`;
         });
 
-        await owner.send(
+        await api.envoyerMessage(canal,
             "⚖️ **Demandes d'effacement en attente**\n" +
             `${pending.length} demande(s) approchent ou dépassent le délai légal d'un mois. ` +
             "L'admin responsable du serveur doit décider (effacer / refuser motivé) ; " +
@@ -71,13 +81,14 @@ async function notifyOwner(client, pending) {
             lines.join('\n')
         );
     } catch (err) {
-        // Le DM peut échouer (DM fermés, owner introuvable) : la trace console reste
-        // le filet indépendant. On n'interrompt pas la boucle pour autant.
+        // L'envoi peut échouer (messages privés fermés, owner introuvable) : la
+        // trace console reste le filet indépendant. On n'interrompt pas la
+        // boucle pour autant.
         console.error('[Quasar Effacement] Notification du propriétaire échouée :', err.message);
     }
 }
 
-async function tick(client) {
+async function tick(adaptateur) {
     const pending = checkOverdue();
     if (pending.length === 0) return;
 
@@ -96,10 +107,11 @@ async function tick(client) {
         );
     }
 
-    await notifyOwner(client, pending);
+    await notifyOwner(adaptateur, pending);
 }
 
-function start(client) {
+/** @param {object} adaptateur adaptateur de plateforme */
+function start(adaptateur) {
     if (tickHandle) return;
 
     console.log(
@@ -109,7 +121,7 @@ function start(client) {
 
     // tick() gère ses propres erreurs ; ce catch ne couvre que l'imprévu, pour ne pas
     // transformer un incident en rejet de promesse non traité.
-    const safeTick = () => Promise.resolve(tick(client))
+    const safeTick = () => Promise.resolve(tick(adaptateur))
         .catch(err => console.error('[Quasar Effacement] Erreur inattendue :', err.message));
 
     bootHandle = setTimeout(safeTick, BOOT_DELAY_MS);

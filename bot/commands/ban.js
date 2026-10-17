@@ -1,59 +1,67 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 const { sendModLog } = require('../utils/modlog');
-const { reportIncident, userError } = require('../utils/errors');
+const { reportIncident } = require('../utils/errors');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('ban')
-        .setDescription('Bannir un membre')
-        .addUserOption(opt => opt.setName('membre').setDescription('Le membre à bannir').setRequired(true))
-        .addStringOption(opt => opt.setName('raison').setDescription('Raison du ban').setRequired(false))
-        .addIntegerOption(opt => opt.setName('supprimer').setDescription('Supprimer les messages des X derniers jours (0-7)').setMinValue(0).setMaxValue(7).setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+// Un jour de messages, en secondes : l'option se saisit en jours, l'API se
+// paramètre en secondes.
+const SECONDES_PAR_JOUR = 86400;
 
-    async execute(interaction) {
-        const target = interaction.options.getUser('membre');
-        const reason = interaction.options.getString('raison') || 'Aucune raison spécifiée';
-        const deleteDays = interaction.options.getInteger('supprimer') || 0;
-        const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+module.exports = definirCommande({
+    nom: 'ban',
+    description: 'Bannir un membre',
+    permission: 'BAN_MEMBERS',
+    permissionsBot: ['BAN_MEMBERS'],
 
-        if (member && !member.bannable) {
-            return userError(interaction, {
-                title: 'Je ne peux pas bannir ce membre',
+    options: [
+        { nom: 'membre', type: 'utilisateur', requis: true, description: 'Le membre à bannir' },
+        { nom: 'raison', type: 'texte', requis: false, description: 'Raison du ban' },
+        { nom: 'supprimer', type: 'entier', requis: false, min: 0, max: 7, description: 'Supprimer les messages des X derniers jours (0-7)' },
+    ],
+
+    async executer(ctx) {
+        const cible = ctx.options.get('membre');
+        const raison = ctx.options.get('raison') || 'Aucune raison spécifiée';
+        const deleteDays = ctx.options.get('supprimer') || 0;
+        const membre = await ctx.api.obtenirMembre(ctx.guildeId, cible.id);
+
+        // Bannir quelqu'un qui n'est PLUS sur le serveur reste possible : c'est
+        // le seul contrôle qu'on ne fait que si la personne est encore membre.
+        if (membre && await ctx.api.verifierMembreSanctionnable(ctx.guildeId, cible.id, 'ban')) {
+            return ctx.erreurUtilisateur({
+                titre: 'Je ne peux pas bannir ce membre',
                 cause: 'Soit il me manque la permission **Bannir des membres**, soit ce membre a un rôle situé au-dessus du mien dans la hiérarchie.',
                 action: 'Vérifiez mes permissions, et placez mon rôle au-dessus de celui du membre dans Paramètres du serveur → Rôles.',
             });
         }
 
         try {
-            await interaction.guild.members.ban(target.id, {
-                reason,
-                deleteMessageSeconds: deleteDays * 86400
+            await ctx.api.bannirMembre(ctx.guildeId, cible.id, raison, {
+                supprimerMessagesSecondes: deleteDays * SECONDES_PAR_JOUR,
             });
         } catch (e) {
             // Vraie exception : code d'incident pour retrouver la trace.
-            return reportIncident(interaction, e, { command: '/ban' });
+            return reportIncident(ctx, e, { command: '/ban' });
         }
 
-        const db = getDb();
-        db.prepare(`
+        ctx.db.prepare(`
             INSERT INTO sanctions (guild_id, user_id, moderator_id, type, reason)
             VALUES (?, ?, ?, 'ban', ?)
-        `).run(interaction.guild.id, target.id, interaction.user.id, reason);
+        `).run(ctx.guildeId, cible.id, ctx.auteur.id, raison);
 
-        const embed = new EmbedBuilder()
-            .setTitle('🔨 Bannissement')
-            .setColor(0xe74c3c)
-            .addFields(
-                { name: 'Membre', value: `${target} (${target.tag})`, inline: true },
-                { name: 'Modérateur', value: `${interaction.user}`, inline: true },
-                { name: 'Raison', value: reason },
-                { name: 'Messages supprimés', value: `${deleteDays} jour(s)`, inline: true }
-            )
-            .setTimestamp();
+        const bannissement = embed({
+            titre: '🔨 Bannissement',
+            couleur: 0xe74c3c,
+            champs: [
+                { nom: 'Membre', valeur: `${cible.mention} (${cible.etiquette})`, enLigne: true },
+                { nom: 'Modérateur', valeur: ctx.auteur.mention, enLigne: true },
+                { nom: 'Raison', valeur: raison },
+                { nom: 'Messages supprimés', valeur: `${deleteDays} jour(s)`, enLigne: true },
+            ],
+            horodatage: true,
+        });
 
-        await interaction.reply({ embeds: [embed] });
-        await sendModLog(interaction.guild, embed, 'mod_ban');
-    }
-};
+        await ctx.repondre(bannissement);
+        await sendModLog(ctx, bannissement, 'mod_ban');
+    },
+});

@@ -1,50 +1,51 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
-const { userError } = require('../utils/errors');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('unwarn')
-        .setDescription('Retirer un avertissement')
-        .addIntegerOption(opt => opt.setName('id').setDescription('ID de la sanction à retirer').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+module.exports = definirCommande({
+    nom: 'unwarn',
+    description: 'Retirer un avertissement',
+    permission: 'MODERATE_MEMBERS',
+    // Écriture en base et réponse : rien à demander à la plateforme.
+    permissionsBot: [],
 
-    async execute(interaction) {
-        const sanctionId = interaction.options.getInteger('id');
-        const db = getDb();
+    options: [
+        { nom: 'id', type: 'entier', requis: true, description: 'ID de la sanction à retirer' },
+    ],
 
-        const sanction = db.prepare(`
+    async executer(ctx) {
+        const sanctionId = ctx.options.get('id');
+
+        const sanction = ctx.db.prepare(`
             SELECT * FROM sanctions WHERE id = ? AND guild_id = ? AND type = 'warn'
-        `).get(sanctionId, interaction.guild.id);
+        `).get(sanctionId, ctx.guildeId);
 
         if (!sanction) {
-            return userError(interaction, {
-                title: 'Avertissement introuvable',
+            return ctx.erreurUtilisateur({
+                titre: 'Avertissement introuvable',
                 cause: 'Aucun avertissement ne porte cet identifiant sur ce serveur. Il a peut-être été supprimé, ou l\'identifiant appartient à un autre serveur.',
                 action: 'Retrouvez le bon identifiant avec `/warns @membre` — il est affiché à côté de chaque avertissement.',
             });
         }
 
         if (!sanction.active) {
-            return userError(interaction, {
-                title: 'Avertissement déjà retiré',
+            return ctx.erreurUtilisateur({
+                titre: 'Avertissement déjà retiré',
                 cause: 'Cet avertissement a déjà été retiré : il ne compte plus dans le total du membre.',
                 action: 'Aucune action nécessaire. `/warns @membre` affiche les avertissements encore actifs.',
             });
         }
 
-        db.prepare('UPDATE sanctions SET active = 0 WHERE id = ?').run(sanctionId);
+        ctx.db.prepare('UPDATE sanctions SET active = 0 WHERE id = ?').run(sanctionId);
 
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Avertissement retiré')
-            .setColor(0x2ecc71)
-            .addFields(
-                { name: 'Sanction', value: `#${sanctionId}`, inline: true },
-                { name: 'Membre', value: `<@${sanction.user_id}>`, inline: true },
-                { name: 'Retiré par', value: `${interaction.user}`, inline: true }
-            )
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
-    }
-};
+        await ctx.repondre(embed({
+            titre: '✅ Avertissement retiré',
+            couleur: 0x2ecc71,
+            champs: [
+                { nom: 'Sanction', valeur: `#${sanctionId}`, enLigne: true },
+                { nom: 'Membre', valeur: `<@${sanction.user_id}>`, enLigne: true },
+                { nom: 'Retiré par', valeur: ctx.auteur.mention, enLigne: true },
+            ],
+            horodatage: true,
+        }));
+    },
+});

@@ -32,12 +32,11 @@ const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
 const { validatePunishments, ACTION_NAMES } = require('../../bot/utils/punishments');
 const antiraid = require('../../bot/modules/antiraid');
+const plateforme = require('../services/plateforme');
 const { LIMITS, normalize } = require('../../bot/modules/antiraid/config');
 const { MAX_PUNISHED_PER_WAVE } = require('../../bot/modules/antiraid/window');
 
 const router = express.Router({ mergeParams: true });
-
-const SNOWFLAKE = /^\d{17,20}$/;
 
 // ─── Catalogue des actions ──────────────────────────────────────────────────
 //
@@ -90,18 +89,17 @@ function readInt(raw, { field, min, max, hint }) {
     return { value };
 }
 
-function readOptionalChannelId(raw, field) {
-    if (raw === undefined || raw === null || raw === '') return { value: null };
-    const id = String(raw).trim();
-    if (!SNOWFLAKE.test(id)) return { error: `${field} : identifiant de salon invalide.` };
-    return { value: id };
-}
-
 /**
  * Valide et normalise le corps d'un enregistrement de configuration.
- * @returns {{ error: string }|{ data: object }}
+ *
+ * ⚠️ `log_channel` est SCELLÉ au serveur de l'URL, pas seulement contrôlé en
+ * forme : c'est le salon où partiront les alertes de vague et les messages du
+ * mode panique de CE serveur. Un identifiant bien formé mais étranger les
+ * publierait dans un autre.
+ *
+ * @returns {Promise<{ error: string, status?: number }|{ data: object }>}
  */
-function parseConfigPayload(body) {
+async function parseConfigPayload(req, body, actuel = {}) {
     if (!body || typeof body !== 'object') return { error: 'Requête vide.' };
 
     const joinCount = readInt(body.join_count, {
@@ -138,8 +136,10 @@ function parseConfigPayload(body) {
     const check = validatePunishments(punishments);
     if (!check.valid) return { error: check.errors.join(' ') };
 
-    const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
-    if (logChannel.error) return { error: logChannel.error };
+    const logChannel = await plateforme.exigerCanalDuServeur(req, body.log_channel, {
+        champ: 'Le salon des journaux', actuel: actuel.log_channel,
+    });
+    if (logChannel.error) return logChannel;
 
     const responseMessage = String(body.response_message ?? '').trim();
     if (responseMessage.length > LIMITS.MAX_RESPONSE_MESSAGE) {
@@ -209,18 +209,23 @@ function buildState(guildId) {
     };
 }
 
-// ─── Accès au serveur Discord ───────────────────────────────────────────────
+// ─── Accès au serveur ───────────────────────────────────────────────────────
 
 /**
- * Serveur Discord vu par le bot, ou la raison lisible pour laquelle il ne l'est
- * pas. Le mode panique agit sur Discord : sans client, il n'y a rien à faire.
+ * Portée d'écriture du serveur, ou la raison lisible pour laquelle il n'y en a
+ * pas. Le mode panique agit sur la plateforme : sans client REST, il n'y a rien
+ * à faire.
+ *
+ * ⚠️ C'est ce `{ guildeId, api, moiId, capacites }` qui a libéré tout un fil :
+ * la voie `Guild` de `bot/modules/antiraid/panic.js`, celle de
+ * `punishments.sendAutomodLog` et celle de `modlog.sendModLog` n'avaient plus
+ * d'autre appelant que cette route.
  */
 function resolveGuild(req) {
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds?.cache?.get(req.params.guildId);
-    if (!guild) {
+    const portee = plateforme.portee(req, req.params.guildId);
+    if (!portee) {
         return {
-            guild: null,
+            portee: null,
             error: {
                 status: 503,
                 body: {
@@ -230,8 +235,20 @@ function resolveGuild(req) {
             },
         };
     }
-    return { guild, error: null };
+    return { portee, error: null };
 }
+
+// Réponse à `skipped: 'indisponible'` — la plateforme ne sait pas suspendre ses
+// invitations (capacité `pauseInvitations`). Ce n'est ni une panne ni une
+// requête mal formée : un 400 nu laisserait croire à une erreur de saisie, et
+// le dashboard n'a rien à corriger. On le dit en toutes lettres.
+const PANIQUE_INDISPONIBLE = {
+    status: 501,
+    body: {
+        error: 'Cette plateforme ne sait pas suspendre les invitations d\'un serveur : le mode panique n\'y est pas disponible.',
+        hint: 'Les autres protections de l\'anti-raid (détection des vagues, sanctions) fonctionnent normalement.',
+    },
+};
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
@@ -245,8 +262,8 @@ router.get('/', requireAuth, requireGuildAdmin, async (req, res) => {
 router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const guildId = req.params.guildId;
 
-    const parsed = parseConfigPayload(req.body);
-    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const parsed = await parseConfigPayload(req, req.body, readRow(guildId) || {});
+    if (parsed.error) return res.status(parsed.status || 400).json({ error: parsed.error });
     const { data } = parsed;
 
     getDb().prepare(`
@@ -281,7 +298,7 @@ router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
 // La durée du corps est optionnelle : sans elle, celle de la configuration.
 router.post('/panic', requireAuth, requireGuildAdmin, async (req, res) => {
     const guildId = req.params.guildId;
-    const { guild, error } = resolveGuild(req);
+    const { portee, error } = resolveGuild(req);
     if (error) return res.status(error.status).json(error.body);
 
     const stored = readRow(guildId) || DEFAULT_ROW;
@@ -306,13 +323,16 @@ router.post('/panic', requireAuth, requireGuildAdmin, async (req, res) => {
         });
     }
 
-    const result = await antiraid.enterPanic(guild, {
+    const result = await antiraid.enterPanic(portee, {
         durationSeconds: seconds,
         reason: 'Mode panique activé depuis le tableau de bord',
         triggeredBy: req.user?.id || null,
         logChannelId: stored.log_channel || null,
     });
 
+    if (result.skipped === 'indisponible') {
+        return res.status(PANIQUE_INDISPONIBLE.status).json(PANIQUE_INDISPONIBLE.body);
+    }
     if (!result.ok) {
         return res.status(result.error ? 502 : 400).json({
             error: result.error || 'Le mode panique n\'a pas pu être activé.',
@@ -325,16 +345,24 @@ router.post('/panic', requireAuth, requireGuildAdmin, async (req, res) => {
 // DELETE /panic — levée manuelle, sans attendre l'échéance.
 router.delete('/panic', requireAuth, requireGuildAdmin, async (req, res) => {
     const guildId = req.params.guildId;
-    const { guild, error } = resolveGuild(req);
+    const { portee, error } = resolveGuild(req);
     if (error) return res.status(error.status).json(error.body);
 
-    const result = await antiraid.liftPanic(guild, {
+    const result = await antiraid.liftPanic(portee, {
         liftedBy: req.user?.id || null,
         logChannelId: (readRow(guildId) || DEFAULT_ROW).log_channel || null,
     });
 
     if (!result.ok && result.skipped === 'not_active') {
         return res.status(409).json({ error: 'Aucun mode panique n\'est en cours sur ce serveur.' });
+    }
+    if (result.skipped === 'indisponible') {
+        return res.status(PANIQUE_INDISPONIBLE.status).json(PANIQUE_INDISPONIBLE.body);
+    }
+    // Levée déjà en cours (balayage d'échéance tombé au même instant) : rien à
+    // faire et surtout pas une erreur — le serveur rouvre bel et bien.
+    if (!result.ok && result.skipped === 'in_progress') {
+        return res.json({ success: true, panic: antiraid.getPanicState(guildId) });
     }
     if (!result.ok) {
         return res.status(502).json({

@@ -1,23 +1,21 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
-const { userError } = require('../utils/errors');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('unlog')
-        .setDescription('Retirer le channel de logs de modération')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+module.exports = definirCommande({
+    nom: 'unlog',
+    description: 'Retirer le channel de logs de modération',
+    permission: 'ADMINISTRATOR',
+    // Écriture en base et réponse : rien à demander à la plateforme.
+    permissionsBot: [],
 
-    async execute(interaction) {
-        const db = getDb();
-
-        const existing = db.prepare(`
+    async executer(ctx) {
+        const existing = ctx.db.prepare(`
             SELECT config FROM modules WHERE guild_id = ? AND module_name = 'moderation'
-        `).get(interaction.guild.id);
+        `).get(ctx.guildeId);
 
         if (!existing) {
-            return userError(interaction, {
-                title: 'Aucun salon de logs configuré',
+            return ctx.erreurUtilisateur({
+                titre: 'Aucun salon de logs configuré',
                 cause: 'Il n\'y a rien à retirer : aucun salon de logs n\'est défini sur ce serveur.',
                 action: 'Pour en définir un, utilisez `/log #salon`.',
             });
@@ -26,16 +24,15 @@ module.exports = {
         const config = JSON.parse(existing.config || '{}');
         delete config.logChannel;
 
-        db.prepare(`
+        ctx.db.prepare(`
             UPDATE modules SET config = ? WHERE guild_id = ? AND module_name = 'moderation'
-        `).run(JSON.stringify(config), interaction.guild.id);
+        `).run(JSON.stringify(config), ctx.guildeId);
 
-        const embed = new EmbedBuilder()
-            .setTitle('📝 Logs de modération')
-            .setColor(0xe74c3c)
-            .setDescription('Les logs de modération ont été désactivés.')
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
-    }
-};
+        await ctx.repondre(embed({
+            titre: '📝 Logs de modération',
+            couleur: 0xe74c3c,
+            description: 'Les logs de modération ont été désactivés.',
+            horodatage: true,
+        }));
+    },
+});

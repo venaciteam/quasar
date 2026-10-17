@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const { computeNextRun, getGuildTimezone } = require('../../bot/modules/scheduler');
 
 const router = express.Router({ mergeParams: true });
@@ -149,9 +150,17 @@ router.get('/', requireAuth, requireGuildAdmin, (req, res) => {
 });
 
 // POST /api/guilds/:guildId/scheduled
-router.post('/', requireAuth, requireGuildAdmin, (req, res) => {
+router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const { errors, data } = parseAndValidate(req.body);
     if (errors.length) return res.status(400).json({ error: errors.join(', ') });
+
+    // Salon SCELLÉ au serveur de l'URL : `parseAndValidate` n'en vérifie que la
+    // forme, et un rappel programmé est un message que le bot POSTERA. Un
+    // identifiant étranger publierait le rappel de ce serveur dans un autre —
+    // mentions comprises.
+    const scelle = await plateforme.exigerCanalDuServeur(req, data.channel_id, { champ: 'Le salon du rappel' });
+    if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+    data.channel_id = scelle.value;
 
     const db = getDb();
     if (data.content_type === 'embed') {
@@ -186,15 +195,24 @@ router.post('/', requireAuth, requireGuildAdmin, (req, res) => {
 });
 
 // PUT /api/guilds/:guildId/scheduled/:id
-router.put('/:id', requireAuth, requireGuildAdmin, (req, res) => {
+router.put('/:id', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
     const id = Number(req.params.id);
-    const existing = db.prepare('SELECT id FROM scheduled_messages WHERE id = ? AND guild_id = ?')
+    const existing = db.prepare('SELECT id, channel_id FROM scheduled_messages WHERE id = ? AND guild_id = ?')
         .get(id, req.params.guildId);
     if (!existing) return res.status(404).json({ error: 'introuvable' });
 
     const { errors, data } = parseAndValidate(req.body);
     if (errors.length) return res.status(400).json({ error: errors.join(', ') });
+
+    // Même scellement qu'à la création, avec la valeur déjà en base comme
+    // référence : changer l'heure d'un rappel ne doit pas dépendre de l'état de
+    // la connexion, mais changer son SALON exige de vérifier le nouveau.
+    const scelle = await plateforme.exigerCanalDuServeur(req, data.channel_id, {
+        champ: 'Le salon du rappel', actuel: existing.channel_id,
+    });
+    if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+    data.channel_id = scelle.value;
 
     if (data.content_type === 'embed') {
         const exists = db.prepare('SELECT 1 FROM embeds WHERE id = ? AND guild_id = ?')

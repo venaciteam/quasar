@@ -1,84 +1,100 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
-const { userError } = require('../utils/errors');
-const { checkAssignableRole, describeRefusal } = require('../utils/assignableRole');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
+const { describeRefusal } = require('../utils/assignableRole');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('autorole')
-        .setDescription('Gérer les rôles attribués automatiquement à l\'arrivée')
-        .addSubcommand(sub => sub
-            .setName('add')
-            .setDescription('Ajouter un rôle automatique')
-            .addRoleOption(opt => opt.setName('role').setDescription('Le rôle à attribuer').setRequired(true))
-        )
-        .addSubcommand(sub => sub
-            .setName('remove')
-            .setDescription('Retirer un rôle automatique')
-            .addRoleOption(opt => opt.setName('role').setDescription('Le rôle à retirer').setRequired(true))
-        )
-        .addSubcommand(sub => sub
-            .setName('list')
-            .setDescription('Voir les rôles automatiques configurés')
-        )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+// Seconde commande témoin du registre déclaratif (lot 0) : forme à
+// sous-commandes, avec options. Avec /ping, elle couvre les deux seules formes
+// que prennent les 29 commandes du bot.
+//
+// Ce que le contrat neutre remplace ici, point par point :
+//   interaction.options.getRole()          -> ctx.options.get('role')
+//   checkAssignableRole(guild, role)       -> ctx.api.verifierRoleAttribuable()
+//   getDb()                                -> ctx.db
+//   userError(interaction, …)              -> ctx.erreurUtilisateur(…)
+//   new EmbedBuilder()                     -> embed({ … })
+module.exports = definirCommande({
+    nom: 'autorole',
+    description: 'Gérer les rôles attribués automatiquement à l\'arrivée',
+    permission: 'MANAGE_ROLES',
+    // Permission du BOT, à ne pas confondre avec `permission` ci-dessus qui
+    // porte sur le membre. C'est elle qui alimente le contrôle du masque du lien
+    // d'invitation : sans MANAGE_ROLES, la configuration s'enregistre mais
+    // l'attribution échoue plus tard, à l'arrivée d'un membre.
+    permissionsBot: ['MANAGE_ROLES'],
 
-    async execute(interaction) {
-        const sub = interaction.options.getSubcommand();
-        const db = getDb();
+    sousCommandes: [
+        {
+            nom: 'add',
+            description: 'Ajouter un rôle automatique',
+            options: [
+                { nom: 'role', type: 'role', requis: true, description: 'Le rôle à attribuer' },
+            ],
+            async executer(ctx) {
+                const role = ctx.options.get('role');
 
-        if (sub === 'add') {
-            const role = interaction.options.getRole('role');
+                const refus = await ctx.api.verifierRoleAttribuable(ctx.guildeId, role.id);
+                if (refus) {
+                    // `describeRefusal` lit le rôle NORMALISÉ depuis le lot 2 :
+                    // plus aucun objet discord.js ne traverse cet appel.
+                    const { title, cause, action } = describeRefusal(refus, role);
+                    return ctx.erreurUtilisateur({ titre: title, cause, action });
+                }
 
-            const refusal = checkAssignableRole(interaction.guild, role);
-            if (refusal) return userError(interaction, describeRefusal(refusal, role));
+                ctx.db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)')
+                    .run(ctx.guildeId, role.id);
 
-            db.prepare('INSERT OR IGNORE INTO autoroles (guild_id, role_id) VALUES (?, ?)')
-                .run(interaction.guild.id, role.id);
+                await ctx.repondre(embed({
+                    titre: '✅ Autorole ajouté',
+                    couleur: 0xc86e8e,
+                    description: `${role.mention} sera attribué automatiquement à chaque nouveau membre.`,
+                    horodatage: true,
+                }));
+            },
+        },
+        {
+            nom: 'remove',
+            description: 'Retirer un rôle automatique',
+            options: [
+                { nom: 'role', type: 'role', requis: true, description: 'Le rôle à retirer' },
+            ],
+            async executer(ctx) {
+                const role = ctx.options.get('role');
+                const resultat = ctx.db.prepare('DELETE FROM autoroles WHERE guild_id = ? AND role_id = ?')
+                    .run(ctx.guildeId, role.id);
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
-                    .setTitle('✅ Autorole ajouté')
-                    .setColor(0xc86e8e)
-                    .setDescription(`${role} sera attribué automatiquement à chaque nouveau membre.`)
-                    .setTimestamp()]
-            });
+                if (resultat.changes === 0) {
+                    return ctx.erreurUtilisateur({
+                        titre: 'Ce rôle n\'est pas un autorôle',
+                        cause: 'Il ne fait pas partie des rôles attribués automatiquement à l\'arrivée.',
+                        action: 'Consultez la liste avec `/autorole list`.',
+                    });
+                }
 
-        } else if (sub === 'remove') {
-            const role = interaction.options.getRole('role');
-            const result = db.prepare('DELETE FROM autoroles WHERE guild_id = ? AND role_id = ?')
-                .run(interaction.guild.id, role.id);
+                await ctx.repondre(embed({
+                    titre: '🗑️ Autorole retiré',
+                    couleur: 0xe74c3c,
+                    description: `${role.mention} ne sera plus attribué automatiquement.`,
+                    horodatage: true,
+                }));
+            },
+        },
+        {
+            nom: 'list',
+            description: 'Voir les rôles automatiques configurés',
+            async executer(ctx) {
+                const roles = ctx.db.prepare('SELECT role_id FROM autoroles WHERE guild_id = ?').all(ctx.guildeId);
 
-            if (result.changes === 0) {
-                return userError(interaction, {
-                    title: 'Ce rôle n\'est pas un autorôle',
-                    cause: 'Il ne fait pas partie des rôles attribués automatiquement à l\'arrivée.',
-                    action: 'Consultez la liste avec `/autorole list`.',
-                });
-            }
+                if (roles.length === 0) {
+                    return ctx.repondre('Aucun autorole configuré.', { ephemere: true });
+                }
 
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
-                    .setTitle('🗑️ Autorole retiré')
-                    .setColor(0xe74c3c)
-                    .setDescription(`${role} ne sera plus attribué automatiquement.`)
-                    .setTimestamp()]
-            });
-
-        } else if (sub === 'list') {
-            const roles = db.prepare('SELECT role_id FROM autoroles WHERE guild_id = ?').all(interaction.guild.id);
-
-            if (roles.length === 0) {
-                return interaction.reply({ content: 'Aucun autorole configuré.', ephemeral: true });
-            }
-
-            await interaction.reply({
-                embeds: [new EmbedBuilder()
-                    .setTitle('🎭 Autoroles')
-                    .setColor(0x6e8ec8)
-                    .setDescription(roles.map(r => `<@&${r.role_id}>`).join('\n'))
-                    .setTimestamp()]
-            });
-        }
-    }
-};
+                await ctx.repondre(embed({
+                    titre: '🎭 Autoroles',
+                    couleur: 0x6e8ec8,
+                    description: roles.map(r => `<@&${r.role_id}>`).join('\n'),
+                    horodatage: true,
+                }));
+            },
+        },
+    ],
+});

@@ -155,7 +155,7 @@ function renderCmds(cmds) {
     return `<div style="display:flex;flex-direction:column;gap:.5rem" id="cmds-list-inner" onclick="handleCmdAction(event)">
         ${cmds.map(c => `
             <div style="display:flex;align-items:center;flex-wrap:wrap;gap:.75rem;padding:.75rem 1rem;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-sm)">
-                <code style="color:var(--accent);font-size:.9rem;min-width:100px">/${escapeHtml(c.name)}</code>
+                <code style="color:var(--accent);font-size:.9rem;min-width:100px">${escapeHtml(QuasarPlateforme.commande(c.name))}</code>
                 <span style="flex:1;color:var(--text-secondary);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                     ${c.embed_id ? `📝 Embed : <strong>${escapeHtml(c.embed_name || 'lié')}</strong>` : escapeHtml(c.response?.substring(0, 80) + (c.response?.length > 80 ? '…' : '') || '*vide*')}
                 </span>
@@ -247,7 +247,7 @@ async function createCmd() {
             return showToast(`❌ ${result.error}`, 'error');
         }
 
-        showToast(`✅ Commande /${name} créée !`);
+        showToast(`✅ Commande ${QuasarPlateforme.commande(name)} créée !`);
         document.getElementById('cmd-name').value = '';
         document.getElementById('cmd-response').value = '';
         document.getElementById('cmd-access').value = 'everyone';
@@ -262,8 +262,14 @@ function editCmd(name, response, embedName, accessMode, accessRoleId) {
     // L'intitulé de la carte et l'aide sous le champ le disent explicitement,
     // pour qu'on ne croie pas être en train de créer une seconde commande.
     document.getElementById('cmd-name').value = name;
-    document.getElementById('cmd-form-title').textContent = `✏️ Modifier /${name}`;
-    setCmdNameHint(`Modifiez ce champ pour renommer la commande. /${name} sera retirée du serveur Discord et remplacée par le nouveau nom.`);
+    document.getElementById('cmd-form-title').textContent = `✏️ Modifier ${QuasarPlateforme.commande(name)}`;
+    // « retirée du serveur » ne vaut que là où une commande est ENREGISTRÉE
+    // auprès de la plateforme. Ailleurs, une commande personnalisée est une
+    // ligne en base que le parseur consulte : le renommage prend effet tout de
+    // suite, il n'y a rien à retirer nulle part.
+    setCmdNameHint(QuasarPlateforme.a('interactions')
+        ? `Modifiez ce champ pour renommer la commande. ${QuasarPlateforme.commande(name)} sera retirée du serveur ${QuasarPlateforme.libelle()} et remplacée par le nouveau nom.`
+        : `Modifiez ce champ pour renommer la commande. ${QuasarPlateforme.commande(name)} ne répondra plus, le nouveau nom prend le relais.`);
     setCmdNameError('');
 
     // Préremplir le contrôle d'accès avec la configuration réelle de la commande.
@@ -334,10 +340,10 @@ function editCmd(name, response, embedName, accessMode, accessRoleId) {
 
         const nomFinal = result.name || newName;
         showToast(nomFinal !== name
-            ? `✅ Commande /${name} renommée en /${nomFinal} !`
-            : `✅ Commande /${name} modifiée !`);
-        // Discord injoignable : le renommage est enregistré, seul l'affichage des
-        // commandes du serveur est en retard. On le dit sans crier à l'échec.
+            ? `✅ Commande ${QuasarPlateforme.commande(name)} renommée en ${QuasarPlateforme.commande(nomFinal)} !`
+            : `✅ Commande ${QuasarPlateforme.commande(name)} modifiée !`);
+        // Plateforme injoignable : le renommage est enregistré, seul l'affichage
+        // des commandes du serveur est en retard. On le dit sans crier à l'échec.
         if (result.warning) showToast(`⚠️ ${result.warning}`, 'info');
 
         const container = document.getElementById('cmds-content').parentElement;
@@ -349,9 +355,9 @@ function editCmd(name, response, embedName, accessMode, accessRoleId) {
 }
 
 async function deleteCmd(name) {
-    if (!confirm(`Supprimer la commande /${name} ?`)) return;
+    if (!confirm(`Supprimer la commande ${QuasarPlateforme.commande(name)} ?`)) return;
     await API.delete(`/api/guilds/${window._guildId}/customcmds/${name}`);
-    showToast(`🗑️ Commande /${name} supprimée.`);
+    showToast(`🗑️ Commande ${QuasarPlateforme.commande(name)} supprimée.`);
     const container = document.getElementById('cmds-content').parentElement;
     loadCustomCmds(container, window._guildId);
 }

@@ -9,17 +9,27 @@
     - Le script du DS est chargé SANS defer : le bloc de config qui suit doit
       s'exécuter APRÈS lui (vnct-common.js pose window.VNCT en fin de course et
       écraserait une config posée avant).
-    - Délégation d'événements data-quasar-action : les partials header et menu
-      n'ont aucun onclick inline. Quasar n'a pas de CSP à nonce aujourd'hui,
+    - Délégation d'événements data-quasar-action (drapeau du header, copie de
+      la commande d'installation) : aucun onclick inline. Le menu « … » n'en
+      porte plus aucune, son contenu est construit par le DS (VNCT.AppMenu). Quasar n'a pas de CSP à nonce aujourd'hui,
       mais l'écrire proprement maintenant évite d'avoir à repasser sur cinq
       pages le jour où elle arrive.
     - Le relais de signalement vit sur /api/feedback/vnct (cf. api/index.js) :
       il est monté dans les DEUX modes qui servent la vitrine (`site` et
       `public`), le drapeau fonctionne donc même sans bot ni base.
+    - vnct-ds-guard.js : écran de secours « design system indisponible ».
+      COPIE VERBATIM de venaciteam/vncterrors (public/vnct-ds-guard.js), servie
+      depuis l'origine de la vitrine (script-src 'self') pour fonctionner même
+      quand design.vena.city est en panne. Ne pas l'éditer ici : corriger la
+      source canonique puis recopier. Placé ici, il couvre toutes les pages
+      qui incluent ce partial.
 -->
 <script src="__VNCT_JS_URL__" data-disable-fab="true"></script>
+<script src="/vnct-ds-guard.js?v=__VERSION__" defer></script>
 <script>
   (function () {
+    // DS non chargé : ni config ni délégation (l'écran de secours vnct-ds-guard.js prend le relais).
+    if (!window.VNCT) return;
     VNCT.config.serviceName = 'Quasar';
     VNCT.config.serviceVersion = '__VERSION__';
     // Backend des signalements = Sema. JAMAIS dev.vena.city (hôte mort qui
@@ -32,11 +42,9 @@
       var el = ev.target && ev.target.closest ? ev.target.closest('[data-quasar-action]') : null;
       if (!el) return;
       var action = el.getAttribute('data-quasar-action');
-      if (action === 'theme') {
-        // Menu volontairement laissé ouvert : la bascule se constate sur place,
-        // et re-basculer ne demande pas de rouvrir le menu.
-        VNCT.Theme.toggle();
-      } else if (action === 'report') {
+      // « Changer de thème » n'est plus une action Quasar : l'entrée est
+      // générée et câblée par le DS (VNCT.AppMenu, v2.6.0).
+      if (action === 'report') {
         VNCT.HeaderMenu.closeAll();
         VNCT.Feedback.open();
       } else if (action === 'copy-install') {

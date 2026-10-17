@@ -37,9 +37,26 @@
 //  enregistrement et rejoue `normalize` pour afficher le même diagnostic que
 //  celui qui commande le comportement du bot. Une seule source de vérité, comme
 //  bot/modules/antiraid/config.js le fait pour l'anti-raid.
+//
+//  ─── Le chemin rapide, et ce que le contrat neutre lui doit ────────────────
+//
+//  Trois garde-fous de ce fichier lisaient des champs propres à discord.js. Le
+//  payload neutre de `messageCree` les porte désormais, et c'est ce qui rend la
+//  migration possible SANS renoncer à l'exigence n° 1 ci-dessus :
+//
+//   • `estSysteme` remplace le filtre sur `MessageType` ;
+//   • `estWebhook` remplace `message.webhookId` ;
+//   • `estFil` + `canalParentId` remplacent `channel.isThread()` — portés PAR LE
+//     MESSAGE, donc sans le moindre aller-retour sur le chemin rapide ;
+//   • `lien` remplace `message.url`, sans écrire d'URL Discord ici.
+//
+//  Les seuls appels réseau ajoutés — propriétaire du serveur, membre, nom du
+//  salon — sont tous APRÈS la reconnaissance du salon piège, c'est-à-dire sur
+//  un chemin emprunté par une poignée de messages, jamais par tous.
 // ═══════════════════════════════════════════════════════════════
 
-const { EmbedBuilder, Events, MessageType, PermissionFlagsBits } = require('discord.js');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { getDb } = require('../../api/services/database');
 const {
     applyPunishments,
@@ -60,17 +77,6 @@ const LIMITS = Object.freeze({
     MAX_RESPONSE_MESSAGE: 1000,
     MAX_SCOPE_ENTRIES: 25,
 });
-
-// Seuls types de messages retenus : un message écrit par une personne, ou une
-// réponse à un autre message.
-//
-// C'est un garde-fou, pas une optimisation. Discord poste lui-même dans les
-// salons : « X a rejoint le serveur », « X a épinglé un message », « fil créé ».
-// Ces messages portent l'identifiant de la personne concernée comme auteur.
-// Si le salon piège se trouve être le salon système du serveur, chaque arrivée
-// y produirait un message d'arrivée — et sanctionnerait, sans ce filtre, une
-// personne qui n'a jamais rien écrit.
-const HUMAN_MESSAGE_TYPES = new Set([MessageType.Default, MessageType.Reply]);
 
 // ─── Instantané des salons pièges ───────────────────────────────────────────
 //
@@ -293,24 +299,23 @@ function describeResults(results) {
  * Alerte de déclenchement. Elle part MÊME en alerte seule : un piège qui se
  * déclenche sans rien dire ne se distingue pas d'un piège en panne.
  */
-async function sendTrapAlert(guild, config, { userId, channelId, alertOnly, outcome }) {
-    const embed = new EmbedBuilder()
-        .setTitle('🍯 Message dans le salon piège')
-        .setColor(0xe67e22)
-        .addFields(
-            { name: 'Membre', value: `<@${userId}> (${userId})`, inline: true },
-            { name: 'Déclencheur', value: SOURCE_LABELS[SOURCE], inline: true },
-            { name: 'Salon', value: `<#${channelId}>`, inline: true },
+async function sendTrapAlert(portee, config, { userId, channelId, alertOnly, outcome }) {
+    await sendAutomodLog(portee, embed({
+        titre: '🍯 Message dans le salon piège',
+        couleur: 0xe67e22,
+        champs: [
+            { nom: 'Membre', valeur: `<@${userId}> (${userId})`, enLigne: true },
+            { nom: 'Déclencheur', valeur: SOURCE_LABELS[SOURCE], enLigne: true },
+            { nom: 'Salon', valeur: `<#${channelId}>`, enLigne: true },
             {
-                name: 'Sanction',
-                value: alertOnly
+                nom: 'Sanction',
+                valeur: alertOnly
                     ? 'Aucune : ce serveur est réglé en alerte seule.'
                     : (outcome || 'Aucune sanction appliquée.'),
-            }
-        )
-        .setTimestamp();
-
-    await sendAutomodLog(guild, embed, 'mod_warn', config.logChannelId);
+            },
+        ],
+        horodatage: true,
+    }), 'mod_warn', config.logChannelId);
 }
 
 // ─── Écouteur ───────────────────────────────────────────────────────────────
@@ -320,13 +325,13 @@ async function sendTrapAlert(guild, config, { userId, channelId, alertOnly, outc
  * Évalués en premier : ils évitent d'aller chercher sur le réseau un « membre »
  * qui n'existe pas (un webhook n'en a pas).
  *
+ * @param {object} message  message normalisé
+ * @param {object} contexte { moiId, proprietaireId }
  * @returns {string|null} raison (pour la trace), ou null si le message continue.
  */
-function exemptAuthor(message) {
-    const guild = message.guild;
-
-    if (message.author.id === message.client?.user?.id) return 'message du bot lui-même';
-    if (guild.ownerId && message.author.id === guild.ownerId) return 'message du propriétaire du serveur';
+function exemptAuthor(message, { moiId, proprietaireId }) {
+    if (message.auteur.id === moiId) return 'message du bot lui-même';
+    if (proprietaireId && message.auteur.id === proprietaireId) return 'message du propriétaire du serveur';
 
     // Bots et webhooks : exemptés, et c'est un choix, pas un oubli.
     //
@@ -343,8 +348,8 @@ function exemptAuthor(message) {
     // n'est pas un « bot » au sens de Discord. C'est un compte utilisateur
     // ordinaire piloté par un script, sans le drapeau `bot` — il tombe donc bien
     // dans le piège.
-    if (message.webhookId) return 'message d\'un webhook';
-    if (message.author.bot) return 'message d\'un bot';
+    if (message.estWebhook) return 'message d\'un webhook';
+    if (message.auteur.estBot) return 'message d\'un bot';
 
     return null;
 }
@@ -353,40 +358,40 @@ function exemptAuthor(message) {
  * Le garde-fou décisif, celui sans lequel la première personne qui va inspecter
  * son salon piège et y écrit « test » se fait sanctionner par son propre outil.
  *
- * `has()` accorde déjà tout à un administrateur, mais les deux permissions sont
- * nommées explicitement : cette exemption est la raison d'être de la fonction,
- * elle doit se lire, pas se déduire.
+ * `aPermission` accorde déjà tout à un administrateur, mais les deux permissions
+ * sont nommées explicitement : cette exemption est la raison d'être de la
+ * fonction, elle doit se lire, pas se déduire.
  *
  * @returns {string|null} raison (pour la trace), ou null si le membre est
  *          sanctionnable.
  */
-function exemptModerator(member) {
-    const permissions = member.permissions;
-    if (permissions?.has(PermissionFlagsBits.Administrator)) return 'administrateur du serveur';
-    if (permissions?.has(PermissionFlagsBits.ModerateMembers)) return 'membre de l\'équipe de modération';
+function exemptModerator(membre) {
+    if (membre.aPermission('ADMINISTRATOR')) return 'administrateur du serveur';
+    if (membre.aPermission('MODERATE_MEMBERS')) return 'membre de l\'équipe de modération';
     return null;
 }
 
-async function execute(message) {
+async function executer(ctx, message) {
     try {
         // ─── Chemin rapide ───
         // Tout ce qui suit s'exécute pour chaque message de chaque serveur : une
         // lecture de propriété et une lecture de Map, rien d'autre. Aucune
         // requête en base, aucun appel réseau, aucun accès au contenu, et pas
         // une seule attente : la sortie est synchrone jusqu'au `return`.
-        const channelId = message?.channelId;
-        if (!channelId) return;
+        const canalId = message?.canalId;
+        if (!canalId) return;
 
         const configured = traps();
         if (configured.size === 0) return;
 
-        let row = configured.get(channelId);
+        let row = configured.get(canalId);
         if (!row) {
             // Un fil ouvert dans le salon piège est le salon piège : le piège
             // serait sinon contournable en répondant dans un fil. Le parent
             // n'est consulté que pour un fil — le parent d'un salon ordinaire
-            // est sa catégorie, qui n'a rien à voir avec un salon piège.
-            const parentId = message.channel?.isThread?.() ? message.channel.parentId : null;
+            // est sa catégorie, qui n'a rien à voir avec un salon piège. Les
+            // deux champs sont portés par le message : toujours pas d'attente.
+            const parentId = message.estFil ? message.canalParentId : null;
             if (!parentId) return;
             row = configured.get(String(parentId));
             if (!row) return;
@@ -395,12 +400,21 @@ async function execute(message) {
         // ─── À partir d'ici, le message vient bien d'un salon piège ───
 
         // Instantané périmé sur un salon changé de serveur, ou message privé
-        // (aucun `guildId`) : dans les deux cas, ce n'est pas le piège de ce
+        // (aucun `guildeId`) : dans les deux cas, ce n'est pas le piège de ce
         // serveur-là.
-        if (!message.guild || message.guildId !== row.guild_id) return;
-        if (!message.author) return;
-        if (!HUMAN_MESSAGE_TYPES.has(message.type)) return;
-        if (exemptAuthor(message)) return;
+        if (!message.guildeId || message.guildeId !== row.guild_id) return;
+        if (!message.auteur) return;
+        if (message.estSysteme) return;
+
+        // Portée d'écriture : le piège n'a personne à qui répondre, il agit et
+        // journalise par le client REST.
+        const portee = { guildeId: message.guildeId, api: ctx.api, moi: ctx.moi };
+
+        // Le propriétaire du serveur est la seule exemption qui demande une
+        // lecture. Elle passe par le cache de l'adaptateur, et n'est atteinte
+        // que par un message DÉJÀ reconnu comme venant d'un salon piège.
+        const guilde = await ctx.api.obtenirGuilde(message.guildeId).catch(() => null);
+        if (exemptAuthor(message, { moiId: ctx.moi?.id, proprietaireId: guilde?.proprietaireId })) return;
 
         // La configuration est relue AVANT d'aller chercher le membre : une
         // configuration inexploitable ne doit pas déclencher un appel réseau par
@@ -408,31 +422,30 @@ async function execute(message) {
         const config = normalize(row);
         if (!config || !config.enabled) return;
         if (config.problems.length) {
-            reportProblems(message.guildId, config.problems);
+            reportProblems(message.guildeId, config.problems);
             return;
         }
 
-        const member = message.member
-            || await message.guild.members.fetch(message.author.id).catch(() => null);
-        if (!member) {
+        const membre = await ctx.api.obtenirMembre(message.guildeId, message.auteur.id).catch(() => null);
+        if (!membre) {
             // Personne déjà partie, ou membre illisible : impossible de vérifier
             // qu'elle n'appartient pas à l'équipe de modération. On s'abstient —
             // le prix d'un compte de raid qui s'échappe est sans commune mesure
             // avec celui d'un modérateur sanctionné par son propre piège.
-            console.warn(`[Quasar Honeypot] Membre ${message.author.id} illisible sur ${message.guildId} : aucune sanction.`);
+            console.warn(`[Quasar Honeypot] Membre ${message.auteur.id} illisible sur ${message.guildeId} : aucune sanction.`);
             return;
         }
-        if (exemptModerator(member)) return;
+        if (exemptModerator(membre)) return;
 
         // Portée configurable, appliquée PAR-DESSUS les garde-fous : elle peut
         // exempter davantage, jamais moins. Seul le membre est transmis — les
         // deux dimensions de salon n'ont pas d'objet ici (cf. UNUSED_SCOPE_LABELS).
-        if (!isInScope(row, { member })) return;
+        if (!isInScope(row, { member: membre })) return;
 
         const now = Date.now();
-        if (!claimTrigger(`${message.guildId}:${message.author.id}`, now)) return;
+        if (!claimTrigger(`${message.guildeId}:${message.auteur.id}`, now)) return;
 
-        await trigger(message, member, config, channelId);
+        await trigger(ctx, portee, message, membre, config, canalId);
     } catch (err) {
         // Filet ultime : une erreur du salon piège ne doit pas remonter dans le
         // traitement des messages de tous les serveurs.
@@ -445,48 +458,50 @@ async function execute(message) {
  * toujours pas lu — seule son adresse voyage, pour que l'équipe puisse aller
  * voir elle-même si elle le souhaite.
  */
-async function trigger(message, member, config, channelId) {
-    const guild = message.guild;
-    const channelName = message.channel?.name ? `#${message.channel.name}` : `<#${channelId}>`;
+async function trigger(ctx, portee, message, membre, config, canalId) {
+    // Nom du salon, pour que le motif de la sanction reste lisible dans
+    // l'historique. Une lecture, sur un chemin déjà rare, et un repli sur la
+    // mention si le salon est illisible — exactement comme avant.
+    const canal = await ctx.api.obtenirCanal(canalId).catch(() => null);
+    const channelName = canal?.nom ? `#${canal.nom}` : `<#${canalId}>`;
     const reason = `Salon piège : message posté dans ${channelName}`;
 
     let results = [];
     if (!config.alertOnly) {
         results = await applyPunishments(config.punishments, {
-            guild,
-            member,
-            userId: member.id,
+            portee,
+            member: membre,
+            userId: membre.id,
             // Indispensable à l'action « supprimer le message » : sans lui, le
             // socle n'a rien à supprimer et le rapporte comme un échec.
             message,
             reason,
             source: SOURCE,
-            moderatorId: guild.client?.user?.id,
+            moderatorId: ctx.moi?.id,
             logChannelId: config.logChannelId,
             responseMessage: config.responseMessage,
             // Lien vers le message, jamais son contenu : de quoi trancher un
             // arbitrage sans que le piège devienne un lecteur de messages. Le
             // lien reste valide, `defer` court-circuitant la suppression.
-            evidence: message.url ? `[Message dans le salon piège](${message.url})` : null,
+            evidence: message.lien ? `[Message dans le salon piège](${message.lien})` : null,
         });
     }
 
-    await sendTrapAlert(guild, config, {
-        userId: member.id,
-        channelId,
+    await sendTrapAlert(portee, config, {
+        userId: membre.id,
+        channelId: canalId,
         alertOnly: config.alertOnly,
         outcome: describeResults(results),
     });
 }
 
-module.exports = {
-    name: Events.MessageCreate,
-    once: false,
-    execute,
-};
+module.exports = definirEvenement({
+    nom: 'messageCree',
+    executer,
+});
 
 // Exportés pour l'API (api/routes/honeypot.js) et les tests. La valeur exportée
-// reste la description d'événement attendue par le chargeur de bot/index.js ;
+// reste le descripteur d'événement attendu par le chargeur de la plateforme ;
 // on ne fait que lui attacher des fonctions, sans effet de bord.
 module.exports.LIMITS = LIMITS;
 module.exports.normalize = normalize;

@@ -37,20 +37,30 @@ function seedReminder(db, { type = 'daily', time = '12:00', date = null } = {}) 
 }
 
 /**
- * Client Discord minimal. `onSend` permet de bloquer ou de faire échouer l'envoi
- * pour reproduire un tour lent ou un arrêt du service en plein envoi.
+ * Adaptateur de plateforme minimal. `onSend` permet de bloquer ou de faire
+ * échouer l'envoi pour reproduire un tour lent ou un arrêt du service en plein
+ * envoi.
+ *
+ * Le planificateur reçoit l'ADAPTATEUR depuis la consolidation, plus le client
+ * discord.js : il poste par le client REST normalisé, et son garde « connexion
+ * incomplète » lit `moi.id`.
  */
 function makeClient(onSend = null) {
     const sends = [];
-    const channel = {
-        isTextBased: () => true,
-        send: async (payload) => {
-            sends.push(payload);
-            if (onSend) await onSend();
+    return {
+        client: {
+            moi: { id: '222222222222222222', nom: 'Quasar#0000' },
+            api: {
+                async obtenirCanal(id) { return id === CHANNEL ? { id, nom: 'salon', type: 'texte' } : null; },
+                async envoyerMessage(canalId, corps) {
+                    sends.push(corps);
+                    if (onSend) await onSend();
+                    return { id: '1', canalId };
+                },
+            },
         },
+        sends,
     };
-    const guild = { id: GUILD, channels: { cache: new Map([[CHANNEL, channel]]) } };
-    return { client: { guilds: { cache: new Map([[GUILD, guild]]) } }, sends };
 }
 
 function getRow(db, id) {
@@ -101,8 +111,8 @@ test('une exception dans un tour ne bloque pas la boucle pour toujours', async (
     seedGuild(db);
     seedReminder(db);
 
-    // Client dont la simple lecture explose : l'exception traverse la boucle.
-    const poison = { get guilds() { throw new Error('cache indisponible'); } };
+    // Adaptateur dont la simple lecture explose : l'exception traverse la boucle.
+    const poison = { get moi() { throw new Error('adaptateur indisponible'); } };
     await assert.rejects(() => runDueMessages(poison));
 
     // Le verrou doit avoir été relâché par le finally.
@@ -134,8 +144,8 @@ test('connexion incomplète : aucun rappel consommé', async () => {
     const id = seedReminder(db);
     const before = getRow(db, id).next_run;
 
-    // Cache de serveurs vide : le bot n'a pas fini de se connecter.
-    await runDueMessages({ guilds: { cache: new Map() } });
+    // Identité du bot inconnue : la connexion n'est pas faite.
+    await runDueMessages({ moi: { id: null }, api: {} });
 
     assert.equal(getRow(db, id).next_run, before, 'l\'échéance ne doit pas bouger');
 });
