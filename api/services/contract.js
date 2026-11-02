@@ -6,14 +6,14 @@
 // constante CONTRACT_VERSION exportée ici : un bump = nouvelle acceptation exigée.
 //
 // Le contrat de référence est rédigé dans :
-//   ~/DEV/Juridique/Contrat de sous-traitance - Instance Quasar Venacity.md (v1.0)
+//   ~/DEV/Juridique/Contrat de sous-traitance - Instance Quasar Venacity.md (v1.1)
 // =============================================================================
 
 const { getDb } = require('./database');
 
 // Version du contrat en vigueur. Un incrément déclenche une nouvelle acceptation
 // (gating basé sur cette valeur, cf. Conventions partagées de la DA).
-const CONTRACT_VERSION = '1.0';
+const CONTRACT_VERSION = '1.1';
 
 // URL publique du texte complet du contrat, affichée sur l'écran d'acceptation.
 // Publié sur Strata (site légal public), au même titre que les CGU et la politique
@@ -41,16 +41,16 @@ function getContractPublicUrl() {
     return sanitizeUrl(process.env.CONTRACT_PUBLIC_URL) || DEFAULT_CONTRACT_PUBLIC_URL;
 }
 
-// Points clés du contrat, fidèles au texte v1.0, pour l'écran d'acceptation.
+// Points clés du contrat, fidèles au texte v1.1, pour l'écran d'acceptation.
 // Résumé informatif : le lien vers le texte intégral (CONTRACT_PUBLIC_URL) reste
 // la référence juridique. À revoir si le contrat change de version.
 const CONTRACT_SUMMARY = [
     'Venacity est sous-traitant au sens de l\'article 28 du RGPD. En tant qu\'administratrice ou administrateur d\'un serveur connecté, vous restez le responsable de traitement : vous décidez, Venacity exécute vos réglages.',
     'Données traitées : uniquement des identifiants techniques Discord, les sanctions de modération, les métadonnées de tickets (jamais le contenu des conversations) et vos configurations de serveur. Ni nom, ni e-mail, ni mot de passe.',
-    'Venacity ne traite ces données que sur vos instructions (réglages du tableau de bord et commandes), sans finalité propre : aucune revente, aucune exploitation commerciale, aucun transfert hors de l\'Union européenne. Hébergement en Allemagne (netcup), acheminement via Cloudflare.',
+    'Venacity ne traite ces données que sur vos instructions (réglages du tableau de bord et commandes), sans finalité propre : aucune revente, aucune exploitation commerciale, aucun transfert hors de l\'Union européenne. Hébergement en Allemagne (netcup), acheminement via Cloudflare. Sauvegarde chaque nuit, chiffrée sur le serveur avant d\'être stockée chez Cloudflare (R2, Union européenne) : ni Cloudflare ni le serveur ne détiennent la clé de déchiffrement.',
     'Toute violation de données vous concernant vous est notifiée sous 24 heures maximum, par message direct, repli en salon si besoin et bannière persistante dans le tableau de bord, avec traçabilité des envois.',
     'Les demandes d\'exercice des droits (dont l\'effacement) vous sont routées : c\'est vous qui décidez, avec une décision motivée obligatoire en cas de refus, sous un délai d\'un mois. Venacity relaie et exécute votre décision, sans se substituer à vous.',
-    'Fin de relation : au retrait du bot d\'un serveur, ses données sont supprimées après un délai de grâce de 7 jours (les bannissements encore en vigueur sont conservés). Réinviter le bot avant l\'échéance annule la suppression.',
+    'Fin de relation : au retrait du bot d\'un serveur, ses données sont supprimées après un délai de grâce de 7 jours (les bannissements encore en vigueur sont conservés). Réinviter le bot avant l\'échéance annule la suppression. Les données supprimées peuvent subsister 15 jours au plus dans les sauvegardes chiffrées.',
 ];
 
 // Le contrat n'a de sens que sur l'instance publique opérée par Venacity : c'est
