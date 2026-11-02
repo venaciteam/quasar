@@ -310,7 +310,7 @@
 
             // État d'affichage (rempli depuis le serveur, avec des replis sûrs).
             const state = {
-                version: '1.0',
+                version: '1.1',
                 summary: [],
                 url: null,
                 localUrl: LOCAL_URL_FALLBACK,
