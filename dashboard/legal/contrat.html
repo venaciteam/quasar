@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Contrat de sous-traitance — Instance Quasar (Venacity)</title>
     <meta name="robots" content="noindex">
-    <link rel="icon" type="image/x-icon" href="/dashboard/icon.ico">
-    <link rel="icon" type="image/png" href="/dashboard/icon.png">
+    <!-- Icônes VNCT : générées par ~/DEV/outils/icones-vnct.sh, ?v= = version du service. -->
+    <link rel="icon" type="image/png" sizes="48x48" href="/dashboard/icons/icon-48.png?v=5.0.0">
+    <link rel="icon" type="image/png" sizes="192x192" href="/dashboard/icons/icon-192.png?v=5.0.0">
+    <link rel="apple-touch-icon" href="/dashboard/icons/apple-touch-icon.png?v=5.0.0">
     <!-- Bootstrap thème AVANT le CSS pour éviter le flash. On réutilise la même
          préférence que le dashboard (clé localStorage 'vnct_theme', repli cookie
          'theme', sinon préférence système). L'accent reste 'rose' (fixe). -->
@@ -265,8 +267,8 @@
         <header class="legal-header">
             <h1>Contrat de sous-traitance des données personnelles — Instance Quasar hébergée par Venacity</h1>
             <div class="legal-meta">
-                <span class="legal-badge">Version 1.0</span>
-                <span class="legal-badge legal-badge--muted">28 août 2026</span>
+                <span class="legal-badge">Version 1.1</span>
+                <span class="legal-badge legal-badge--muted">2 novembre 2026</span>
                 <span class="legal-badge legal-badge--muted">Article 28 du RGPD</span>
             </div>
         </header>
@@ -277,8 +279,8 @@
         </div>
 
         <div class="callout callout--important">
-            <div class="callout__title">❗ Version 1.0 — 28 août 2026</div>
-            <p>Première version de ce contrat. Elle contractualise le partage des rôles déjà décrit dans les conditions générales d'utilisation (§ 6.9) et la politique de confidentialité (§ 4.9), et s'appuie sur les mesures techniques réellement déployées sur l'instance depuis le 25 juillet 2026.</p>
+            <div class="callout__title">❗ Version 1.1 — 2 novembre 2026</div>
+            <p>La base de l'Instance est désormais sauvegardée chaque nuit, sous forme <strong>chiffrée</strong>, chez Cloudflare (R2, Union européenne), et conservée 15 jours au plus. Cloudflare prend donc un nouveau rôle de sous-traitant ultérieur : conformément à l'article 16, cette version doit être acceptée de nouveau. Articles modifiés : 7, 8 et 12.</p>
         </div>
 
 
@@ -422,7 +424,7 @@
                     <tr><td><strong>Chiffrement des flux</strong></td><td>Le trafic passe par Cloudflare en mode « Full (strict) », en HTTPS de bout en bout.</td></tr>
                     <tr><td><strong>Conteneur non privilégié</strong></td><td>Le service s'exécute avec un utilisateur non-root dans son conteneur.</td></tr>
                     <tr><td><strong>Minimisation et conservation limitée</strong></td><td>Sanctions conservées 12 mois par défaut (réglable de 1 à 120 mois par le Responsable) ; identifiants, tickets et configurations supprimés 7 jours après le retrait du robot ; transcriptions de tickets non conservées.</td></tr>
-                    <tr><td><strong>Sauvegardes</strong></td><td>La base est sauvegardée par la plateforme de déploiement (Coolify), avec des points de contrôle réguliers du journal d'écriture.</td></tr>
+                    <tr><td><strong>Sauvegardes</strong></td><td>La base est sauvegardée chaque nuit. La copie est <strong>chiffrée sur le serveur</strong> avant son envoi vers l'espace de stockage, avec une clé que ni le prestataire de stockage ni le serveur ne détiennent. Elle est conservée <strong>15 jours au plus</strong>.</td></tr>
                     <tr><td><strong>Effacement effectif</strong></td><td>Lors de la suppression des anciennes conversations de tickets, l'espace de la base a été réécrit (opération <code>VACUUM</code>) pour qu'une donnée supprimée ne reste pas lisible dans le fichier.</td></tr>
                 </tbody>
             </table>
@@ -440,7 +442,7 @@
                 <thead><tr><th>Sous-traitant ultérieur</th><th>Rôle</th><th>Localisation</th></tr></thead>
                 <tbody>
                     <tr><td><strong>netcup GmbH</strong></td><td>Hébergement du serveur physique (Petra) sur lequel tourne l'Instance</td><td>Emmy-Noether-Straße 10, 76131 Karlsruhe, Allemagne — serveurs à Nuremberg (UE)</td></tr>
-                    <tr><td><strong>Cloudflare</strong></td><td>Acheminement du trafic, protection réseau et génération des certificats</td><td>Réseau mondial ; le trafic européen est traité au sein de l'UE</td></tr>
+                    <tr><td><strong>Cloudflare</strong></td><td>Acheminement du trafic, protection réseau, génération des certificats, et <strong>stockage des sauvegardes chiffrées</strong> (R2)</td><td>Réseau mondial ; le trafic européen est traité au sein de l'UE ; les sauvegardes sont stockées dans l'UE</td></tr>
                 </tbody>
             </table>
         </div>
@@ -527,6 +529,7 @@
         <p>En application de l'article 28.3.g du RGPD, au terme de la relation, le Sous-traitant <strong>supprime</strong> les données du serveur concerné.</p>
         <ul>
             <li>Lorsque le robot est <strong>retiré d'un serveur</strong>, les données de ce serveur sont supprimées après un <strong>délai de grâce de 7 jours</strong>, destiné à couvrir un retrait accidentel. Réinviter le robot avant l'échéance annule la suppression.</li>
+            <li>Les données supprimées peuvent subsister <strong>15 jours au plus</strong> dans les sauvegardes chiffrées, avant d'être effacées par leur rotation.</li>
             <li><strong>Exception</strong> : les <strong>bannissements encore en vigueur</strong> ne sont pas effacés, puisqu'ils produisent toujours leurs effets. Le Sous-traitant en vérifie le statut auprès de Discord et s'abstient de purger lorsque cette vérification est impossible.</li>
             <li>Compte tenu de la nature des données (identifiants techniques réutilisables à tout moment depuis Discord), la <strong>restitution</strong> n'a pas d'objet : le Responsable conserve à tout instant l'accès à son propre serveur. La suppression est donc le mode de sortie par défaut.</li>
         </ul>
@@ -596,13 +599,14 @@
             <table>
                 <thead><tr><th>Version</th><th>Date</th><th>Modifications</th></tr></thead>
                 <tbody>
-                    <tr><td><strong>1.0</strong></td><td>28 août 2026</td><td>Version initiale. Contractualise le partage des rôles décrit dans les CGU (§ 6.9) et la politique de confidentialité (§ 4.9). Couvre l'ensemble de l'article 28.3 du RGPD. Engagement de notification des violations sous 24 heures. Mécanisme de traitement des demandes des personnes par catégorie.</td></tr>
+                    <tr><td><strong>1.1</strong></td><td>2 novembre 2026</td><td>Sauvegardes chiffrées stockées chez Cloudflare (R2, UE) : articles 7, 8 et 12. Nouveau rôle d'un sous-traitant ultérieur : nouvelle acceptation requise (article 16).</td></tr>
+                    <tr><td>1.0</td><td>28 août 2026</td><td>Version initiale. Contractualise le partage des rôles décrit dans les CGU (§ 6.9) et la politique de confidentialité (§ 4.9). Couvre l'ensemble de l'article 28.3 du RGPD. Engagement de notification des violations sous 24 heures. Mécanisme de traitement des demandes des personnes par catégorie.</td></tr>
                 </tbody>
             </table>
         </div>
 
         <footer class="legal-footer">
-            <p>Contrat de sous-traitance — Instance Quasar hébergée par Venacity · Version 1.0 (28 août 2026)<br>
+            <p>Contrat de sous-traitance — Instance Quasar hébergée par Venacity · Version 1.1 (2 novembre 2026)<br>
             Logiciel libre sous licence AGPL-3.0 — <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener noreferrer">code source</a> · <a href="https://vena.city" target="_blank" rel="noopener noreferrer">Venacity</a></p>
         </footer>
     </div>

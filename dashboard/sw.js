@@ -21,7 +21,7 @@ const APP_SHELL = [
   '/dashboard/js/pages/customcmds.js',
   '/dashboard/js/pages/tempvoice.js',
   '/dashboard/js/app.js',
-  '/dashboard/icon.png',
+  '/dashboard/icons/icon-192.png?v=__VERSION__',
 ];
 
 const IMMUTABLE_EXT = /\.(png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$/;
