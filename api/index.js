@@ -957,6 +957,11 @@ function createApi(discordClient, mode = 'bot') {
     app.set('vitrineMounted', mode === 'public');
     app.use('/api', nouveautesRoutes);
     app.use('/api', instanceRoutes);
+    // Compteur de serveurs de la vitrine : en `public` seulement, le seul mode
+    // qui sert une vitrine ET fait tourner un robot. Voir routes/publicStats.js.
+    if (mode === 'public') {
+        app.use('/api', require('./routes/publicStats')());
+    }
 
     mountDashboard(app);
 

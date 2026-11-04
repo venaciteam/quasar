@@ -89,6 +89,17 @@
             line-height: var(--leading-relaxed);
         }
         .quasar-path__btns { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); }
+        /* Compteur de l'instance : une ligne discrète sous la description, le
+           chiffre seul en couleur d'accent. [hidden] réaffirmé : la moindre règle
+           display posée plus tard sur ce bloc l'emporterait sinon sur l'attribut. */
+        .quasar-path__stat {
+            margin: 0;
+            font-size: var(--text-xs);
+            color: var(--text-secondary);
+            line-height: var(--leading-relaxed);
+        }
+        .quasar-path__stat strong { color: var(--accent); font-weight: var(--font-semibold); }
+        .quasar-path__stat[hidden] { display: none !important; }
 
         /* ── Terminal d'installation (dans la carte « Autohébergement ») ───── */
         .quasar-term {
@@ -231,6 +242,17 @@
                     Venacity. Rien à héberger, rien à configurer sur votre machine — vous vous
                     connectez avec Discord et le dashboard est là.
                 </p>
+                <!-- Compteur de l'instance Venacity, rempli par le script en bas de
+                     page depuis /api/public/stats (cf. api/routes/publicStats.js).
+                     Masqué tant que l'API n'a pas répondu, et pour de bon si elle
+                     échoue : aucun « … » ni zéro trompeur. Il ne compte QUE
+                     l'instance Venacity ; les instances auto-hébergées ne
+                     remontent rien et ne sont jamais incluses. -->
+                <p class="quasar-path__stat" id="instance-stats" hidden>
+                    L'instance de Venacity est présente sur
+                    <strong data-stat="servers"></strong> <span data-stat="unit"></span> Discord.
+                    Les instances auto-hébergées ne sont pas comptées : elles ne communiquent rien.
+                </p>
                 <div class="quasar-path__btns">
                     <a href="/dashboard" class="vnct-btn vnct-btn--primary">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
@@ -320,5 +342,25 @@
     </main>
 
     {{> scripts}}
+    <script>
+      // Compteur de l'instance (carte « Sans rien installer »). La carte n'existe
+      // que lorsque le serveur l'a gardée dans le HTML : sans elle, aucun appel.
+      // Tout échec — 404 en mode `site`, 503 robot déconnecté, réseau, réponse
+      // inattendue — laisse la ligne masquée.
+      (function () {
+        var bloc = document.getElementById('instance-stats');
+        if (!bloc || !window.fetch) return;
+        fetch('/api/public/stats', { headers: { Accept: 'application/json' } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            var n = data && data.servers;
+            if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) return;
+            bloc.querySelector('[data-stat="servers"]').textContent = n.toLocaleString('fr-FR');
+            bloc.querySelector('[data-stat="unit"]').textContent = n > 1 ? 'serveurs' : 'serveur';
+            bloc.hidden = false;
+          })
+          .catch(function () {});
+      })();
+    </script>
 </body>
 </html>
