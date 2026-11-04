@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('disc
 const fs = require('fs');
 const path = require('path');
 const { getDb, CUSTOM_CMD_ACCESS_MODES, effectiveAccessMode } = require('../../api/services/database');
+const legal = require('../../api/services/legalJournal');
 const { hasMentions, silentMentions } = require('../../api/services/mentions');
 const { userError } = require('../utils/errors');
 const { DISABLED_COMMAND_FILES } = require('../utils/disabledCommands');
@@ -241,12 +242,16 @@ function erreurMetier(code, cause, action) {
  *      ligne écrasée. En cas d'échec, SQLite annule tout : ni doublon, ni
  *      ligne perdue.
  *
- * @param {{fields?: object, newName?: string|null}} changes
+ * Elle porte aussi la ligne du journal de conservation (LCEN) quand `who` est
+ * fourni : `legal.fromRequest(req)` pour le dashboard, `legal.fromInteraction`
+ * pour `/cmd edit`. Un changement qui ne touche que l'accès n'en écrit aucune.
+ *
+ * @param {{fields?: object, newName?: string|null, who?: object|null}} changes
  * @returns {{ok:true, name:string}|{error:{code:string, cause:string, action:string}}}
  *          codes d'erreur : 'INTROUVABLE' (la ligne n'existe plus) et
  *          'COLLISION' (le nom visé a été pris entre-temps).
  */
-function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = null } = {}) {
+function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = null, who = null } = {}) {
     const colonnes = Object.keys(fields);
     for (const colonne of colonnes) {
         // Garde-fou de programmation, pas de validation d'entrée utilisateur :
@@ -265,6 +270,7 @@ function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = 
                 'Vérifiez la liste des commandes : elle a peut-être été supprimée ou renommée entre-temps.'
             );
         }
+        const before = legal.snapshots.customCommand(db, guildId, currentName);
 
         if (colonnes.length > 0) {
             db.prepare(`UPDATE custom_commands SET ${colonnes.map(c => `${c} = ?`).join(', ')} WHERE guild_id = ? AND name = ?`)
@@ -282,6 +288,14 @@ function updateCustomCommand(db, guildId, currentName, { fields = {}, newName = 
             }
             db.prepare('UPDATE custom_commands SET name = ? WHERE guild_id = ? AND name = ?')
                 .run(newName, guildId, currentName);
+        }
+
+        if (who) {
+            const finalName = renomme ? newName : currentName;
+            legal.recordChange(db, who, {
+                contentId: `${guildId}:${finalName}`, contentType: 'custom_command',
+                before, after: legal.snapshots.customCommand(db, guildId, finalName),
+            });
         }
     });
 
@@ -413,8 +427,13 @@ module.exports = {
                 // historique des commandes personnalisées.
                 const modeCree = accesMode || 'everyone';
 
-                db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
-                    .run(interaction.guild.id, nom, reponse || null, embedId, modeCree, accesRoleId);
+                db.transaction(() => {
+                    db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
+                        .run(interaction.guild.id, nom, reponse || null, embedId, modeCree, accesRoleId);
+                    legal.record(db, legal.fromInteraction(interaction), {
+                        contentId: `${interaction.guild.id}:${nom}`, contentType: 'custom_command', operation: 'create',
+                    });
+                })();
 
                 // Déployer la commande slash
                 await deployCustomCommand(interaction.guild.id, nom, reponse);
@@ -466,7 +485,9 @@ module.exports = {
                     fields.access_role_id = accesRoleId;
                 }
 
-                const ecriture = updateCustomCommand(db, interaction.guild.id, nom, { fields, newName: renommage });
+                const ecriture = updateCustomCommand(db, interaction.guild.id, nom, {
+                    fields, newName: renommage, who: legal.fromInteraction(interaction),
+                });
                 if (ecriture.error) return userError(interaction, {
                     title: renommage ? 'Renommage impossible' : 'Modification impossible',
                     cause: ecriture.error.cause,
@@ -505,7 +526,15 @@ module.exports = {
 
         } else if (sub === 'delete') {
             const nom = interaction.options.getString('nom').toLowerCase();
-            const result = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
+            const result = db.transaction(() => {
+                const r = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
+                if (r.changes > 0) {
+                    legal.record(db, legal.fromInteraction(interaction), {
+                        contentId: `${interaction.guild.id}:${nom}`, contentType: 'custom_command', operation: 'delete',
+                    });
+                }
+                return r;
+            })();
 
             if (result.changes === 0) return userError(interaction, {
                     title: 'Commande introuvable',

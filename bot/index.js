@@ -537,6 +537,14 @@ async function demarrerServices(client) {
         console.error('[Quasar] Erreur démarrage rétention:', e.message || e);
     }
 
+    // Journal de conservation LCEN — purge des lignes de plus de 365 jours, au
+    // démarrage puis toutes les 24 heures (api/services/legalJournal.js).
+    try {
+        require('../api/services/legalJournal').start(getDb);
+    } catch (e) {
+        console.error('[Quasar] Erreur démarrage purge du journal de conservation:', e.message || e);
+    }
+
     // Notification de violation (art. 33) — Boucle qui dépile et envoie les
     // notifications enfilées depuis le dashboard owner.
     try {

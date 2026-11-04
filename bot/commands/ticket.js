@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, Act
 const { getDb } = require('../../api/services/database');
 const { buildTranscriptFile, deliverTranscript } = require('../utils/transcriptArchive');
 const { userError } = require('../utils/errors');
+const legal = require('../../api/services/legalJournal');
 
 const ACCENT_COLOR = 0xDE3163;
 
@@ -116,7 +117,12 @@ module.exports = {
                 }
             }
 
-            db.prepare(`
+            // Ligne du journal de conservation (LCEN) dans la même transaction,
+            // seulement si le message d'accueil change.
+            legal.withJournal(db, legal.fromInteraction(interaction), {
+                contentId: guildId, contentType: 'ticket_texts',
+                snapshot: () => legal.snapshots.ticketTexts(db, guildId),
+            }, () => db.prepare(`
                 INSERT INTO ticket_config (guild_id, channel_id, category_id, staff_role_id, welcome_message, enabled)
                 VALUES (?, ?, ?, ?, ?, 1)
                 ON CONFLICT(guild_id) DO UPDATE SET
@@ -125,7 +131,7 @@ module.exports = {
                     staff_role_id = excluded.staff_role_id,
                     welcome_message = excluded.welcome_message,
                     enabled = 1
-            `).run(guildId, channel.id, category?.id || null, staffRole.id, welcomeMessage);
+            `).run(guildId, channel.id, category?.id || null, staffRole.id, welcomeMessage));
 
             const panelConfig = db.prepare('SELECT panel_title, panel_description FROM ticket_config WHERE guild_id = ?').get(guildId);
 

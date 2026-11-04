@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
+const legal = require('../../api/services/legalJournal');
 
 // Vérifie que l'utilisateur est dans un vocal temporaire dont il est owner
 function getOwnedChannel(interaction) {
@@ -91,11 +92,14 @@ module.exports = {
             const name = interaction.options.getString('nom');
             await channel.setName(name);
 
-            db.prepare(`
-                INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
-                VALUES (?, ?, ?, ?, unixepoch())
-                ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
-            `).run(guildId, userId, categoryId, name);
+            // Nom choisi par le membre et publié par le robot : ligne du journal
+            // de conservation (LCEN) dans la même transaction.
+            legal.withJournal(db, legal.fromInteraction(interaction), legal.tempvoiceName(db, guildId, userId, categoryId),
+                () => db.prepare(`
+                    INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
+                    VALUES (?, ?, ?, ?, unixepoch())
+                    ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
+                `).run(guildId, userId, categoryId, name));
 
             return interaction.reply({ content: `✅ Salon renommé en **${name}**`, ephemeral: true });
         }
@@ -166,8 +170,9 @@ module.exports = {
         }
 
         if (sub === 'reset') {
-            db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
-                .run(guildId, userId, categoryId);
+            legal.withJournal(db, legal.fromInteraction(interaction), legal.tempvoiceName(db, guildId, userId, categoryId),
+                () => db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
+                    .run(guildId, userId, categoryId));
             return interaction.reply({ content: '✅ Vos préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
         }
     }

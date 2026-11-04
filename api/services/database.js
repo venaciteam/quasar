@@ -343,6 +343,27 @@ function initTables() {
             purge_after INTEGER NOT NULL
         );
 
+        -- Journal de conservation LCEN (art. 6, V ; décrets 2021-1362 et 2026-920).
+        -- FINALITÉ UNIQUE : obligation légale. Le code l'écrit et le purge, rien
+        -- d'autre : aucune route ni aucun module ne le lit (un test le vérifie),
+        -- seul scripts/legal-export.js l'extrait, lancé à la main. Voir
+        -- api/services/legalJournal.js et VNCT-Conservation-LCEN-DA.md.
+        -- Ni clé étrangère ni guild_id : la ligne doit survivre à la suppression
+        -- du contenu, à la purge d'un serveur quitté et à l'effacement d'un
+        -- membre. Purge à 365 jours, ligne par ligne.
+        CREATE TABLE IF NOT EXISTS legal_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            operation TEXT NOT NULL
+                CHECK (operation IN ('create', 'update', 'delete', 'delete_cascade')),
+            occurred_at TEXT NOT NULL,             -- ISO 8601 UTC à la seconde
+            ip TEXT,
+            protocol TEXT,
+            author_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_legal_journal_occurred ON legal_journal(occurred_at);
+
         -- Indexes pour les performances
         CREATE INDEX IF NOT EXISTS idx_pending_purges_due ON pending_guild_purges(purge_after);
         CREATE INDEX IF NOT EXISTS idx_sanctions_guild ON sanctions(guild_id);

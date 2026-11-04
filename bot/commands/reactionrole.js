@@ -2,6 +2,17 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = 
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
 const { checkAssignableRole, describeRefusal } = require('../utils/assignableRole');
+const legal = require('../../api/services/legalJournal');
+
+// Journal de conservation (LCEN) d'un panneau : les entrées en font partie, leur
+// ajout ou leur retrait est une modification du panneau publié.
+function panelJournal(db, interaction, panel) {
+    return {
+        contentId: `${interaction.guild.id}:${panel.id}`,
+        contentType: 'reaction_panel',
+        snapshot: () => legal.snapshots.reactionPanel(db, panel.id),
+    };
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -53,13 +64,17 @@ module.exports = {
             const description = interaction.options.getString('description') || 'Cliquez sur un emoji pour obtenir le rôle correspondant.';
             const mode = interaction.options.getString('mode') || 'multiple';
 
-            // Créer le panel en DB
-            const result = db.prepare(`
-                INSERT INTO reaction_panels (guild_id, channel_id, title, mode)
-                VALUES (?, ?, ?, ?)
-            `).run(interaction.guild.id, channel.id, titre, mode);
-
-            const panelId = result.lastInsertRowid;
+            // Créer le panel en DB, avec sa ligne du journal de conservation (LCEN)
+            const panelId = db.transaction(() => {
+                const id = db.prepare(`
+                    INSERT INTO reaction_panels (guild_id, channel_id, title, mode)
+                    VALUES (?, ?, ?, ?)
+                `).run(interaction.guild.id, channel.id, titre, mode).lastInsertRowid;
+                legal.record(db, legal.fromInteraction(interaction), {
+                    contentId: `${interaction.guild.id}:${id}`, contentType: 'reaction_panel', operation: 'create',
+                });
+                return id;
+            })();
 
             // Poster l'embed dans le channel
             const embed = new EmbedBuilder()
@@ -109,11 +124,12 @@ module.exports = {
             const refusal = checkAssignableRole(interaction.guild, role);
             if (refusal) return userError(interaction, describeRefusal(refusal, role));
 
-            db.prepare(`
-                INSERT INTO reaction_roles (panel_id, emoji, role_id, description)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?
-            `).run(panelId, emoji, role.id, description, role.id, description);
+            legal.withJournal(db, legal.fromInteraction(interaction), panelJournal(db, interaction, panel),
+                () => db.prepare(`
+                    INSERT INTO reaction_roles (panel_id, emoji, role_id, description)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?
+                `).run(panelId, emoji, role.id, description, role.id, description));
 
             await interaction.reply({
                 embeds: [new EmbedBuilder()
@@ -148,7 +164,8 @@ module.exports = {
                 action: 'Retrouvez le bon identifiant avec `/reactionrole list`.',
             });
 
-            db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji);
+            legal.withJournal(db, legal.fromInteraction(interaction), panelJournal(db, interaction, panel),
+                () => db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji));
 
             await interaction.reply({ content: `✅ Emoji ${emoji} retiré du panel #${panelId}.`, ephemeral: true });
 
@@ -177,7 +194,8 @@ module.exports = {
                 await msg?.delete();
             } catch {} // Message or channel may already be deleted
 
-            db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId);
+            legal.withJournal(db, legal.fromInteraction(interaction), panelJournal(db, interaction, panel),
+                () => db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId));
 
             await interaction.reply({ content: `✅ Panel #${panelId} supprimé.`, ephemeral: true });
 

@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
 const { SNOWFLAKE } = require('../services/mentions');
+const legal = require('../services/legalJournal');
 const router = express.Router({ mergeParams: true });
 
 // ═══════════════════════════════════════════════════════════════
@@ -187,18 +188,35 @@ router.put('/config', requireAuth, requireGuildAdmin, (req, res) => {
     const d = verdict.value;
 
     const db = getDb();
-    db.prepare('INSERT OR IGNORE INTO welcome_config (guild_id) VALUES (?)').run(req.params.guildId);
-    db.prepare(`UPDATE welcome_config SET
-        welcome_channel = ?, welcome_message = ?, welcome_embed = ?, welcome_enabled = ?,
-        leave_channel = ?, leave_message = ?, leave_embed = ?, leave_enabled = ?
-        WHERE guild_id = ?
-    `).run(
-        d.welcome_channel, d.welcome_message,
-        d.welcome_embed ? JSON.stringify(d.welcome_embed) : null, d.welcome_enabled,
-        d.leave_channel, d.leave_message,
-        d.leave_embed ? JSON.stringify(d.leave_embed) : null, d.leave_enabled,
-        req.params.guildId
-    );
+    const guildId = req.params.guildId;
+    const who = legal.fromRequest(req);
+    // Écriture et lignes du journal de conservation (LCEN) dans la même
+    // transaction : une ligne par texte publié qui change (bienvenue, départ),
+    // aucune quand seuls le salon ou l'interrupteur bougent.
+    db.transaction(() => {
+        const before = {
+            welcome: legal.snapshots.welcome(db, guildId, 'welcome'),
+            leave: legal.snapshots.welcome(db, guildId, 'leave'),
+        };
+        db.prepare('INSERT OR IGNORE INTO welcome_config (guild_id) VALUES (?)').run(guildId);
+        db.prepare(`UPDATE welcome_config SET
+            welcome_channel = ?, welcome_message = ?, welcome_embed = ?, welcome_enabled = ?,
+            leave_channel = ?, leave_message = ?, leave_embed = ?, leave_enabled = ?
+            WHERE guild_id = ?
+        `).run(
+            d.welcome_channel, d.welcome_message,
+            d.welcome_embed ? JSON.stringify(d.welcome_embed) : null, d.welcome_enabled,
+            d.leave_channel, d.leave_message,
+            d.leave_embed ? JSON.stringify(d.leave_embed) : null, d.leave_enabled,
+            guildId
+        );
+        for (const kind of ['welcome', 'leave']) {
+            legal.recordChange(db, who, {
+                contentId: guildId, contentType: `${kind}_message`,
+                before: before[kind], after: legal.snapshots.welcome(db, guildId, kind),
+            });
+        }
+    })();
     res.json({ success: true });
 });
 

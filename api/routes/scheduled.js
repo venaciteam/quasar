@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
 const { computeNextRun, getGuildTimezone } = require('../../bot/modules/scheduler');
+const legal = require('../services/legalJournal');
 
 const router = express.Router({ mergeParams: true });
 
@@ -164,19 +165,26 @@ router.post('/', requireAuth, requireGuildAdmin, (req, res) => {
     const tz = getGuildTimezone(req.params.guildId);
     const next = computeNextRun(data, Date.now(), tz);
 
-    const result = db.prepare(`
-        INSERT INTO scheduled_messages
-        (guild_id, name, channel_id, content_type, content_text, embed_id,
-         mention_roles, mention_users, mention_everyone, mention_here,
-         schedule_type, schedule_time, schedule_day, schedule_days, schedule_date,
-         next_run, enabled, created_at, updated_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        req.params.guildId, data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
-        data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
-        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
-        next ? Math.floor(next / 1000) : null, data.enabled, nowSec, nowSec, req.user?.id || null
-    );
+    // Écriture et ligne du journal de conservation (LCEN) dans la même transaction.
+    const result = db.transaction(() => {
+        const r = db.prepare(`
+            INSERT INTO scheduled_messages
+            (guild_id, name, channel_id, content_type, content_text, embed_id,
+             mention_roles, mention_users, mention_everyone, mention_here,
+             schedule_type, schedule_time, schedule_day, schedule_days, schedule_date,
+             next_run, enabled, created_at, updated_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            req.params.guildId, data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
+            data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
+            data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
+            next ? Math.floor(next / 1000) : null, data.enabled, nowSec, nowSec, req.user?.id || null
+        );
+        legal.record(db, legal.fromRequest(req), {
+            contentId: `${req.params.guildId}:${r.lastInsertRowid}`, contentType: 'scheduled_message', operation: 'create',
+        });
+        return r;
+    })();
 
     res.json({
         success: true,
@@ -206,20 +214,29 @@ router.put('/:id', requireAuth, requireGuildAdmin, (req, res) => {
     const tz = getGuildTimezone(req.params.guildId);
     const next = computeNextRun(data, Date.now(), tz);
 
-    db.prepare(`
-        UPDATE scheduled_messages SET
-            name = ?, channel_id = ?, content_type = ?, content_text = ?, embed_id = ?,
-            mention_roles = ?, mention_users = ?, mention_everyone = ?, mention_here = ?,
-            schedule_type = ?, schedule_time = ?, schedule_day = ?, schedule_days = ?, schedule_date = ?,
-            next_run = ?, enabled = ?, updated_at = ?
-        WHERE id = ? AND guild_id = ?
-    `).run(
-        data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
-        data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
-        data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
-        next ? Math.floor(next / 1000) : null, data.enabled, nowSec,
-        id, req.params.guildId
-    );
+    // Une ligne du journal (LCEN) seulement si le contenu publié change : un
+    // simple changement d'horaire ou de salon n'en écrit pas.
+    db.transaction(() => {
+        const before = legal.snapshots.scheduled(db, id);
+        db.prepare(`
+            UPDATE scheduled_messages SET
+                name = ?, channel_id = ?, content_type = ?, content_text = ?, embed_id = ?,
+                mention_roles = ?, mention_users = ?, mention_everyone = ?, mention_here = ?,
+                schedule_type = ?, schedule_time = ?, schedule_day = ?, schedule_days = ?, schedule_date = ?,
+                next_run = ?, enabled = ?, updated_at = ?
+            WHERE id = ? AND guild_id = ?
+        `).run(
+            data.name, data.channel_id, data.content_type, data.content_text, data.embed_id,
+            data.mention_roles, data.mention_users, data.mention_everyone, data.mention_here,
+            data.schedule_type, data.schedule_time, data.schedule_day, data.schedule_days, data.schedule_date,
+            next ? Math.floor(next / 1000) : null, data.enabled, nowSec,
+            id, req.params.guildId
+        );
+        legal.recordChange(db, legal.fromRequest(req), {
+            contentId: `${req.params.guildId}:${id}`, contentType: 'scheduled_message',
+            before, after: legal.snapshots.scheduled(db, id),
+        });
+    })();
 
     res.json({ success: true, next_run: next ? Math.floor(next / 1000) : null });
 });
@@ -248,8 +265,15 @@ router.post('/:id/toggle', requireAuth, requireGuildAdmin, (req, res) => {
 // DELETE /api/guilds/:guildId/scheduled/:id
 router.delete('/:id', requireAuth, requireGuildAdmin, (req, res) => {
     const db = getDb();
-    db.prepare('DELETE FROM scheduled_messages WHERE id = ? AND guild_id = ?')
-        .run(req.params.id, req.params.guildId);
+    db.transaction(() => {
+        const { changes } = db.prepare('DELETE FROM scheduled_messages WHERE id = ? AND guild_id = ?')
+            .run(req.params.id, req.params.guildId);
+        if (changes > 0) {
+            legal.record(db, legal.fromRequest(req), {
+                contentId: `${req.params.guildId}:${Number(req.params.id)}`, contentType: 'scheduled_message', operation: 'delete',
+            });
+        }
+    })();
     res.json({ success: true });
 });
 
