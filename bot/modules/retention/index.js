@@ -4,6 +4,17 @@
 //  Applique les durées de conservation : purge des serveurs quittés une fois le
 //  délai de grâce écoulé. Tourne toutes les heures ; la granularité fine est
 //  inutile ici, ces échéances se comptent en jours ou en mois.
+//
+//  ⚠️ Ce module reçoit l'ADAPTATEUR de plateforme, pas le client natif. Il lisait
+//  `client.guilds.cache` — invisible au test d'étanchéité, puisqu'il n'importe
+//  pas discord.js, mais parfaitement inopérant hors Discord. Et ce n'est pas un
+//  module comme un autre : il SUPPRIME des données. Un cache d'une forme
+//  inattendue y aurait été lu comme « le bot n'est sur aucun serveur », donc
+//  comme une invitation à tout programmer en purge.
+//
+//  `api.listerGuildes()` dit la différence que le cache ne savait pas exprimer :
+//  `null` = connexion incomplète, on ne touche à rien ; `[]` = connecté et
+//  réellement sur aucun serveur.
 // ═══════════════════════════════════════════════════════════════
 
 const { getDb } = require('../../../api/services/database');
@@ -49,13 +60,16 @@ function getGraceDays() {
  * données restent indéfiniment — et un bot réinvité hors ligne verrait ses données
  * supprimées alors qu'il est bel et bien dans le serveur.
  */
-function reconcileGuilds(client) {
-    // Garde-fou : un cache vide signale une connexion incomplète, pas un bot sans
-    // serveur. Programmer des purges dans cet état serait catastrophique.
-    if (!client?.guilds?.cache || client.guilds.cache.size === 0) {
-        console.log('[Quasar Rétention] Cache des serveurs vide — réconciliation ignorée par précaution.');
+async function reconcileGuilds(adaptateur) {
+    // Garde-fou : une liste INDÉTERMINABLE signale une connexion incomplète, pas
+    // un bot sans serveur. Programmer des purges dans cet état serait
+    // catastrophique. `[]` est une réponse, `null` n'en est pas une.
+    const liste = adaptateur?.api ? await adaptateur.api.listerGuildes().catch(() => null) : null;
+    if (!liste) {
+        console.log('[Quasar Rétention] Liste des serveurs indisponible — réconciliation ignorée par précaution.');
         return { scheduled: 0, cancelled: 0 };
     }
+    const presentes = new Set(liste);
 
     const db = getDb();
     const graceDays = getGraceDays();
@@ -64,7 +78,7 @@ function reconcileGuilds(client) {
     let cancelled = 0;
     const pending = db.prepare('SELECT guild_id FROM pending_guild_purges').all();
     for (const row of pending) {
-        if (!client.guilds.cache.has(row.guild_id)) continue;
+        if (!presentes.has(row.guild_id)) continue;
         db.prepare('DELETE FROM pending_guild_purges WHERE guild_id = ?').run(row.guild_id);
         cancelled++;
     }
@@ -76,7 +90,7 @@ function reconcileGuilds(client) {
     const known = db.prepare('SELECT guild_id FROM guilds WHERE guild_id != ?').all(INSTANCE_ROW_ID);
     let scheduled = 0;
     for (const row of known) {
-        if (client.guilds.cache.has(row.guild_id)) continue;
+        if (presentes.has(row.guild_id)) continue;
 
         const alreadyPending = db.prepare('SELECT 1 FROM pending_guild_purges WHERE guild_id = ?')
             .get(row.guild_id);
@@ -95,9 +109,9 @@ function reconcileGuilds(client) {
     return { scheduled, cancelled };
 }
 
-async function tick(client) {
+async function tick(adaptateur) {
     try {
-        reconcileGuilds(client);
+        await reconcileGuilds(adaptateur);
     } catch (err) {
         console.error('[Quasar Rétention] Erreur de réconciliation :', err.message);
     }
@@ -116,7 +130,7 @@ async function tick(client) {
 
     // Sanctions échues, serveur par serveur, selon la durée fixée par chaque admin.
     try {
-        const results = await purgeAllSanctions(client);
+        const results = await purgeAllSanctions(adaptateur);
         for (const entry of results) {
             const kept = entry.keptActiveBans > 0
                 ? ` — ${entry.keptActiveBans} bannissement(s) en vigueur conservé(s)`
@@ -133,7 +147,8 @@ async function tick(client) {
     }
 }
 
-function start(client) {
+/** @param {object} adaptateur adaptateur de plateforme */
+function start(adaptateur) {
     if (tickHandle) return;
 
     const graceDays = getGraceDays();
@@ -145,7 +160,7 @@ function start(client) {
 
     // tick() gère ses propres erreurs ; ce catch ne couvre que l'imprévu, pour ne
     // pas transformer un incident de purge en rejet de promesse non traité.
-    const safeTick = () => Promise.resolve(tick(client))
+    const safeTick = () => Promise.resolve(tick(adaptateur))
         .catch(err => console.error('[Quasar Rétention] Erreur inattendue :', err.message));
 
     bootHandle = setTimeout(safeTick, BOOT_DELAY_MS);

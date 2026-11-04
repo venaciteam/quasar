@@ -1,26 +1,29 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const { getDb } = require('../../api/services/database');
+const { definirCommande } = require('../platform/commands');
+const { embed } = require('../platform/embed');
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('warns')
-        .setDescription('Voir les avertissements d\'un membre')
-        .addUserOption(opt => opt.setName('membre').setDescription('Le membre à vérifier').setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+module.exports = definirCommande({
+    nom: 'warns',
+    description: 'Voir les avertissements d\'un membre',
+    permission: 'MODERATE_MEMBERS',
+    // Lecture seule en base, puis une réponse : rien à demander à la plateforme.
+    permissionsBot: [],
 
-    async execute(interaction) {
-        const target = interaction.options.getUser('membre');
-        const db = getDb();
+    options: [
+        { nom: 'membre', type: 'utilisateur', requis: true, description: 'Le membre à vérifier' },
+    ],
 
-        const warns = db.prepare(`
+    async executer(ctx) {
+        const cible = ctx.options.get('membre');
+
+        const warns = ctx.db.prepare(`
             SELECT id, moderator_id, reason, created_at, active
             FROM sanctions
             WHERE guild_id = ? AND user_id = ? AND type = 'warn'
             ORDER BY created_at DESC
-        `).all(interaction.guild.id, target.id);
+        `).all(ctx.guildeId, cible.id);
 
         if (warns.length === 0) {
-            return interaction.reply({ content: `✅ ${target} n'a aucun avertissement.`, ephemeral: true });
+            return ctx.repondre(`✅ ${cible.mention} n'a aucun avertissement.`, { ephemere: true });
         }
 
         const activeWarns = warns.filter(w => w.active);
@@ -30,13 +33,12 @@ module.exports = {
             return `${status} **#${w.id}** — ${w.reason} (par <@${w.moderator_id}> le ${date})`;
         });
 
-        const embed = new EmbedBuilder()
-            .setTitle(`📋 Avertissements de ${target.tag}`)
-            .setColor(0xf1c40f)
-            .setDescription(lines.join('\n'))
-            .setFooter({ text: `${activeWarns.length} actif(s) / ${warns.length} total` })
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
-    }
-};
+        await ctx.repondre(embed({
+            titre: `📋 Avertissements de ${cible.etiquette}`,
+            couleur: 0xf1c40f,
+            description: lines.join('\n'),
+            pied: { texte: `${activeWarns.length} actif(s) / ${warns.length} total` },
+            horodatage: true,
+        }));
+    },
+});

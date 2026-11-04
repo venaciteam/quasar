@@ -35,29 +35,39 @@ function seedTempBan(db) {
 }
 
 /**
- * Client Discord minimal. `onUnban` permet de bloquer ou de faire échouer la
- * levée, `onLog` l'envoi du message de fin de bannissement.
+ * Adaptateur de plateforme minimal. `onUnban` permet de bloquer ou de faire
+ * échouer la levée, `onLog` l'envoi du message de fin de bannissement.
+ *
+ * Le balayeur n'accepte plus le `Client` discord.js depuis la consolidation :
+ * son garde « connexion incomplète » lit `moi.id`, qui distingue « pas encore
+ * connecté » de « sur aucun serveur » — ce que le cache ne savait pas dire.
+ *
+ * Les erreurs de levée sont marquées d'un `codeNeutre`, comme le ferait
+ * l'adaptateur réel : c'est sur lui, et non sur un numéro Discord, que le
+ * balayeur décide de retenter ou d'abandonner.
  */
 function makeClient({ onUnban = null, onLog = null } = {}) {
     const unbans = [];
     const logs = [];
-    const logChannel = {
-        send: async (payload) => {
-            logs.push(payload);
-            if (onLog) await onLog();
-        },
-    };
-    const guild = {
-        id: GUILD,
-        channels: { cache: new Map([[LOG_CHANNEL, logChannel]]) },
-        bans: {
-            remove: async (userId, reason) => {
-                unbans.push({ userId, reason });
-                if (onUnban) await onUnban();
+    return {
+        client: {
+            moi: { id: '222222222222222222', nom: 'Quasar#0000' },
+            api: {
+                async debannirMembre(guildeId, userId, reason) {
+                    unbans.push({ userId, reason });
+                    if (onUnban) await onUnban();
+                },
+                async envoyerMessage(canalId, contenu) {
+                    if (canalId !== LOG_CHANNEL) throw new Error(`salon inattendu ${canalId}`);
+                    logs.push(contenu);
+                    if (onLog) await onLog();
+                    return { id: '1', canalId };
+                },
             },
         },
+        unbans,
+        logs,
     };
-    return { client: { guilds: { cache: new Map([[GUILD, guild]]) } }, unbans, logs };
 }
 
 function banRow(db) {
@@ -107,7 +117,11 @@ test('permission manquante : l\'échéance est conservée pour une nouvelle tent
     seedTempBan(db);
 
     const denied = makeClient({
-        onUnban: () => { const e = new Error('Missing Permissions'); e.code = 50013; throw e; },
+        onUnban: () => {
+            const e = new Error('Missing Permissions');
+            e.codeNeutre = 'permission';
+            throw e;
+        },
     });
     await sweepExpiredBans(denied.client);
 
@@ -125,7 +139,7 @@ test('une exception dans un balayage ne bloque pas la boucle pour toujours', asy
     seedGuild(db);
     seedTempBan(db);
 
-    const poison = { get guilds() { throw new Error('cache indisponible'); } };
+    const poison = { get api() { throw new Error('adaptateur indisponible'); } };
     await assert.rejects(() => sweepExpiredBans(poison));
 
     const { client, unbans } = makeClient();
@@ -140,6 +154,6 @@ test('connexion incomplète : aucune échéance supprimée', async () => {
 
     // Sans garde-fou, la ligne serait supprimée comme si le bot avait été retiré
     // du serveur : le bannissement temporaire deviendrait définitif.
-    await sweepExpiredBans({ guilds: { cache: new Map() } });
+    await sweepExpiredBans({ moi: { id: null }, api: {} });
     assert.ok(banRow(db), 'l\'échéance doit survivre à une connexion incomplète');
 });

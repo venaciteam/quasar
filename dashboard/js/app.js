@@ -94,6 +94,14 @@ const REFRESH_MIN_INTERVAL = 4000; // anti-spam des refreshes auto
 // ═══ Init ═══
 async function init() {
     if (!getToken()) { window.location.href = '/'; return; }
+
+    // Capacités de la plateforme AVANT tout rendu : la barre latérale, la vue
+    // d'ensemble et chaque page s'en servent pour ne proposer que ce qui
+    // existe. Non bloquant en cas d'échec — `QuasarPlateforme` retombe alors
+    // sur les capacités de Discord, celles de l'instance en production.
+    await QuasarPlateforme.charger();
+    appliquerCapacitesNav();
+
     const auth = await API.get('/auth/me');
     if (!auth?.authenticated) { localStorage.removeItem('quasar_token'); window.location.href = '/'; return; }
 
@@ -217,6 +225,30 @@ function showUpdateBanner(local, remote) {
     if (main && content) main.insertBefore(banner, content);
 }
 
+// ═══ Capacités : ce que la barre latérale n'a pas à proposer ═══
+//
+// Une entrée de nav qui mène à une page vide est un piège à clic. On retire
+// l'entrée, on ne la grise pas : « indisponible » sans explication ne vaut pas
+// mieux qu'absent, et la page correspondante répondrait de toute façon 404.
+//
+// ⚠️ La page « Modération auto » N'EST PAS masquée : sur ses quatre onglets,
+// trois sont parfaitement portables (escalade des avertissements, anti-raid,
+// salon piège). Seul l'onglet « AutoMod Discord » dépend de la capacité
+// `automod`, et c'est le conteneur d'onglets qui le filtre.
+const PAGES_PAR_CAPACITE = Object.freeze({
+    // La famille musique est coupée depuis juin 2026 et son entrée de sidebar
+    // est en commentaire. L'entrée reste déclarée ici pour que sa réactivation
+    // porte la capacité sans qu'on ait à y penser.
+    music: 'audioBot',
+});
+
+function appliquerCapacitesNav() {
+    for (const [page, capacite] of Object.entries(PAGES_PAR_CAPACITE)) {
+        if (QuasarPlateforme.a(capacite)) continue;
+        document.querySelectorAll(`.sidebar-link[data-page="${page}"]`).forEach(el => el.remove());
+    }
+}
+
 // ═══ Owner-only : révélation des entrées de nav réservées à la propriétaire ═══
 // Réutilise /api/presence, qui renvoie isOwner. Non bloquant : en cas d'échec on
 // laisse les entrées cachées (fail-safe : on ne révèle jamais à tort).
@@ -284,16 +316,20 @@ function showBreachBanner(incident) {
 }
 
 function renderUserInfo() {
-    const avatarUrl = currentUser.avatar
-        ? `https://cdn.discordapp.com/avatars/${currentUser.id}/${currentUser.avatar}.png?size=64`
-        : `https://cdn.discordapp.com/embed/avatars/0.png`;
-    document.getElementById('user-avatar').src = avatarUrl;
+    // Le CDN d'avatars est propre à Discord, et la politique de sécurité de
+    // contenu du dashboard n'autorise que lui : ailleurs, l'image serait
+    // bloquée et laisserait un cadre cassé. `QuasarPlateforme` rend `null` dans
+    // ce cas, et on masque simplement la vignette.
+    const avatarUrl = QuasarPlateforme.avatarPersonne(currentUser.id, currentUser.avatar, 64);
+    const img = document.getElementById('user-avatar');
+    if (avatarUrl) img.src = avatarUrl;
+    else img.style.display = 'none';
     document.getElementById('user-name').textContent = currentUser.username;
 }
 
 function selectGuild(guild) {
     currentGuild = guild;
-    const guildIcon = guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png?size=48` : null;
+    const guildIcon = QuasarPlateforme.iconeServeur(guild.id, guild.icon, 48);
     const guildEl = document.getElementById('guild-info');
     if (guildIcon) {
         guildEl.innerHTML = `<img src="${escapeHtml(guildIcon)}" alt="">`;
@@ -355,8 +391,9 @@ function renderServerMenu() {
 
     list.innerHTML = guilds.map(g => {
         const isCurrent = currentGuild && g.id === currentGuild.id;
-        const iconHtml = g.icon
-            ? `<img src="https://cdn.discordapp.com/icons/${escapeHtml(g.id)}/${escapeHtml(g.icon)}.png?size=32" alt="">`
+        const icone = QuasarPlateforme.iconeServeur(g.id, g.icon, 32);
+        const iconHtml = icone
+            ? `<img src="${escapeHtml(icone)}" alt="">`
             : `<span>${escapeHtml((g.name[0] || '?').toUpperCase())}</span>`;
         const checkSvg = isCurrent
             ? '<svg class="server-menu-item-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
@@ -751,9 +788,15 @@ async function loadOverview(container) {
         { key: 'tempvoice', icon: '🎧', name: 'Vocaux Temp.', desc: 'Salons vocaux créés automatiquement, supprimés quand vides', page: 'tempvoice' },
         { key: 'tickets', icon: '🎫', name: 'Tickets', desc: 'Système de support avec salons privés — transcript remis dans Discord à la fermeture', page: 'tickets' },
         { key: 'scheduled', icon: '⏰', name: 'Rappels', desc: 'Messages programmés et récurrents avec mentions ciblées', page: 'scheduled' }
-        // Musique désactivée — réactiver en décommentant (remettre la virgule ci-dessus)
-        // { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music' }
-    ];
+        // Musique désactivée — réactiver en décommentant (remettre la virgule ci-dessus).
+        // `capacite: 'audioBot'` la retirera d'elle-même sur une plateforme où le
+        // bot ne sait pas publier de flux audio.
+        // { key: 'music', icon: '🎵', name: 'Musique', desc: 'Lecture depuis n\'importe quelle plateforme', page: 'music', capacite: 'audioBot' }
+    ]
+        // Une carte de module que la plateforme ne sait pas rendre n'est pas
+        // « inactive » : elle n'existe pas. L'afficher ferait chercher comment
+        // l'activer.
+        .filter(m => !m.capacite || QuasarPlateforme.a(m.capacite));
 
     container.innerHTML = `
         <div class="main-header">

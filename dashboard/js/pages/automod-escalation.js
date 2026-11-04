@@ -217,7 +217,7 @@ function escRenderList() {
     if (!tiers.length) {
         host.innerHTML = `<p style="color:var(--text-secondary);font-size:.875rem;margin:0">
             Aucun palier pour le moment. Les avertissements sont enregistrés et consultables avec
-            <code>/warns</code>, mais aucune sanction ne se déclenche toute seule.
+            <code>${escapeHtml(QuasarPlateforme.commande('warns'))}</code>, mais aucune sanction ne se déclenche toute seule.
         </p>`;
         return;
     }
@@ -352,7 +352,7 @@ function escRenderEditor() {
                     <p style="color:var(--text-muted);font-size:.78rem;margin:0">
                         Sans rien cocher, le palier s'applique à tout le monde, quel que soit le salon.
                         Une exemption l'emporte toujours sur une restriction. Les salons sont évalués sur celui
-                        d'où la commande <code>/warn</code> est utilisée.
+                        d'où la commande <code>${escapeHtml(QuasarPlateforme.commande('warn'))}</code> est utilisée.
                     </p>
                     ${field('Rôles concernés', 'Cochés : le palier ne s\'applique qu\'à ces rôles.',
                         `<div style="display:flex;flex-wrap:wrap;gap:.4rem;max-height:170px;overflow:auto">${escCheckboxList(

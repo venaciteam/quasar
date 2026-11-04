@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const {
     normalizeRetentionMonths,
     DEFAULT_RETENTION_MONTHS,
@@ -23,7 +24,7 @@ router.get('/config', requireAuth, requireGuildAdmin, (req, res) => {
 });
 
 // PUT config modération
-router.put('/config', requireAuth, requireGuildAdmin, (req, res) => {
+router.put('/config', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
 
     // La durée de conservation des sanctions commande une suppression définitive
@@ -31,6 +32,27 @@ router.put('/config', requireAuth, requireGuildAdmin, (req, res) => {
     const body = { ...req.body };
     if ('sanctionRetentionMonths' in body) {
         body.sanctionRetentionMonths = normalizeRetentionMonths(body.sanctionRetentionMonths);
+    }
+
+    // Salon de journaux SCELLÉ au serveur de l'URL. C'est la clé que lit
+    // `bot/utils/logger.js` pour TOUS les journaux du serveur : un identifiant
+    // étranger y déverserait warns, bans, messages supprimés et pseudonymes de
+    // ce serveur dans le salon d'un autre. Cette configuration est un blob JSON
+    // libre, et c'était le seul champ de salon du projet qu'aucune validation
+    // ne touchait.
+    if ('logChannel' in body) {
+        let actuel = null;
+        try {
+            const ligne = db.prepare('SELECT config FROM modules WHERE guild_id = ? AND module_name = ?')
+                .get(req.params.guildId, 'moderation');
+            actuel = ligne ? (JSON.parse(ligne.config || '{}').logChannel ?? null) : null;
+        } catch { actuel = null; }
+
+        const scelle = await plateforme.exigerCanalDuServeur(req, body.logChannel, {
+            champ: 'Le salon des journaux', actuel,
+        });
+        if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+        body.logChannel = scelle.value;
     }
 
     const config = JSON.stringify(body);

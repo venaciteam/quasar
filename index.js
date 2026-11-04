@@ -27,6 +27,11 @@ require('./api/services/incidents').installProcessGuard();
 // createApi(). C'est ce qui permet au mode `site` de démarrer sans base ni token.
 const { createApi, createSiteApi } = require('./api');
 
+// Le require de ./bot/platform est SANS effet de bord : la table des adaptateurs
+// n'est faite que de fabriques différées. Le mode `site` peut donc lire la
+// plateforme demandée sans charger discord.js ni la base.
+const { resolvePlatformName, resolvePlatform, PLATEFORME_PAR_DEFAUT } = require('./bot/platform');
+
 const PORT = process.env.PORT || 3000;
 
 // ═══════════════════════════════════════════════════════════════
@@ -47,6 +52,23 @@ const MODES = {
     public: 'instance publique (bot + dashboard + vitrine)',
 };
 const DEFAULT_MODE = 'bot';
+
+/**
+ * Plateforme demandée, ou la plateforme par défaut si la valeur est invalide.
+ *
+ * Le garde de configuration ne doit pas échouer sur QUASAR_PLATFORM : le refus
+ * de démarrer pour une plateforme inconnue est prononcé par `main()`, avec son
+ * propre message. Ici, une valeur illisible ne doit pas empêcher d'énumérer les
+ * autres problèmes de configuration — le principe étant de tous les rendre d'un
+ * seul coup.
+ */
+function resoudrePlateformeOuDefaut(env = process.env) {
+    try {
+        return resolvePlatformName(env);
+    } catch {
+        return PLATEFORME_PAR_DEFAUT;
+    }
+}
 
 function resolveMode() {
     const raw = (process.env.QUASAR_MODE || '').trim().toLowerCase();
@@ -122,6 +144,9 @@ const ROLE_VARIABLE = {
     DISCORD_TOKEN: 'C\'est avec elle que je me connecte à Discord : sans elle, Discord refuse la connexion et le processus redémarre en boucle.',
     DISCORD_CLIENT_ID: 'Elle identifie l\'application Discord dans le lien de connexion du dashboard et dans le lien d\'invitation du bot.',
     DISCORD_CLIENT_SECRET: 'Elle sert à échanger le code OAuth2 contre un jeton : sans elle, toute connexion au dashboard échoue en invalid_client.',
+    FLUXER_TOKEN: 'C\'est avec elle que je me connecte à Fluxer : sans elle, la passerelle refuse la connexion et le processus redémarre en boucle.',
+    FLUXER_CLIENT_ID: 'Elle identifie l\'application Fluxer dans le lien de connexion du dashboard et dans le lien d\'invitation du bot.',
+    FLUXER_CLIENT_SECRET: 'Elle sert à échanger le code OAuth2 contre un jeton : sans elle, toute connexion au dashboard échoue en invalid_client.',
     CALLBACK_URL: 'C\'est l\'adresse de retour d\'OAuth2, et elle doit être déclarée à l\'identique dans le Developer Portal (OAuth2 → Redirects).',
     JWT_SECRET: 'Elle signe les sessions du dashboard. Une valeur connue publiquement laisse forger des jetons d\'administration.',
 };
@@ -135,9 +160,43 @@ const ROLE_VARIABLE = {
 //   bot    → client.login + createApi : bot Discord, OAuth2 du dashboard, et
 //            sessions signées.
 //   public → strictement le même démarrage que `bot`, plus la vitrine.
+//
+// Depuis le passage en bot multiplateforme, ce que le mode `bot` exige dépend
+// AUSSI de la plateforme active : les deux jeux de secrets ne se mélangent pas.
+// En mode `fluxer`, l'absence de DISCORD_TOKEN n'est pas une erreur, et
+// réciproquement — exiger les deux obligerait chaque déploiement à porter les
+// secrets de l'autre plateforme, ce qui est exactement ce que la ségrégation
+// des deux instances doit empêcher.
+const VARIABLES_COMMUNES = {
+    site: [],
+    bot: ['CALLBACK_URL', 'JWT_SECRET'],
+};
+
+const VARIABLES_PLATEFORME = {
+    discord: ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
+    fluxer: ['FLUXER_TOKEN', 'FLUXER_CLIENT_ID', 'FLUXER_CLIENT_SECRET'],
+};
+
+// Le mode `public` démarre strictement comme `bot`, plus la vitrine : mêmes
+// exigences. Un mode inconnu retombe sur celles du mode par défaut, en cohérence
+// avec le repli de resolveMode().
+const EXIGENCES_PAR_MODE = { site: 'site', bot: 'bot', public: 'bot' };
+
+/**
+ * Liste ordonnée des variables exigées. Les variables de plateforme d'abord :
+ * c'est l'ordre dans lequel une première installation les renseigne.
+ */
+function variablesRequises(mode, plateforme = PLATEFORME_PAR_DEFAUT) {
+    const exigence = EXIGENCES_PAR_MODE[mode] || EXIGENCES_PAR_MODE[DEFAULT_MODE];
+    if (exigence === 'site') return [];
+    return [...(VARIABLES_PLATEFORME[plateforme] || []), ...VARIABLES_COMMUNES.bot];
+}
+
+// Vue « plateforme par défaut » de la table, conservée pour l'introspection et
+// les tests. La vérification, elle, passe toujours par variablesRequises().
 const VARIABLES_REQUISES = {
     site: [],
-    bot: ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'CALLBACK_URL', 'JWT_SECRET'],
+    bot: variablesRequises('bot', PLATEFORME_PAR_DEFAUT),
 };
 VARIABLES_REQUISES.public = VARIABLES_REQUISES.bot;
 
@@ -148,10 +207,15 @@ VARIABLES_REQUISES.public = VARIABLES_REQUISES.bot;
  *
  * @param {string} mode
  * @param {Record<string, string|undefined>} [env] injectable pour les tests
+ * @param {string} [plateforme] forcée ; sinon déduite de QUASAR_PLATFORM dans `env`
  * @returns {{ ok: boolean, problemes: Array<{variable: string, motif: string, cause: string}> }}
  */
-function verifierConfig(mode, env = process.env) {
-    const requises = VARIABLES_REQUISES[mode] || VARIABLES_REQUISES[DEFAULT_MODE];
+function verifierConfig(mode, env = process.env, plateforme = null) {
+    // La plateforme se lit dans le MÊME env que les variables contrôlées : un
+    // test qui passe un environnement explicite doit obtenir un verdict qui ne
+    // dépend pas du .env de la machine.
+    const cible = plateforme || resoudrePlateformeOuDefaut(env);
+    const requises = variablesRequises(mode, cible);
     const problemes = [];
 
     for (const nom of requises) {
@@ -190,10 +254,11 @@ function verifierConfig(mode, env = process.env) {
  * tests puissent contrôler la liste sans lire des lignes de console.
  * @returns {string[]} lignes à écrire telles quelles
  */
-function formaterProblemes(problemes, mode) {
+function formaterProblemes(problemes, mode, plateforme = null) {
     const lignes = [
         '',
-        `[Quasar] ❌ Configuration incomplète : je ne peux pas démarrer en mode « ${mode} ».`,
+        `[Quasar] ❌ Configuration incomplète : je ne peux pas démarrer en mode « ${mode} »`
+        + `${plateforme ? ` sur la plateforme « ${plateforme} »` : ''}.`,
         '',
     ];
     for (const p of problemes) {
@@ -440,30 +505,48 @@ async function main() {
     const mode = resolveMode();
     console.log(`[Quasar] Mode : ${mode} — ${MODES[mode]}`);
 
+    // La plateforme, elle, ne se replie PAS en silence : démarrer un bot Discord
+    // là où on attendait un bot Fluxer, c'est deux jeux de données et deux
+    // publics confondus, sans que rien ne le signale.
+    let plateformeDemandee;
+    try {
+        plateformeDemandee = resolvePlatformName();
+    } catch (err) {
+        console.error(`[Quasar] ❌ ${err.message}`);
+        console.error('[Quasar]    Corrigez QUASAR_PLATFORM dans le fichier .env, puis relancez Quasar.');
+        process.exit(1);
+    }
+    console.log(`[Quasar] Plateforme : ${plateformeDemandee}`);
+
     // Garde de configuration AVANT le moindre démarrage : rien ne sert de se
-    // connecter à Discord pour découvrir dix secondes plus tard que les sessions
-    // du dashboard ne sont pas signées. Toutes les variables manquantes sont
-    // annoncées d'un coup, pour qu'une seule relance suffise.
-    const { problemes } = verifierConfig(mode);
+    // connecter pour découvrir dix secondes plus tard que les sessions du
+    // dashboard ne sont pas signées. Toutes les variables manquantes sont
+    // annoncées d'un coup, pour qu'une seule relance suffise. Ce qui est exigé
+    // dépend du mode ET de la plateforme : en mode `fluxer`, l'absence de
+    // DISCORD_TOKEN n'est pas une erreur, et réciproquement.
+    const { problemes } = verifierConfig(mode, process.env, plateformeDemandee);
     if (problemes.length > 0) {
-        for (const ligne of formaterProblemes(problemes, mode)) console.error(ligne);
+        for (const ligne of formaterProblemes(problemes, mode, plateformeDemandee)) console.error(ligne);
         process.exit(1);
     }
 
     let app;
-    let client = null;
+    let plateforme = null;
 
     if (mode === 'site') {
-        // Vitrine seule : pas de client Discord, pas de scheduler, pas de base.
-        // Les modules correspondants ne sont même pas chargés.
+        // Vitrine seule : pas de bot, pas de scheduler, pas de base. Les modules
+        // correspondants ne sont même pas chargés.
         app = createSiteApi(mode);
     } else {
-        // require différé : en mode `site`, discord.js et la chaîne de la base
-        // ne doivent jamais être chargés.
+        // require différé : en mode `site`, l'adaptateur de plateforme et la
+        // chaîne de la base ne doivent jamais être chargés.
         const { createBot } = require('./bot');
-        client = createBot();
-        await client.login(process.env.DISCORD_TOKEN);
-        app = createApi(client, mode);
+        plateforme = createBot({ plateforme: resolvePlatform() });
+        await plateforme.connecter();
+        // L'ADAPTATEUR, pas le client : `api/` lit le client REST normalisé et
+        // les capacités déclarées, et le dashboard n'affiche que ce que la
+        // plateforme active sait faire (GET /api/plateforme).
+        app = createApi(plateforme, mode);
     }
 
     const server = ecouter(app, {
@@ -515,7 +598,7 @@ async function main() {
     const arreter = creerArret({
         fermerServeur: () => fermerServeurHttp(server),
         arreterModules: () => arreterModulesBot(),
-        detruireClient: () => (client ? client.destroy() : undefined),
+        detruireClient: () => (plateforme ? plateforme.deconnecter() : undefined),
         fermerBase: () => fermerBaseSiChargee(),
     });
 
@@ -546,9 +629,13 @@ module.exports = {
     ecouter,
     arreterModulesBot,
     fermerServeurHttp,
+    resoudrePlateformeOuDefaut,
+    variablesRequises,
     MODES,
     DEFAULT_MODE,
     VARIABLES_REQUISES,
+    VARIABLES_PLATEFORME,
+    VARIABLES_COMMUNES,
     JWT_SECRET_MIN,
     ARRET_DELAI_MS,
 };

@@ -2,7 +2,14 @@ const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
 const { isValidTimezone, DEFAULT_TIMEZONE } = require('../../bot/modules/scheduler');
+const plateforme = require('../services/plateforme');
 const router = express.Router();
+
+// Types de salon proposés dans les sélecteurs du dashboard : texte, vocal,
+// catégorie et conférence. Les noms sont ceux du vocabulaire canonique
+// (bot/platform/channels.js) ; le `typeNatif` reste exposé tel quel, plusieurs
+// pages du front comparent encore des entiers Discord.
+const TYPES_SELECTIONNABLES = new Set(['texte', 'vocal', 'categorie', 'conference']);
 
 // Liste des serveurs où l'utilisateur est admin ET où Quasar est présent
 router.get('/', requireAuth, (req, res) => {
@@ -88,36 +95,42 @@ router.put('/:guildId/modules/:moduleName', requireAuth, requireGuildAdmin, (req
 });
 
 // Liste des channels du serveur (pour les sélecteurs)
+//
+// Les trois listes ci-dessous gardent LEUR FORME D'ORIGINE (`name`, `color`,
+// `type`…) : c'est le contrat que le front consomme depuis toujours, et le
+// changer reviendrait à réécrire une douzaine de pages pour un gain nul. La
+// traduction se fait ici, à partir des entités neutres.
 router.get('/:guildId/channels', requireAuth, requireGuildAdmin, async (req, res) => {
     try {
-        // On utilise le client Discord pour récupérer les channels
-        const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
-        if (!guild) return res.json([]);
-
-        const channels = guild.channels.cache
-            .filter(c => c.type === 0 || c.type === 2 || c.type === 4 || c.type === 13) // Text + Voice + Category + Stage
-            .map(c => ({ id: c.id, name: c.name, position: c.position, type: c.type }))
-            .sort((a, b) => a.position - b.position);
-
-        res.json(channels);
+        const canaux = await plateforme.listerCanaux(req, req.params.guildId);
+        res.json(canaux
+            .filter(c => TYPES_SELECTIONNABLES.has(c.type) || estTypeSelectionnableNatif(c))
+            .map(c => ({ id: c.id, name: c.nom, position: c.position, type: c.typeNatif }))
+            .sort((a, b) => a.position - b.position));
     } catch (error) {
         console.error('[Quasar] Erreur channels:', error);
         res.json([]);
     }
 });
 
+// Repli tant que le contrat ne publie pas `api.listerCanaux` : la voie de secours
+// de `plateforme.listerCanaux` ne rend pas de nom canonique, seulement le type
+// natif. Les quatre valeurs sont celles d'avant migration (texte, vocal,
+// catégorie, conférence).
+const TYPES_NATIFS_SELECTIONNABLES = new Set([0, 2, 4, 13]);
+function estTypeSelectionnableNatif(canal) {
+    return canal.type === undefined && TYPES_NATIFS_SELECTIONNABLES.has(canal.typeNatif);
+}
+
 // Liste des rôles du serveur
 router.get('/:guildId/roles', requireAuth, requireGuildAdmin, async (req, res) => {
     try {
-        const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
-        if (!guild) return res.json([]);
-
-        const roles = guild.roles.cache
-            .filter(r => r.id !== guild.id && !r.managed) // Exclure @everyone et rôles bots
-            .map(r => ({ id: r.id, name: r.name, color: r.hexColor, position: r.position }))
-            .sort((a, b) => b.position - a.position);
-
-        res.json(roles);
+        const roles = await plateforme.listerRoles(req, req.params.guildId);
+        res.json(roles
+            // Exclure @everyone et les rôles gérés par une intégration
+            .filter(r => !r.parDefaut && !r.gere)
+            .map(r => ({ id: r.id, name: r.nom, color: r.couleur, position: r.position }))
+            .sort((a, b) => b.position - a.position));
     } catch (error) {
         console.error('[Quasar] Erreur rôles:', error);
         res.json([]);
@@ -127,18 +140,14 @@ router.get('/:guildId/roles', requireAuth, requireGuildAdmin, async (req, res) =
 // Liste des emojis du serveur
 router.get('/:guildId/emojis', requireAuth, requireGuildAdmin, async (req, res) => {
     try {
-        const guild = req.app.get('discordClient')?.guilds.cache.get(req.params.guildId);
-        if (!guild) return res.json([]);
-
-        const emojis = guild.emojis.cache.map(e => ({
+        const emojis = await plateforme.listerEmojis(req, req.params.guildId);
+        res.json(emojis.map(e => ({
             id: e.id,
-            name: e.name,
-            animated: e.animated,
-            identifier: `<${e.animated ? 'a' : ''}:${e.name}:${e.id}>`,
-            url: e.imageURL({ size: 32 })
-        }));
-
-        res.json(emojis);
+            name: e.nom,
+            animated: e.anime,
+            identifier: e.identifiant,
+            url: e.url,
+        })));
     } catch {
         res.json([]);
     }

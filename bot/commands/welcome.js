@@ -1,3 +1,6 @@
+// Jeu de réglages de /welcome. Tout le corps de la commande — descripteur,
+// sous-commandes, écritures en base, réponses — vit dans la fabrique, partagée
+// avec /leave (cf. bot/utils/configCommand.js).
 const { createConfigCommand } = require('../utils/configCommand');
 
 module.exports = createConfigCommand({
@@ -12,5 +15,5 @@ module.exports = createConfigCommand({
     enabledCol: 'welcome_enabled',
     defaultEmbedTitle: 'Bienvenue sur {server} !',
     defaultEmbedDesc: '{user} arrive — membre numéro **{membercount}**.',
-    defaultTestMsg: (member) => `👋 Bienvenue ${member} sur **${member.guild.name}** !`
+    defaultTestMsg: (membre, guilde) => `👋 Bienvenue ${membre.mention} sur **${guilde.nom}** !`
 });

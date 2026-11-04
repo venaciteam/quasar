@@ -1,33 +1,37 @@
-const { EmbedBuilder, ChannelType } = require('discord.js');
+const { definirEvenement } = require('../platform/events');
+const { embed } = require('../platform/embed');
 const { sendLog } = require('../utils/logger');
-const { getDb } = require('../../api/services/database');
 
-module.exports = {
-    name: 'channelDelete',
-    once: false,
-    async execute(channel) {
-        if (!channel.guild) return;
+module.exports = definirEvenement({
+    nom: 'canalSupprime',
+    async executer(ctx, canal) {
+        if (!canal.guildeId) return;
 
         // Skip les vocaux dans une catégorie TempVoice
-        if (channel.type === ChannelType.GuildVoice && channel.parentId) {
+        if (canal.type === 'vocal' && canal.parentId) {
             try {
-                const db = getDb();
-                const hasTrigger = db.prepare('SELECT 1 FROM tempvoice_triggers WHERE guild_id = ? AND category_id = ? AND enabled = 1')
-                    .get(channel.guild.id, channel.parentId);
-                if (hasTrigger) return;
+                const trouve = ctx.db.prepare('SELECT 1 FROM tempvoice_triggers WHERE guild_id = ? AND category_id = ? AND enabled = 1')
+                    .get(canal.guildeId, canal.parentId);
+                if (trouve) return;
             } catch (e) {
                 console.error('[Quasar] Erreur vérification TempVoice (channelDelete):', e.message || e);
             }
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle('📝 Channel supprimé')
-            .setColor(0xe74c3c)
-            .addFields(
-                { name: 'Nom', value: `#${channel.name}`, inline: true },
-                { name: 'Type', value: channel.type === 0 ? 'Textuel' : channel.type === 2 ? 'Vocal' : `Type ${channel.type}`, inline: true }
-            )
-            .setTimestamp();
-        await sendLog(channel.guild, 'server_channel', embed);
-    }
-};
+        // Même libellé de repli qu'à la création : `type` ne nomme que les quatre
+        // salons que Quasar manipule, l'entier de la plateforme couvre le reste.
+        const libelle = canal.type === 'texte' ? 'Textuel'
+            : canal.type === 'vocal' ? 'Vocal'
+                : `Type ${canal.typeNatif}`;
+
+        await sendLog({ guildeId: canal.guildeId, api: ctx.api }, 'server_channel', embed({
+            titre: '📝 Channel supprimé',
+            couleur: 0xe74c3c,
+            champs: [
+                { nom: 'Nom', valeur: `#${canal.nom}`, enLigne: true },
+                { nom: 'Type', valeur: libelle, enLigne: true },
+            ],
+            horodatage: true,
+        }));
+    },
+});
