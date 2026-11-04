@@ -250,6 +250,7 @@ const ARRET_DELAI_MS = 15000;
 const MODULES_A_ARRETER = [
     ['planificateur', './bot/modules/scheduler', 'stop'],
     ['rétention', './bot/modules/retention', 'stop'],
+    ['purge du journal de conservation', './api/services/legalJournal', 'stop'],
     ['notification de violation', './bot/modules/breach', 'stop'],
     ['effacement', './bot/modules/erasure', 'stop'],
     ['balayage des bannissements temporaires', './bot/utils/punishments', 'stopTempBanSweeper'],

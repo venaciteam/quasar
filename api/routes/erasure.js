@@ -18,6 +18,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const legal = require('../services/legalJournal');
 
 const router = express.Router({ mergeParams: true });
 
@@ -144,9 +145,21 @@ function eraseModerationTraces(db, guildId, subjectId) {
 function eraseNonModeration(db, guildId, subjectId) {
     const perTable = {};
 
+    // Le nom de salon vocal choisi par le membre est un contenu publié : son
+    // effacement, fait pour son compte, est consigné au journal de conservation
+    // (LCEN) en `delete_cascade`, sans connexion. Même transaction que
+    // l'effacement (celle de l'appelant).
+    const nommes = db.prepare(`SELECT category_id FROM tempvoice_preferences
+        WHERE guild_id = ? AND user_id = ? AND channel_name IS NOT NULL AND channel_name != ''`).all(guildId, subjectId);
     const prefs = db.prepare(
         'DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ?'
     ).run(guildId, subjectId);
+    for (const { category_id } of nommes) {
+        legal.record(db, legal.onBehalfOf(subjectId), {
+            contentId: legal.tempvoiceName(db, guildId, subjectId, category_id).contentId,
+            contentType: 'tempvoice_name', operation: 'delete_cascade',
+        });
+    }
     if (prefs.changes > 0) perTable.tempvoice_preferences = prefs.changes;
 
     const tickets = db.prepare(

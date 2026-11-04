@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { getDb } = require('../../api/services/database');
+const legal = require('../../api/services/legalJournal');
 const { resolveVariables, buildEmbed } = require('./welcomeMessage');
 const { userError } = require('./errors');
 
@@ -22,6 +23,21 @@ function createConfigCommand(opts) {
         defaultEmbedDesc,   // Description par défaut de l'embed
         defaultTestMsg,     // Fonction (member) => string pour le message test par défaut
     } = opts;
+
+    // Écrit le texte publié (message ou embed) et la ligne du journal de
+    // conservation (LCEN) dans la même transaction. Le salon et l'interrupteur
+    // sont des réglages techniques : ils passent à côté.
+    function ecrireContenu(db, interaction, sql, params) {
+        const guildId = interaction.guild.id;
+        db.transaction(() => {
+            const before = legal.snapshots.welcome(db, guildId, name);
+            db.prepare(sql).run(...params);
+            legal.recordChange(db, legal.fromInteraction(interaction), {
+                contentId: guildId, contentType: `${name}_message`,
+                before, after: legal.snapshots.welcome(db, guildId, name),
+            });
+        })();
+    }
 
     return {
         data: new SlashCommandBuilder()
@@ -80,8 +96,8 @@ function createConfigCommand(opts) {
 
             } else if (sub === 'message') {
                 const texte = interaction.options.getString('texte');
-                db.prepare(`UPDATE welcome_config SET ${messageCol} = ? WHERE guild_id = ?`)
-                    .run(texte, interaction.guild.id);
+                ecrireContenu(db, interaction, `UPDATE welcome_config SET ${messageCol} = ? WHERE guild_id = ?`,
+                    [texte, interaction.guild.id]);
 
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
@@ -130,8 +146,8 @@ function createConfigCommand(opts) {
                 const couleur = interaction.options.getString('couleur') || defaultColor;
 
                 const embedConfig = { title: titre, description, color: couleur, thumbnail: 'avatar' };
-                db.prepare(`UPDATE welcome_config SET ${embedCol} = ? WHERE guild_id = ?`)
-                    .run(JSON.stringify(embedConfig), interaction.guild.id);
+                ecrireContenu(db, interaction, `UPDATE welcome_config SET ${embedCol} = ? WHERE guild_id = ?`,
+                    [JSON.stringify(embedConfig), interaction.guild.id]);
 
                 const previewEmbed = {
                     title: resolveVariables(titre, interaction.member),
@@ -143,7 +159,8 @@ function createConfigCommand(opts) {
                 await interaction.reply({ content: `✅ Embed de ${name === 'welcome' ? 'bienvenue' : 'départ'} configuré ! Aperçu :`, embeds: [previewEmbed] });
 
             } else if (sub === 'embedoff') {
-                db.prepare(`UPDATE welcome_config SET ${embedCol} = NULL WHERE guild_id = ?`).run(interaction.guild.id);
+                ecrireContenu(db, interaction, `UPDATE welcome_config SET ${embedCol} = NULL WHERE guild_id = ?`,
+                    [interaction.guild.id]);
                 await interaction.reply({
                     embeds: [new EmbedBuilder()
                         .setTitle(`${emoji} Embed retiré`)

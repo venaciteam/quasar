@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const legal = require('../services/legalJournal');
 const router = express.Router({ mergeParams: true });
 const { checkAssignableRole, describeForApi } = require('../../bot/utils/assignableRole');
 
@@ -137,9 +138,15 @@ router.post('/panels', requireAuth, requireGuildAdmin, async (req, res) => {
     const channel = guild?.channels.cache.get(channel_id);
     if (!channel) return res.status(400).json({ error: 'Channel introuvable' });
 
-    const result = db.prepare('INSERT INTO reaction_panels (guild_id, channel_id, title, mode) VALUES (?, ?, ?, ?)')
-        .run(req.params.guildId, channel_id, title, mode || 'multiple');
-    const panelId = result.lastInsertRowid;
+    // Écriture et ligne du journal de conservation (LCEN) dans la même transaction.
+    const panelId = db.transaction(() => {
+        const id = db.prepare('INSERT INTO reaction_panels (guild_id, channel_id, title, mode) VALUES (?, ?, ?, ?)')
+            .run(req.params.guildId, channel_id, title, mode || 'multiple').lastInsertRowid;
+        legal.record(db, legal.fromRequest(req), {
+            contentId: `${req.params.guildId}:${id}`, contentType: 'reaction_panel', operation: 'create',
+        });
+        return id;
+    })();
 
     // Poster l'embed
     const { EmbedBuilder } = require('discord.js');
@@ -247,9 +254,13 @@ router.post('/panels/:panelId/entries', requireAuth, requireGuildAdmin, async (r
     const descriptionLue = validerDescription(description);
     if (descriptionLue.error) return res.status(400).json({ error: descriptionLue.error });
 
-    db.prepare(`INSERT INTO reaction_roles (panel_id, emoji, role_id, description) VALUES (?, ?, ?, ?)
+    // Une entrée modifie le panneau publié : ligne `update` sur le panneau.
+    legal.withJournal(db, legal.fromRequest(req), {
+        contentId: `${req.params.guildId}:${panel.id}`, contentType: 'reaction_panel',
+        snapshot: () => legal.snapshots.reactionPanel(db, panel.id),
+    }, () => db.prepare(`INSERT INTO reaction_roles (panel_id, emoji, role_id, description) VALUES (?, ?, ?, ?)
         ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?`)
-        .run(panelId, emojiLu.value, roleId, descriptionLue.value, roleId, descriptionLue.value);
+        .run(panelId, emojiLu.value, roleId, descriptionLue.value, roleId, descriptionLue.value));
 
     // Refresh le panel Discord
     await refreshPanelFromApi(req, panel, panelId, db);
@@ -266,7 +277,10 @@ router.delete('/panels/:panelId/entries/:emoji', requireAuth, requireGuildAdmin,
         .get(panelId, req.params.guildId);
     if (!panel) return res.status(404).json({ error: 'Panel introuvable' });
 
-    db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji);
+    legal.withJournal(db, legal.fromRequest(req), {
+        contentId: `${req.params.guildId}:${panel.id}`, contentType: 'reaction_panel',
+        snapshot: () => legal.snapshots.reactionPanel(db, panel.id),
+    }, () => db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emoji));
     await refreshPanelFromApi(req, panel, panelId, db);
     res.json({ success: true });
 });
@@ -302,7 +316,11 @@ router.delete('/panels/:panelId', requireAuth, requireGuildAdmin, async (req, re
         await msg?.delete();
     } catch {} // Message or channel may already be deleted
 
-    db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId);
+    // Les entrées partent en cascade (FK) : une seule ligne `delete`, sur le panneau.
+    legal.withJournal(db, legal.fromRequest(req), {
+        contentId: `${req.params.guildId}:${panel.id}`, contentType: 'reaction_panel',
+        snapshot: () => legal.snapshots.reactionPanel(db, panel.id),
+    }, () => db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId));
     res.json({ success: true });
 });
 

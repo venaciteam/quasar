@@ -1,6 +1,7 @@
 const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
 const { getDb } = require('../../api/services/database');
 const { userError } = require('../utils/errors');
+const legal = require('../../api/services/legalJournal');
 
 // Vérifie que l'utilisateur est owner du vocal
 function checkOwner(interaction, channelId) {
@@ -126,8 +127,10 @@ async function handleTempVoiceInteraction(interaction) {
 
         if (action === 'reset') {
             const db = getDb();
-            db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
-                .run(interaction.guild.id, interaction.user.id, active.category_id);
+            legal.withJournal(db, legal.fromInteraction(interaction),
+                legal.tempvoiceName(db, interaction.guild.id, interaction.user.id, active.category_id),
+                () => db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
+                    .run(interaction.guild.id, interaction.user.id, active.category_id));
             return interaction.reply({ content: '✅ Vos préférences pour cette catégorie ont été réinitialisées.', ephemeral: true });
         }
     }
@@ -220,11 +223,14 @@ async function handleTempVoiceInteraction(interaction) {
             const name = interaction.fields.getTextInputValue('name');
             await channel.setName(name);
 
-            db.prepare(`
-                INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
-                VALUES (?, ?, ?, ?, unixepoch())
-                ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
-            `).run(guildId, userId, active.category_id, name);
+            // Nom choisi par le membre et publié par le robot : ligne du journal
+            // de conservation (LCEN) dans la même transaction.
+            legal.withJournal(db, legal.fromInteraction(interaction), legal.tempvoiceName(db, guildId, userId, active.category_id),
+                () => db.prepare(`
+                    INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
+                    VALUES (?, ?, ?, ?, unixepoch())
+                    ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
+                `).run(guildId, userId, active.category_id, name));
 
             return interaction.reply({ content: `✅ Salon renommé en **${name}**`, ephemeral: true });
         }

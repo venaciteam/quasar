@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = 
 const { getDb } = require('../../api/services/database');
 const { buildMentionPayload, silentMentions, hasMentions } = require('../../api/services/mentions');
 const { userError } = require('../utils/errors');
+const legal = require('../../api/services/legalJournal');
 
 // Colonnes de mention de l'embed (configurées dans le builder du dashboard).
 // Elles sont postées en contenu du message, au-dessus de l'embed.
@@ -90,14 +91,25 @@ module.exports = {
             if (image) data.image = image;
             if (thumbnail) data.thumbnail = thumbnail;
 
-            // Vérifier si le nom existe déjà
-            const existing = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
-            if (existing) {
-                db.prepare('UPDATE embeds SET data = ?, updated_at = datetime(\'now\') WHERE guild_id = ? AND name = ?')
-                    .run(JSON.stringify(data), interaction.guild.id, nom);
-            } else {
-                db.prepare('INSERT INTO embeds (guild_id, name, data) VALUES (?, ?, ?)').run(interaction.guild.id, nom, JSON.stringify(data));
-            }
+            // Vérifier si le nom existe déjà. Écriture et ligne du journal de
+            // conservation (LCEN) dans la même transaction.
+            const existing = db.transaction(() => {
+                const found = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
+                const before = legal.snapshots.embed(db, found?.id);
+                let id = found?.id;
+                if (found) {
+                    db.prepare('UPDATE embeds SET data = ?, updated_at = datetime(\'now\') WHERE guild_id = ? AND name = ?')
+                        .run(JSON.stringify(data), interaction.guild.id, nom);
+                } else {
+                    id = db.prepare('INSERT INTO embeds (guild_id, name, data) VALUES (?, ?, ?)')
+                        .run(interaction.guild.id, nom, JSON.stringify(data)).lastInsertRowid;
+                }
+                legal.recordChange(db, legal.fromInteraction(interaction), {
+                    contentId: `${interaction.guild.id}:${id}`, contentType: 'embed',
+                    before, after: legal.snapshots.embed(db, id),
+                });
+                return found;
+            })();
 
             const preview = buildDiscordEmbed(data);
             await interaction.reply({
@@ -193,7 +205,16 @@ module.exports = {
 
         } else if (sub === 'delete') {
             const nom = interaction.options.getString('nom');
-            const result = db.prepare('DELETE FROM embeds WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
+            const result = db.transaction(() => {
+                const found = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(interaction.guild.id, nom);
+                const r = db.prepare('DELETE FROM embeds WHERE guild_id = ? AND name = ?').run(interaction.guild.id, nom);
+                if (r.changes > 0) {
+                    legal.record(db, legal.fromInteraction(interaction), {
+                        contentId: `${interaction.guild.id}:${found.id}`, contentType: 'embed', operation: 'delete',
+                    });
+                }
+                return r;
+            })();
 
             if (result.changes === 0) return userError(interaction, {
                 title: 'Embed introuvable',
