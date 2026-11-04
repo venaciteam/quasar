@@ -424,7 +424,7 @@ Pour un auto-hébergeur, rien ne change : sans cette variable, Quasar démarre e
 |---|---|
 | `/` | Accueil : les deux façons d'utiliser Quasar, l'argument « premium sans palier », les engagements sur la vie privée |
 | `/ethique` | Ce que Quasar fait des données, et ce qu'il n'en fait pas — détaillé par mode d'hébergement |
-| `/pourquoi` | Un mot de la créatrice, et l'origine du nom |
+| `/pourquoi` | Un mot de la créatrice |
 | `/nouveautes` | Le journal des mises à jour (voir ci-dessous) |
 | `/soutenir` | Participer aux frais de l'instance publique |
 
