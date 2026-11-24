@@ -99,6 +99,19 @@ function creerAdaptateurDiscord({ client = null, env = process.env } = {}) {
             return clientDiscord.destroy();
         },
 
+        /**
+         * Nombre de serveurs où le bot est présent À L'INSTANT, d'après l'état
+         * tenu par la passerelle (GUILD_CREATE / GUILD_DELETE). `null` tant que
+         * la connexion n'est pas prête : un cache vide ou partiel donnerait un
+         * chiffre faux. Seul appelant : le compteur de la vitrine
+         * (api/routes/publicStats.js, par api/services/plateforme.js).
+         *
+         * @returns {number|null}
+         */
+        nombreServeurs() {
+            return clientDiscord.isReady() ? clientDiscord.guilds.cache.size : null;
+        },
+
         // ─── Enregistrement ──────────────────────────────────────────────────
 
         /**

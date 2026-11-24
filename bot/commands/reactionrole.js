@@ -1,6 +1,17 @@
 const { definirCommande } = require('../platform/commands');
 const { embed } = require('../platform/embed');
 const { describeRefusal } = require('../utils/assignableRole');
+const legal = require('../../api/services/legalJournal');
+
+// Journal de conservation (LCEN) d'un panneau : les entrées en font partie, leur
+// ajout ou leur retrait est une modification du panneau publié.
+function panelJournal(ctx, panel) {
+    return {
+        contentId: `${ctx.guildeId}:${panel.id}`,
+        contentType: 'reaction_panel',
+        snapshot: () => legal.snapshots.reactionPanel(ctx.db, panel.id),
+    };
+}
 
 // Les panneaux de rôles-réactions ne passent PAS par `ctx.choose` : ils reposent
 // sur de vraies réactions emoji posées sur un message durable, et c'est déjà la
@@ -72,12 +83,17 @@ module.exports = definirCommande({
                 const description = ctx.options.get('description') || DESCRIPTION_PAR_DEFAUT;
                 const mode = ctx.options.get('mode') || 'multiple';
 
-                const resultat = ctx.db.prepare(`
-                    INSERT INTO reaction_panels (guild_id, channel_id, title, mode)
-                    VALUES (?, ?, ?, ?)
-                `).run(ctx.guildeId, salon.id, titre, mode);
-
-                const panelId = resultat.lastInsertRowid;
+                // Créer le panel en DB, avec sa ligne du journal de conservation (LCEN)
+                const panelId = ctx.db.transaction(() => {
+                    const id = ctx.db.prepare(`
+                        INSERT INTO reaction_panels (guild_id, channel_id, title, mode)
+                        VALUES (?, ?, ?, ?)
+                    `).run(ctx.guildeId, salon.id, titre, mode).lastInsertRowid;
+                    legal.record(ctx.db, legal.fromCtx(ctx), {
+                        contentId: `${ctx.guildeId}:${id}`, contentType: 'reaction_panel', operation: 'create',
+                    });
+                    return id;
+                })();
 
                 // Le message posté est rendu NORMALISÉ par le client REST : son
                 // `id` part directement en base, sans que ce fichier ait à
@@ -130,11 +146,12 @@ module.exports = definirCommande({
                     return ctx.erreurUtilisateur({ titre: title, cause, action });
                 }
 
-                ctx.db.prepare(`
-                    INSERT INTO reaction_roles (panel_id, emoji, role_id, description)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?
-                `).run(panelId, emojiSaisi, role.id, description, role.id, description);
+                legal.withJournal(ctx.db, legal.fromCtx(ctx), panelJournal(ctx, panel),
+                    () => ctx.db.prepare(`
+                        INSERT INTO reaction_roles (panel_id, emoji, role_id, description)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(panel_id, emoji) DO UPDATE SET role_id = ?, description = ?
+                    `).run(panelId, emojiSaisi, role.id, description, role.id, description));
 
                 await ctx.repondre(embed({
                     titre: '✅ Rôle ajouté au panel',
@@ -164,7 +181,8 @@ module.exports = definirCommande({
                 const panel = lirePanel(ctx, panelId);
                 if (!panel) return ctx.erreurUtilisateur(PANEL_INTROUVABLE);
 
-                ctx.db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emojiSaisi);
+                legal.withJournal(ctx.db, legal.fromCtx(ctx), panelJournal(ctx, panel),
+                    () => ctx.db.prepare('DELETE FROM reaction_roles WHERE panel_id = ? AND emoji = ?').run(panelId, emojiSaisi));
 
                 await ctx.repondre(`✅ Emoji ${emojiSaisi} retiré du panel #${panelId}.`, { ephemere: true });
 
@@ -188,7 +206,8 @@ module.exports = definirCommande({
                     await ctx.api.supprimerMessage(panel.channel_id, panel.message_id);
                 } catch { /* Message or channel may already be deleted */ }
 
-                ctx.db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId);
+                legal.withJournal(ctx.db, legal.fromCtx(ctx), panelJournal(ctx, panel),
+                    () => ctx.db.prepare('DELETE FROM reaction_panels WHERE id = ?').run(panelId));
 
                 await ctx.repondre(`✅ Panel #${panelId} supprimé.`, { ephemere: true });
             },

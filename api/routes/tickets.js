@@ -17,6 +17,7 @@ const { getDb } = require('../services/database');
 const { embed } = require('../../bot/platform/embed');
 const plateforme = require('../services/plateforme');
 const { poserPanneau } = require('../services/panneau');
+const legal = require('../services/legalJournal');
 const router = express.Router({ mergeParams: true });
 
 const ACCENT_COLOR = 0xDE3163;
@@ -42,6 +43,15 @@ function buildPanelEmbed(config) {
         couleur: ACCENT_COLOR,
         horodatage: true,
     });
+}
+
+// Journal de conservation (LCEN) des textes des tickets d'un serveur.
+function ticketJournal(db, guildId) {
+    return {
+        contentId: guildId,
+        contentType: 'ticket_texts',
+        snapshot: () => legal.snapshots.ticketTexts(db, guildId),
+    };
 }
 
 /** Pose le panneau d'ouverture dans un salon. Lève si l'envoi échoue. */
@@ -120,8 +130,10 @@ router.post('/setup', requireAuth, requireGuildAdmin, async (req, res) => {
     const roleStaff = await plateforme.exigerRoleDuServeur(req, staff_role_id, { champ: 'Le rôle staff' });
     if (roleStaff.error) return res.status(roleStaff.status || 400).json({ error: roleStaff.error });
 
-    // Sauvegarder la config
-    db.prepare(`
+    // Sauvegarder la config. Ligne du journal de conservation (LCEN) dans la même
+    // transaction, seulement si un texte de l'admin change (message d'accueil,
+    // titre ou description du panneau) : le salon et le rôle sont techniques.
+    legal.withJournal(db, legal.fromRequest(req), ticketJournal(db, guildId), () => db.prepare(`
         INSERT INTO ticket_config (guild_id, channel_id, category_id, staff_role_id, welcome_message, panel_title, panel_description, enabled)
         VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(guild_id) DO UPDATE SET
@@ -132,7 +144,7 @@ router.post('/setup', requireAuth, requireGuildAdmin, async (req, res) => {
             panel_title = excluded.panel_title,
             panel_description = excluded.panel_description,
             enabled = 1
-    `).run(guildId, channel_id, categorie.value, roleStaff.value, welcome_message || null, panel_title || null, panel_description || null);
+    `).run(guildId, channel_id, categorie.value, roleStaff.value, welcome_message || null, panel_title || null, panel_description || null));
 
     const configForEmbed = { panel_title, panel_description };
 
@@ -216,7 +228,8 @@ router.put('/', requireAuth, requireGuildAdmin, async (req, res) => {
 
     if (updates.length > 0) {
         params.push(guildId);
-        db.prepare(`UPDATE ticket_config SET ${updates.join(', ')} WHERE guild_id = ?`).run(...params);
+        legal.withJournal(db, legal.fromRequest(req), ticketJournal(db, guildId),
+            () => db.prepare(`UPDATE ticket_config SET ${updates.join(', ')} WHERE guild_id = ?`).run(...params));
     }
 
     res.json({ success: true });

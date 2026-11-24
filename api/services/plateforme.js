@@ -387,8 +387,23 @@ async function exigerRoleDuServeur(req, brut, { champ, actuel = undefined } = {}
     return { value: id };
 }
 
+/**
+ * Nombre de serveurs où le bot est présent, par le contrat de l'adaptateur
+ * (`nombreServeurs`), sans lecture du client natif. `null` si aucun adaptateur
+ * n'est monté (mode `site`) ou si la connexion n'est pas encore prête.
+ *
+ * @returns {number|null}
+ */
+function nombreServeurs(req) {
+    const actif = adaptateur(req);
+    if (typeof actif?.nombreServeurs !== 'function') return null;
+    const n = actif.nombreServeurs();
+    return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 module.exports = {
     adaptateur,
+    nombreServeurs,
     api: apiPlateforme,
     capacites,
     nom,

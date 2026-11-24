@@ -31,6 +31,8 @@
 // couche. Il est donc écrit une seule fois, ici, et importé par les deux
 // autres : trois littéraux séparés finiraient par diverger d'une lettre, et un
 // panneau posé que personne ne route ne produit aucune erreur.
+const legal = require('../../api/services/legalJournal');
+
 const PANNEAU = 'tempvoice';
 
 // Boutons du panneau, dans l'ordre, avec les libellés, emojis et styles
@@ -75,15 +77,24 @@ const REFUS_SALON_DISPARU = Object.freeze({
     action: 'Rejoignez le salon d\'accueil pour en créer un nouveau.',
 });
 
-/** Mémorise une préférence de salon pour la catégorie courante. */
+/**
+ * Mémorise une préférence de salon pour la catégorie courante.
+ *
+ * Toujours écrite sous le journal de conservation (LCEN) : seul le NOM choisi
+ * par le membre entre dans l'état comparé (`legal.tempvoiceName`), si bien
+ * qu'un changement de limite de places, réglage technique, n'écrit aucune ligne.
+ * L'auteur est la personne qui a cliqué le bouton (`ctx.auteur`), sur Discord
+ * comme sur Fluxer.
+ */
 function memoriserPreference(ctx, categorieId, colonne, valeur) {
     // La colonne est choisie ici, jamais reçue d'ailleurs : les deux seules
     // valeurs possibles sont écrites en toutes lettres au point d'appel.
-    ctx.db.prepare(`
-        INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, ${colonne}, updated_at)
-        VALUES (?, ?, ?, ?, unixepoch())
-        ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET ${colonne} = excluded.${colonne}, updated_at = unixepoch()
-    `).run(ctx.guildeId, ctx.auteur.id, categorieId, valeur);
+    legal.withJournal(ctx.db, legal.fromCtx(ctx), legal.tempvoiceName(ctx.db, ctx.guildeId, ctx.auteur.id, categorieId),
+        () => ctx.db.prepare(`
+            INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, ${colonne}, updated_at)
+            VALUES (?, ?, ?, ?, unixepoch())
+            ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET ${colonne} = excluded.${colonne}, updated_at = unixepoch()
+        `).run(ctx.guildeId, ctx.auteur.id, categorieId, valeur));
 }
 
 /**
@@ -231,8 +242,9 @@ async function handlerPanneauTempVoice(ctx, cle) {
     }
 
     if (cle === 'reset') {
-        ctx.db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
-            .run(ctx.guildeId, ctx.auteur.id, actif.category_id);
+        legal.withJournal(ctx.db, legal.fromCtx(ctx), legal.tempvoiceName(ctx.db, ctx.guildeId, ctx.auteur.id, actif.category_id),
+            () => ctx.db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
+                .run(ctx.guildeId, ctx.auteur.id, actif.category_id));
         return ctx.repondre('✅ Vos préférences pour cette catégorie ont été réinitialisées.', { ephemere: true });
     }
 

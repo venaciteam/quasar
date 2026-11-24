@@ -13,6 +13,7 @@ data
 !content/*.md
 # Hors de l'image : outillage de dev et artefacts locaux.
 test
+scripts/og
 .github
 .claude
 .DS_Store

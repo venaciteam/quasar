@@ -15,6 +15,7 @@
 
 const { definirCommande } = require('../platform/commands');
 const { embed } = require('../platform/embed');
+const legal = require('../../api/services/legalJournal');
 const { resolveVariables, buildEmbed, TAILLE_AVATAR } = require('./welcomeMessage');
 
 /**
@@ -55,6 +56,23 @@ function createConfigCommand(opts) {
     // identique à celui des builders d'origine.
     const quoi = name === 'welcome' ? 'bienvenue' : 'départ';
     const label = name === 'welcome' ? 'Welcome' : 'Leave';
+
+    // Écrit le texte publié (message ou embed) et la ligne du journal de
+    // conservation (LCEN) dans la même transaction. Le salon et l'interrupteur
+    // sont des réglages techniques : ils passent à côté. Auteur = `ctx.auteur`,
+    // sur Discord comme sur Fluxer.
+    function ecrireContenu(ctx, sql, params) {
+        const db = ctx.db;
+        const guildId = ctx.guildeId;
+        db.transaction(() => {
+            const before = legal.snapshots.welcome(db, guildId, name);
+            db.prepare(sql).run(...params);
+            legal.recordChange(db, legal.fromCtx(ctx), {
+                contentId: guildId, contentType: `${name}_message`,
+                before, after: legal.snapshots.welcome(db, guildId, name),
+            });
+        })();
+    }
 
     return definirCommande({
         nom: name,
@@ -125,8 +143,8 @@ function createConfigCommand(opts) {
 
             } else if (sub === 'message') {
                 const texte = ctx.options.get('texte');
-                db.prepare(`UPDATE welcome_config SET ${messageCol} = ? WHERE guild_id = ?`)
-                    .run(texte, ctx.guildeId);
+                ecrireContenu(ctx, `UPDATE welcome_config SET ${messageCol} = ? WHERE guild_id = ?`,
+                    [texte, ctx.guildeId]);
 
                 await ctx.repondre(embed({
                     titre: `${emoji} Message mis à jour`,
@@ -177,8 +195,8 @@ function createConfigCommand(opts) {
                 const couleur = ctx.options.get('couleur') || defaultColor;
 
                 const embedConfig = { title: titre, description, color: couleur, thumbnail: 'avatar' };
-                db.prepare(`UPDATE welcome_config SET ${embedCol} = ? WHERE guild_id = ?`)
-                    .run(JSON.stringify(embedConfig), ctx.guildeId);
+                ecrireContenu(ctx, `UPDATE welcome_config SET ${embedCol} = ? WHERE guild_id = ?`,
+                    [JSON.stringify(embedConfig), ctx.guildeId]);
 
                 await ctx.repondre({
                     contenu: `✅ Embed de ${quoi} configuré ! Aperçu :`,
@@ -191,7 +209,8 @@ function createConfigCommand(opts) {
                 });
 
             } else if (sub === 'embedoff') {
-                db.prepare(`UPDATE welcome_config SET ${embedCol} = NULL WHERE guild_id = ?`).run(ctx.guildeId);
+                ecrireContenu(ctx, `UPDATE welcome_config SET ${embedCol} = NULL WHERE guild_id = ?`,
+                    [ctx.guildeId]);
                 await ctx.repondre(embed({
                     titre: `${emoji} Embed retiré`,
                     couleur: color,

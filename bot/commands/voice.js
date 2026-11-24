@@ -1,4 +1,5 @@
 const { definirCommande } = require('../platform/commands');
+const legal = require('../../api/services/legalJournal');
 
 // Suffixe de verrouillage accolé au nom du salon. Écrit une fois : il est posé
 // par `lock`, retiré par `unlock`, et le panneau du salon fait exactement la
@@ -106,11 +107,14 @@ module.exports = definirCommande({
             const name = ctx.options.get('nom');
             await ctx.api.modifierCanal(canalId, { nom: name });
 
-            db.prepare(`
-                INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
-                VALUES (?, ?, ?, ?, unixepoch())
-                ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
-            `).run(guildId, userId, categorieId, name);
+            // Nom choisi par le membre et publié par le robot : ligne du journal
+            // de conservation (LCEN) dans la même transaction.
+            legal.withJournal(db, legal.fromCtx(ctx), legal.tempvoiceName(db, guildId, userId, categorieId),
+                () => db.prepare(`
+                    INSERT INTO tempvoice_preferences (guild_id, user_id, category_id, channel_name, updated_at)
+                    VALUES (?, ?, ?, ?, unixepoch())
+                    ON CONFLICT(guild_id, user_id, category_id) DO UPDATE SET channel_name = excluded.channel_name, updated_at = unixepoch()
+                `).run(guildId, userId, categorieId, name));
 
             return ctx.repondre(`✅ Salon renommé en **${name}**`, { ephemere: true });
         }
@@ -183,8 +187,9 @@ module.exports = definirCommande({
         }
 
         if (sub === 'reset') {
-            db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
-                .run(guildId, userId, categorieId);
+            legal.withJournal(db, legal.fromCtx(ctx), legal.tempvoiceName(db, guildId, userId, categorieId),
+                () => db.prepare('DELETE FROM tempvoice_preferences WHERE guild_id = ? AND user_id = ? AND category_id = ?')
+                    .run(guildId, userId, categorieId));
             return ctx.repondre('✅ Vos préférences pour cette catégorie ont été réinitialisées.', { ephemere: true });
         }
     },

@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb, CUSTOM_CMD_ACCESS_MODES, CUSTOM_CMD_ACCESS_DEFAULT, effectiveAccessMode } = require('../services/database');
 const { SNOWFLAKE } = require('../services/mentions');
+const legal = require('../services/legalJournal');
 // Noyau partagé avec `/cmd` : validation des noms, écriture transactionnelle et
 // enregistrement auprès de la plateforme. Le dashboard et la commande du bot
 // doivent se comporter à l'identique — une seule implémentation, pas deux copies.
@@ -157,8 +158,14 @@ router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
     const access = parseAccess(req.body);
     if (access.error) return res.status(400).json({ error: access.error });
 
-    db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(req.params.guildId, cmdName, response || null, embed_id, access.mode, access.roleId);
+    // Écriture et ligne du journal de conservation (LCEN) dans la même transaction.
+    db.transaction(() => {
+        db.prepare('INSERT INTO custom_commands (guild_id, name, response, embed_id, access_mode, access_role_id) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(req.params.guildId, cmdName, response || null, embed_id, access.mode, access.roleId);
+        legal.record(db, legal.fromRequest(req), {
+            contentId: `${req.params.guildId}:${cmdName}`, contentType: 'custom_command', operation: 'create',
+        });
+    })();
 
     // Enregistrer la commande auprès de la plateforme — même chemin que
     // `/cmd create`, pour que les deux surfaces posent exactement la même
@@ -220,6 +227,7 @@ router.put('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
     const ecriture = updateCustomCommand(db, req.params.guildId, req.params.name, {
         fields: { response: response || null, embed_id, access_mode: access.mode, access_role_id: access.roleId },
         newName,
+        who: legal.fromRequest(req),
     });
     if (ecriture.error) {
         // Commande disparue entre la lecture et l'écriture = 404 ; collision
@@ -244,7 +252,15 @@ router.put('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
 // Supprimer une commande custom
 router.delete('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
     const db = getDb();
-    db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?').run(req.params.guildId, req.params.name);
+    db.transaction(() => {
+        const { changes } = db.prepare('DELETE FROM custom_commands WHERE guild_id = ? AND name = ?')
+            .run(req.params.guildId, req.params.name);
+        if (changes > 0) {
+            legal.record(db, legal.fromRequest(req), {
+                contentId: `${req.params.guildId}:${req.params.name}`, contentType: 'custom_command', operation: 'delete',
+            });
+        }
+    })();
 
     // Retirer la commande auprès de la plateforme — même chemin que `/cmd delete`.
     await enregistrement(req).retirer(req.params.guildId, req.params.name);

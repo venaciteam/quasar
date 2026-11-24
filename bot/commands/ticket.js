@@ -2,6 +2,7 @@ const { definirCommande } = require('../platform/commands');
 const { embed } = require('../platform/embed');
 const { buildTranscriptFile, deliverTranscript } = require('../utils/transcriptArchive');
 const { sendLog } = require('../utils/logger');
+const legal = require('../../api/services/legalJournal');
 
 const ACCENT_COLOR = 0xDE3163;
 
@@ -198,7 +199,12 @@ async function configurerTickets(ctx) {
         }
     }
 
-    ctx.db.prepare(`
+    // Ligne du journal de conservation (LCEN) dans la même transaction,
+    // seulement si le message d'accueil change.
+    legal.withJournal(ctx.db, legal.fromCtx(ctx), {
+        contentId: ctx.guildeId, contentType: 'ticket_texts',
+        snapshot: () => legal.snapshots.ticketTexts(ctx.db, ctx.guildeId),
+    }, () => ctx.db.prepare(`
         INSERT INTO ticket_config (guild_id, channel_id, category_id, staff_role_id, welcome_message, enabled)
         VALUES (?, ?, ?, ?, ?, 1)
         ON CONFLICT(guild_id) DO UPDATE SET
@@ -207,7 +213,7 @@ async function configurerTickets(ctx) {
             staff_role_id = excluded.staff_role_id,
             welcome_message = excluded.welcome_message,
             enabled = 1
-    `).run(ctx.guildeId, salon.id, categorie?.id || null, roleStaff.id, messageAccueil);
+    `).run(ctx.guildeId, salon.id, categorie?.id || null, roleStaff.id, messageAccueil));
 
     // Titre et description du panneau se règlent au dashboard : l'insertion
     // ci-dessus ne les touche pas, on relit donc la ligne complète.

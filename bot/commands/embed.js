@@ -1,6 +1,7 @@
 const { definirCommande } = require('../platform/commands');
 const { embed } = require('../platform/embed');
 const { buildMentionPayload, silentMentions, hasMentions } = require('../../api/services/mentions');
+const legal = require('../../api/services/legalJournal');
 
 // Colonnes de mention de l'embed (configurées dans le builder du dashboard).
 // Elles sont postées en contenu du message, au-dessus de l'embed.
@@ -106,14 +107,25 @@ module.exports = definirCommande({
             if (image) data.image = image;
             if (thumbnail) data.thumbnail = thumbnail;
 
-            // Vérifier si le nom existe déjà
-            const existing = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(ctx.guildeId, nom);
-            if (existing) {
-                db.prepare('UPDATE embeds SET data = ?, updated_at = datetime(\'now\') WHERE guild_id = ? AND name = ?')
-                    .run(JSON.stringify(data), ctx.guildeId, nom);
-            } else {
-                db.prepare('INSERT INTO embeds (guild_id, name, data) VALUES (?, ?, ?)').run(ctx.guildeId, nom, JSON.stringify(data));
-            }
+            // Vérifier si le nom existe déjà. Écriture et ligne du journal de
+            // conservation (LCEN) dans la même transaction.
+            const existing = db.transaction(() => {
+                const found = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(ctx.guildeId, nom);
+                const before = legal.snapshots.embed(db, found?.id);
+                let id = found?.id;
+                if (found) {
+                    db.prepare('UPDATE embeds SET data = ?, updated_at = datetime(\'now\') WHERE guild_id = ? AND name = ?')
+                        .run(JSON.stringify(data), ctx.guildeId, nom);
+                } else {
+                    id = db.prepare('INSERT INTO embeds (guild_id, name, data) VALUES (?, ?, ?)')
+                        .run(ctx.guildeId, nom, JSON.stringify(data)).lastInsertRowid;
+                }
+                legal.recordChange(db, legal.fromCtx(ctx), {
+                    contentId: `${ctx.guildeId}:${id}`, contentType: 'embed',
+                    before, after: legal.snapshots.embed(db, id),
+                });
+                return found;
+            })();
 
             await ctx.repondre({
                 contenu: `✅ Embed **${nom}** ${existing ? 'mis à jour' : 'créé'} ! Aperçu :\n> 💡 **Astuce image** : pour utiliser une image sans hébergement externe, postez-la dans n'importe quel channel Discord, faites un clic droit → "Copier le lien de l'image", et collez cette URL dans \`image:\` ou \`thumbnail:\`.`,
@@ -201,7 +213,16 @@ module.exports = definirCommande({
 
         } else if (sub === 'delete') {
             const nom = ctx.options.get('nom');
-            const result = db.prepare('DELETE FROM embeds WHERE guild_id = ? AND name = ?').run(ctx.guildeId, nom);
+            const result = db.transaction(() => {
+                const found = db.prepare('SELECT id FROM embeds WHERE guild_id = ? AND name = ?').get(ctx.guildeId, nom);
+                const r = db.prepare('DELETE FROM embeds WHERE guild_id = ? AND name = ?').run(ctx.guildeId, nom);
+                if (r.changes > 0) {
+                    legal.record(db, legal.fromCtx(ctx), {
+                        contentId: `${ctx.guildeId}:${found.id}`, contentType: 'embed', operation: 'delete',
+                    });
+                }
+                return r;
+            })();
 
             if (result.changes === 0) return ctx.erreurUtilisateur(EMBED_INTROUVABLE(nom));
             await ctx.repondre(`🗑️ Embed **${nom}** supprimé.`, { ephemere: true });
