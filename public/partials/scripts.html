@@ -14,6 +14,8 @@
       porte plus aucune, son contenu est construit par le DS (VNCT.AppMenu). Quasar n'a pas de CSP à nonce aujourd'hui,
       mais l'écrire proprement maintenant évite d'avoir à repasser sur cinq
       pages le jour où elle arrive.
+    - vitrine.js (v4.13.0) : mise en scène de la vitrine (révélations, scène,
+      onglets, compteur de l'instance). Chargé en dernier, sans dépendance au DS.
     - Le relais de signalement vit sur /api/feedback/vnct (cf. api/index.js) :
       il est monté dans les DEUX modes qui servent la vitrine (`site` et
       `public`), le drapeau fonctionne donc même sans bot ni base.
@@ -52,7 +54,7 @@
       }
     });
 
-    // Copie de la commande d'installation (carte « Autohébergement » de
+    // Copie de la commande d'installation (carte « Chez vous » de
     // l'accueil). Retour visuel porté par l'attribut data-copied : le libellé
     // du bouton n'est pas remplacé, il reste lisible par les lecteurs d'écran.
     function copyInstallCommand(btn) {
@@ -65,3 +67,4 @@
     }
   })();
 </script>
+<script src="/vitrine.js?v=__VERSION__" defer></script>

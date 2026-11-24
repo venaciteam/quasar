@@ -19,6 +19,7 @@
     <meta property="og:image" content="https://quasar.vena.city/icons/icon-512.png">
     <meta name="twitter:card" content="summary">
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <link rel="stylesheet" href="/vitrine.css?v=__VERSION__">
     <style>
         /* Page « un mot de la créatrice » — même gabarit que /ethique :
            colonne de cartes en verre dépoli, un encart irisé pour le passage
@@ -75,10 +76,10 @@
         .quasar-draft__text { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
     </style>
 </head>
-<body>
+<body class="qv-body">
     {{> header}}
 
-    <main class="quasar-read">
+    <main id="contenu" class="quasar-read qv-page-top">
         <h1 class="quasar-read__title vnct-appear">Pourquoi Qua<span class="vnct-iris-text">sar</span></h1>
 
         <div class="quasar-read__sections vnct-appear vnct-appear--d2">
@@ -153,6 +154,7 @@
         </div>
     </main>
 
+    {{> footer}}
     {{> scripts}}
 </body>
 </html>

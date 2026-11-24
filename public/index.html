@@ -16,309 +16,594 @@
     <link rel="canonical" href="https://quasar.vena.city/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Quasar">
-    <meta property="og:image" content="https://quasar.vena.city/icons/icon-512.png">
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="https://quasar.vena.city/og-image.jpg?v=__VERSION__">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Quasar, bot Discord français : le dashboard web, en thème sombre, avec ses modules de modération, tickets et rôles.">
+    <meta name="twitter:card" content="summary_large_image">
     <!-- Données structurées : bloc de données, jamais exécuté (la CSP ne s'y applique pas). -->
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Quasar","description":"Bot Discord français, gratuit et open source, avec un dashboard web complet. Auto-hébergeable.","url":"https://quasar.vena.city/","applicationCategory":"CommunicationApplication","operatingSystem":"Discord, Docker","inLanguage":"fr","isAccessibleForFree":true,"license":"https://www.gnu.org/licenses/agpl-3.0.html","offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"},"author":{"@type":"Organization","name":"Venacity","url":"https://vena.city"}}</script>
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
-    <style>
-        /* ═══════════════════════════════════════════════════════════════
-           Accueil Quasar — chrome standard DS v2 (façon Maât / Prisma).
-
-           Ce fichier ne redéfinit AUCUN token du design system : plus d'alias
-           locaux (--bg, --text, --radius…), plus de nav ni de footer maison.
-           Tout vient de design.vena.city/v2/. Le CSS ci-dessous ne décrit que
-           ce qui est propre à cette page : la grille des deux cartes, le
-           terminal d'installation et le bloc « engagements ».
-           ═══════════════════════════════════════════════════════════════ */
-
-        /* Contenu à z-index >= 2 : le DS élève body > main/header au-dessus du
-           canvas de fond et de la vignette. Le shell le rappelle explicitement,
-           piège connu (un wrapper intermédiaire retombe sous la trame). */
-        .quasar-shell {
-            position: relative;
-            z-index: 2;
-            width: 100%;
-            max-width: 60rem;
-            margin: 0 auto;
-            padding: 0 var(--space-4) var(--space-10);
-        }
-
-        /* Header sans marque à gauche (variante applicative) : le groupe
-           d'actions est poussé à droite. Pas de spacer — .vnct-header__inner > *
-           porte pointer-events:auto, un élément fantôme capterait les clics sur
-           une bande du header alors que le contenu doit rester cliquable dessous. */
-        .vnct-header__actions { margin-left: auto; }
-
-        /* ── Hero ─────────────────────────────────────────────────────────── */
-        .quasar-hero { text-align: center; padding: var(--space-10) 0 var(--space-8); }
-        .quasar-hero__tagline {
-            max-width: 34rem;
-            margin: var(--space-4) auto 0;
-            font-size: var(--text-lg);
-            color: var(--text-secondary);
-            line-height: var(--leading-relaxed);
-        }
-        .quasar-hero__tagline strong { color: var(--text-primary); font-weight: var(--font-semibold); }
-
-        /* ── Les deux voies d'accès ───────────────────────────────────────── */
-        /* auto-fit et non repeat(2) : quand le bouton dashboard est fermé, le
-           bloc « instance publique » est retiré du HTML (cf. le bloc
-           conditionnel plus bas) et la carte restante occupe seule la
-           largeur, sans colonne vide à côté d'elle. */
-        .quasar-paths {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-            gap: var(--space-5);
-            margin: var(--space-6) 0;
-        }
-        .quasar-path {
-            display: flex;
-            flex-direction: column;
-            gap: var(--space-4);
-            padding: var(--space-6) var(--space-5);
-            border-radius: var(--radius-lg, 14px);
-            text-align: center;
-        }
-        .quasar-path__title { font-family: var(--font-display); font-size: var(--text-xl); color: var(--text-primary); }
-        .quasar-path__desc {
-            flex: 1;
-            margin: 0;
-            font-size: var(--text-sm);
-            color: var(--text-secondary);
-            line-height: var(--leading-relaxed);
-        }
-        .quasar-path__btns { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3); }
-
-        /* ── Terminal d'installation (dans la carte « Autohébergement ») ───── */
-        .quasar-term {
-            border-radius: var(--radius-md, 10px);
-            overflow: hidden;
-            text-align: left;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-default);
-        }
-        .quasar-term__body { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); }
-        .quasar-term__prompt {
-            flex-shrink: 0;
-            color: var(--accent);
-            font-family: var(--font-mono, 'SF Mono', Monaco, Consolas, monospace);
-            font-size: var(--text-xs);
-        }
-        /* La commande déborde volontairement en scroll horizontal plutôt que de
-           passer à la ligne : une commande shell coupée se recopie mal à la main.
-           Le masque de dégradé signale qu'il reste du texte à droite. */
-        .quasar-term__cmd {
-            flex: 1;
-            min-width: 0;
-            overflow-x: auto;
-            white-space: nowrap;
-            font-family: var(--font-mono, 'SF Mono', Monaco, Consolas, monospace);
-            font-size: var(--text-xs);
-            color: var(--text-primary);
-            scrollbar-width: none;
-            -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
-            mask-image: linear-gradient(to right, #000 88%, transparent);
-        }
-        .quasar-term__cmd::-webkit-scrollbar { display: none; }
-        .quasar-term__copy {
-            flex-shrink: 0;
-            display: inline-flex;
-            align-items: center;
-            gap: var(--space-1);
-            padding: var(--space-1) var(--space-3);
-            min-height: 32px;
-            border: 1px solid var(--border-default);
-            border-radius: var(--radius-full);
-            background: transparent;
-            color: var(--text-secondary);
-            font-family: inherit;
-            font-size: var(--text-xs);
-            cursor: pointer;
-            transition: color var(--duration-fast) ease, border-color var(--duration-fast) ease;
-        }
-        .quasar-term__copy:hover { color: var(--accent); border-color: var(--border-hover); }
-        /* Retour de copie : on n'échange PAS le libellé du bouton (le lecteur
-           d'écran relirait un bouton qui change de nom). L'état est porté par
-           data-copied, le mot « Copié » est ajouté en plus de l'icône. */
-        .quasar-term__copy[data-copied] { color: var(--accent); border-color: var(--accent); }
-        .quasar-term__copy .quasar-term__done { display: none; }
-        .quasar-term__copy[data-copied] .quasar-term__done { display: inline; }
-        .quasar-term__copy[data-copied] .quasar-term__label { display: none; }
-
-        /* ── Bloc « premium, sans palier » ────────────────────────────────── */
-        .quasar-block { margin: var(--space-10) 0 0; text-align: center; }
-        .quasar-block__title { font-family: var(--font-display); font-size: var(--text-lg); color: var(--text-primary); }
-        .quasar-block__lead {
-            max-width: 42rem;
-            margin: var(--space-3) auto 0;
-            font-size: var(--text-sm);
-            color: var(--text-secondary);
-            line-height: var(--leading-relaxed);
-        }
-        .quasar-block__lead strong { color: var(--text-primary); }
-        /* list-style/padding remis à zéro : c'est un <ul> sémantique (une liste de
-           fonctionnalités), mais les puces natives n'ont aucun sens sur des
-           pilules disposées en ligne. */
-        .quasar-pills {
-            list-style: none;
-            margin: var(--space-5) 0 0;
-            padding: 0;
-            display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2);
-        }
-        /* Fond OPAQUE, jamais translucide : la trame de points animée du DS passe
-           sinon au travers et la pilule paraît vide. Le color-mix se fait donc
-           contre --bg-secondary (une couleur), pas contre `transparent`. */
-        .quasar-pill {
-            padding: var(--space-2) var(--space-4);
-            border-radius: var(--radius-full);
-            border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-            background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
-            font-size: var(--text-xs);
-            font-weight: var(--font-medium);
-            color: var(--text-primary);
-        }
-
-        /* ── Engagements vie privée ───────────────────────────────────────── */
-        .quasar-privacy { margin-top: var(--space-10); padding: var(--space-6) var(--space-5); border-radius: var(--radius-lg, 14px); }
-        .quasar-privacy__title { font-family: var(--font-display); font-size: var(--text-lg); color: var(--text-primary); text-align: center; }
-        .quasar-privacy__list { list-style: none; margin: var(--space-5) 0 0; padding: 0; display: grid; gap: var(--space-4); }
-        @media (min-width: 720px) { .quasar-privacy__list { grid-template-columns: repeat(3, 1fr); } }
-        .quasar-privacy__item { text-align: center; }
-        .quasar-privacy__item b { display: block; font-size: var(--text-sm); color: var(--text-primary); }
-        .quasar-privacy__item span { display: block; margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-secondary); line-height: var(--leading-relaxed); }
-        .quasar-privacy__more { margin-top: var(--space-5); text-align: center; font-size: var(--text-sm); color: var(--text-secondary); }
-        .quasar-privacy__more a { color: var(--accent); }
-
-        .quasar-version { margin-top: var(--space-8); text-align: center; font-size: var(--text-xs); color: var(--text-muted); }
-
-        @media (max-width: 600px) {
-            .quasar-hero { padding: var(--space-6) 0 var(--space-5); }
-            .quasar-path__btns .vnct-btn { flex: 1 1 auto; justify-content: center; }
-        }
-    </style>
+    <link rel="stylesheet" href="/vitrine.css?v=__VERSION__">
+    <link rel="preload" as="image" href="/img/dashboard.jpg?v=__VERSION__">
 </head>
-<body>
+<body class="qv-body">
+    <!--
+        Accueil de la vitrine — refonte v4.13.0 (DA : documentation-vnct/Quasar-Vitrine-DA.md).
+
+        Les maquettes de Discord sont reconstituées en HTML à partir des messages
+        que le bot envoie réellement (bot/commands, bot/interactions, bot/events) :
+        mêmes titres, mêmes champs, mêmes boutons. Seuls les noms (serveur « Le
+        Repaire », membres nova, Lumen, Orage) sont inventés. La capture du
+        dashboard sort de scripts/og/dashboard-demo.mjs : données inventées elles
+        aussi, aucune donnée réelle ne peut finir sur cette page.
+    -->
+    <div class="qv-progress" aria-hidden="true"><span></span></div>
     {{> header}}
 
-    <!-- <main> et non <div> : le DS élève automatiquement body > main/nav/header/footer
-         au-dessus du canvas de fond et de la vignette (contrat --z-content: 2). Un <div>
-         ne matche pas ce sélecteur et reste sous la trame de points, qui se dessine
-         alors par-dessus les blocs et les fait paraître transparents. -->
-    <main class="quasar-shell">
+    <main id="contenu">
 
-        <section class="vnct-hero quasar-hero vnct-appear">
-            <h1 class="vnct-hero__logo">Qua<span class="vnct-iris-text">sar</span></h1>
-            <p class="quasar-hero__tagline">
-                Un bot Discord français avec toutes les fonctionnalités <strong>premium</strong>,
-                hébergé chez vous. Gratuit, open source, privacy-first.
+        <!-- ═══ Ouverture ═══ -->
+        <section class="qv-hero qv-wrap" aria-labelledby="titre-quasar">
+            <ul class="qv-eyebrow" aria-label="En bref">
+                <li class="is-hot">Gratuit</li>
+                <li>Open source</li>
+                <li>En français</li>
+                <li>Auto-hébergeable</li>
+            </ul>
+            <h1 id="titre-quasar" data-title-reveal>Le bot Discord français,<br><span class="qv-iris">sans palier premium.</span></h1>
+            <p class="qv-hero__copy" data-reveal>
+                Modération, tickets, rôles par réaction, vocaux temporaires : tout est inclus,
+                avec un dashboard web pour tout régler sans taper une commande.
             </p>
-        </section>
+            <div class="qv-hero__actions" data-reveal>
+                <!-- __DASHBOARD_CTA_ON__ -->
+                <a class="qv-btn qv-btn--primary" href="/dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                    Ouvrir le dashboard
+                </a>
+                <a class="qv-btn qv-btn--ghost" href="#installer">Installer chez vous</a>
+                <!-- /__DASHBOARD_CTA_ON__ -->
+                <a class="qv-btn qv-btn--primary qv-cta-off" href="#installer">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                    Installer chez vous
+                </a>
+                <a class="qv-link qv-cta-off" href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    Voir le code sur GitHub<span class="vnct-sr-only"> (nouvelle fenêtre)</span>
+                </a>
+            </div>
+            <ul class="qv-hero__note" data-reveal>
+                <li>Une seule version, gratuite</li>
+                <li>Aucun tracking</li>
+                <li>Licence AGPL-3.0</li>
+            </ul>
 
-        <div class="quasar-paths vnct-appear vnct-appear--d1">
-            <!-- __DASHBOARD_CTA_ON__ -->
-            <!-- Carte d'accès à l'instance publique. Sa présence est décidée par
-                 le serveur (PUBLIC_INSTANCE_OPEN ET mode `public`, cf.
-                 api/index.js) : quand le bouton est fermé, tout ce bloc —
-                 commentaire compris — est retiré du HTML servi, et la grille
-                 auto-fit laisse la carte « Autohébergement » occuper seule la
-                 largeur. Le dashboard, lui, reste joignable en direct sur
-                 /dashboard : cette carte ne conditionne que son affichage ici. -->
-            <section class="quasar-path vnct-iris-border">
-                <h2 class="quasar-path__title">Sans rien installer</h2>
-                <p class="quasar-path__desc">
-                    Utilisez Quasar depuis l'instance publique, déjà en ligne et maintenue par
-                    Venacity. Rien à héberger, rien à configurer sur votre machine — vous vous
-                    connectez avec Discord et le dashboard est là.
-                </p>
-                <div class="quasar-path__btns">
-                    <a href="/dashboard" class="vnct-btn vnct-btn--primary">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
-                        Accéder au dashboard
-                    </a>
-                    <a href="/soutenir" class="vnct-btn vnct-btn--ghost">Soutenir Quasar</a>
-                </div>
-            </section>
-            <!-- /__DASHBOARD_CTA_ON__ -->
-
-            <section class="quasar-path vnct-iris-border">
-                <h2 class="quasar-path__title">Chez vous</h2>
-                <p class="quasar-path__desc">
-                    Une commande, et Quasar tourne sur votre machine. Docker suffit — même sur
-                    un Raspberry&nbsp;Pi. Vos configurations, vos sanctions et vos tickets
-                    restent chez vous, dans une base SQLite que vous seule ou seul hébergez.
-                </p>
-                <div class="quasar-term">
-                    <div class="quasar-term__body">
-                        <span class="quasar-term__prompt" aria-hidden="true">$</span>
-                        <code class="quasar-term__cmd" id="install-cmd">curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash</code>
-                        <button class="quasar-term__copy" type="button" data-quasar-action="copy-install" aria-label="Copier la commande d'installation">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            <span class="quasar-term__label">Copier</span>
-                            <span class="quasar-term__done">Copié</span>
-                        </button>
+            <!-- Trois fenêtres : deux messages du bot autour du dashboard. Décor :
+                 masqué des lecteurs d'écran, le texte de la page dit la même chose. -->
+            <div class="qv-stack" aria-hidden="true">
+                <div class="qv-pane qv-pane--left">
+                    <div class="qv-chat">
+                        <div class="qv-chat__top"><b>bienvenue</b><span>Le Repaire</span></div>
+                        <div class="qv-chat__body">
+                            <div class="qv-msg">
+                                <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                <div>
+                                    <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span></div>
+                                    <div class="qv-embed qv-embed--thumb" style="--bar:#c86e8e">
+                                        <div>
+                                            <p class="qv-embed__title">Bienvenue sur Le Repaire !</p>
+                                            <p class="qv-embed__desc"><span class="qv-mention">@nova</span> arrive — membre numéro <b>128</b>.</p>
+                                        </div>
+                                        <span class="qv-avatar qv-avatar--a">N</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="quasar-path__btns">
-                    <a href="https://github.com/venaciteam/quasar" class="vnct-btn vnct-btn--primary" target="_blank" rel="noopener">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-                        Code source<span class="vnct-sr-only"> sur GitHub (nouvelle fenêtre)</span>
-                    </a>
-                    <a href="https://github.com/venaciteam/quasar#-quick-start" class="vnct-btn vnct-btn--ghost" target="_blank" rel="noopener">
-                        Guide d'installation<span class="vnct-sr-only"> (nouvelle fenêtre)</span>
-                    </a>
+                <div class="qv-pane qv-pane--center">
+                    <div class="qv-window">
+                        <div class="qv-window__bar"><span>DASHBOARD</span><span class="qv-dots"><i></i><i></i><i></i></span></div>
+                        <img src="/img/dashboard.jpg?v=__VERSION__" width="2000" height="1153" alt="" decoding="async">
+                    </div>
                 </div>
-            </section>
-        </div>
+                <div class="qv-pane qv-pane--right">
+                    <div class="qv-chat">
+                        <div class="qv-chat__top"><b>rôles</b><span>Le Repaire</span></div>
+                        <div class="qv-chat__body">
+                            <div class="qv-msg">
+                                <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                <div>
+                                    <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span></div>
+                                    <div class="qv-embed" style="--bar:#c86e8e">
+                                        <p class="qv-embed__title">🎨 Vos centres d'intérêt</p>
+                                        <p class="qv-embed__desc">Cliquez sur un emoji pour obtenir le rôle correspondant.</p>
+                                        <p class="qv-embed__desc">🎮 → <span class="qv-mention">@Jeux</span><br>🎧 → <span class="qv-mention">@Musique</span><br>📚 → <span class="qv-mention">@Lecture</span></p>
+                                        <p class="qv-embed__foot">Panel #3 • Mode multiple</p>
+                                    </div>
+                                    <div class="qv-reactions"><span class="is-mine">🎮 24</span><span>🎧 17</span><span class="is-mine">📚 9</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <a class="qv-explore" href="#principe"><i></i>Ce que Quasar fait pour votre serveur</a>
+        </section>
 
-        <!-- Argument « premium, sans palier ». Formulé SANS nommer de concurrent
-             ni décrire les limites d'un produit tiers : ces offres changent, une
-             affirmation datée deviendrait fausse toute seule. Ce qui est affirmé
-             ici ne porte que sur Quasar, et est vérifiable dans le code. -->
-        <section class="quasar-block vnct-appear vnct-appear--d2">
-            <h2 class="quasar-block__title">Du premium, sans le palier premium</h2>
-            <p class="quasar-block__lead">
-                Les fonctionnalités que les bots Discord grand public réservent à leurs
-                abonnements sont ici <strong>incluses, sans limite artificielle</strong> — pas
-                de quota de panneaux, pas d'options grisées en attendant un paiement, pas de
-                niveau supérieur à débloquer. Il n'y a qu'une seule version de Quasar, gratuite,
-                et vous l'avez déjà.
-            </p>
-            <ul class="quasar-pills">
-                <li class="quasar-pill">Modération &amp; sanctions</li>
-                <li class="quasar-pill">Bienvenue &amp; départs</li>
-                <li class="quasar-pill">Rôles par réaction</li>
-                <li class="quasar-pill">Tickets &amp; transcripts</li>
-                <li class="quasar-pill">Salons vocaux temporaires</li>
-                <li class="quasar-pill">Embeds personnalisés</li>
-                <li class="quasar-pill">Dashboard web</li>
+        <!-- ═══ Le principe ═══ -->
+        <section class="qv-section qv-wrap" id="principe" aria-labelledby="titre-principe">
+            <div class="qv-heading">
+                <p class="qv-kicker">Le principe</p>
+                <h2 id="titre-principe" data-title-reveal>Tout est inclus.<br><span class="is-dim">Rien n'est à débloquer.</span></h2>
+                <!-- Formulé SANS nommer de concurrent ni décrire les limites d'un
+                     produit tiers : ces offres changent, une affirmation datée
+                     deviendrait fausse toute seule. -->
+                <p data-reveal>
+                    Les fonctionnalités que les bots Discord grand public réservent à leurs abonnements
+                    sont ici incluses, sans limite artificielle : pas de quota de panneaux, pas d'option
+                    grisée en attendant un paiement, pas de niveau supérieur. Il n'existe qu'une seule
+                    version de Quasar, gratuite, et c'est celle-ci.
+                </p>
+            </div>
+            <ol class="qv-facts">
+                <li data-reveal>
+                    <b>01</b>
+                    <h3>Gratuit, pour de bon</h3>
+                    <p>Aucun abonnement, aucune option payante. Tous les modules sont ouverts à tous les serveurs.</p>
+                </li>
+                <li data-reveal>
+                    <b>02</b>
+                    <h3>Ouvert et vérifiable</h3>
+                    <p>Le code est public, sous licence AGPL-3.0 : ce que la page affirme se vérifie <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">sur GitHub<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a>.</p>
+                </li>
+                <li data-reveal>
+                    <b>03</b>
+                    <h3>En français, partout</h3>
+                    <p>Les commandes, les messages du bot et le dashboard sont écrits en français, pas traduits à la volée.</p>
+                </li>
+            </ol>
+        </section>
+
+        <!-- ═══ Scène : réglé dans le dashboard, visible sur Discord ═══ -->
+        <section class="qv-section qv-wrap" id="dashboard" aria-labelledby="titre-dashboard">
+            <div class="qv-heading">
+                <p class="qv-kicker">Le dashboard</p>
+                <h2 id="titre-dashboard" data-title-reveal>Réglé ici.<br><span class="qv-iris">Visible sur Discord.</span></h2>
+                <p data-reveal>
+                    Chaque module se configure depuis le navigateur, avec votre compte Discord.
+                    Un salon, un texte, une couleur, et le bot s'en charge : le message de bienvenue
+                    part tout seul à chaque arrivée.
+                </p>
+            </div>
+
+            <div class="qv-story" data-phase="open">
+                <ol class="qv-chapters">
+                    <li data-chapter class="is-active"><b>01</b>Dans le dashboard</li>
+                    <li class="qv-chapters__line" aria-hidden="true"></li>
+                    <li data-chapter><b>02</b>Sur votre serveur</li>
+                    <li class="qv-chapters__line" aria-hidden="true"></li>
+                    <li data-chapter><b>03</b>Le reste suit</li>
+                </ol>
+                <div class="qv-console">
+                    <div class="qv-console__top">
+                        <span><span class="qv-dots" aria-hidden="true"><i></i><i></i><i></i></span>Module Welcome / Leave</span>
+                        <span>1 réglage → 1 message</span>
+                    </div>
+                    <div class="qv-scene">
+                        <div class="qv-scene__card qv-scene__card--dash">
+                            <div class="qv-scene__label"><span><b>01</b>Dans le dashboard</span><span>Welcome / Leave</span></div>
+                            <!-- Reconstitution du bloc « Bienvenue » de la page Welcome / Leave
+                                 (dashboard/js/pages/welcome.js) : mêmes libellés. -->
+                            <div class="qv-dash" role="img" aria-label="Le bloc Bienvenue du dashboard : salon #bienvenue, titre d'embed « Bienvenue sur {server} ! », description « {user} arrive, membre numéro {membercount} », avatar en vignette.">
+                                <div class="qv-dash__top"><span class="qv-brandmini">Qua<span>sar</span></span><span>· Le Repaire</span></div>
+                                <div class="qv-dash__body">
+                                    <p class="qv-dash__title">👋 Welcome / Leave</p>
+                                    <p class="qv-dash__sub">Messages de bienvenue et de départ personnalisés</p>
+                                    <div class="qv-dash__card">
+                                        <h4>👋 Bienvenue <span class="qv-toggle" aria-hidden="true"></span></h4>
+                                        <div class="qv-field"><span>Channel</span><div># bienvenue</div></div>
+                                        <div class="qv-field"><span>Titre embed</span><div>Bienvenue sur <code>{server}</code> !</div></div>
+                                        <div class="qv-field"><span>Description embed</span><div><code>{user}</code> arrive — membre numéro <code>{membercount}</code>.</div></div>
+                                        <div class="qv-field qv-field--row">
+                                            <div class="qv-field" style="margin:0"><span>Couleur</span><div><i class="qv-swatch"></i>#c86e8e</div></div>
+                                            <div class="qv-field" style="margin:0"><span>Avatar en thumbnail</span><div>Oui</div></div>
+                                        </div>
+                                        <span class="qv-dash__save">Enregistrer</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="qv-scene__card qv-scene__card--discord">
+                            <div class="qv-scene__label"><span><b>02</b>Sur votre serveur</span><span>#bienvenue</span></div>
+                            <div class="qv-chat" role="img" aria-label="Le message publié par Quasar dans #bienvenue : « Bienvenue sur Le Repaire ! », nova arrive, membre numéro 128, avec son avatar.">
+                                <div class="qv-chat__top"><b>bienvenue</b><span>Le Repaire</span></div>
+                                <div class="qv-chat__body">
+                                    <div class="qv-msg">
+                                        <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                        <div>
+                                            <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span><span class="qv-msg__time">Aujourd'hui à 18:42</span></div>
+                                            <div class="qv-embed qv-embed--thumb" style="--bar:#c86e8e">
+                                                <div>
+                                                    <p class="qv-embed__title">Bienvenue sur Le Repaire !</p>
+                                                    <p class="qv-embed__desc"><span class="qv-mention">@nova</span> arrive — membre numéro <b>128</b>.</p>
+                                                </div>
+                                                <span class="qv-avatar qv-avatar--a">N</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="qv-msg">
+                                        <span class="qv-avatar qv-avatar--b">L</span>
+                                        <div>
+                                            <div class="qv-msg__head"><span class="qv-msg__name">Lumen</span><span class="qv-msg__time">Aujourd'hui à 18:43</span></div>
+                                            <p class="qv-msg__text">Bienvenue <span class="qv-mention">@nova</span> 👋</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qv-links-row" aria-hidden="true"><i></i><i></i></div>
+                    <ul class="qv-shared">
+                        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg><span>Connexion avec Discord<small>Aucun compte à créer</small></span></li>
+                        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg><span>Aperçu en direct<small>Pour composer vos embeds</small></span></li>
+                        <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Tous les modules<small>Au même endroit</small></span></li>
+                        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><span>Clair ou sombre<small>Au choix</small></span></li>
+                    </ul>
+                </div>
+                <p class="qv-note">Serveur et membres inventés pour l'exemple. Les messages sont ceux que Quasar envoie.</p>
+            </div>
+
+            <div class="qv-outro">
+                <p data-reveal>Les commandes restent là pour qui les aime.<br><strong>Le dashboard est là pour tout le reste.</strong></p>
+                <span class="qv-outro__note" data-reveal>Commandes /slash<br>et dashboard web</span>
+            </div>
+        </section>
+
+        <!-- ═══ Sur Discord : messages à onglets ═══ -->
+        <section class="qv-section qv-wrap" id="discord" aria-labelledby="titre-discord">
+            <div class="qv-heading qv-heading--center">
+                <p class="qv-kicker">Sur votre serveur</p>
+                <h2 id="titre-discord" data-title-reveal>Quasar travaille.<br><span class="is-dim">Votre équipe respire.</span></h2>
+            </div>
+            <div class="qv-showcase">
+                <div class="qv-tabs" role="tablist" aria-label="Exemples de messages de Quasar">
+                    <button class="qv-tab" type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected="true"><b>01</b><strong>Tickets</strong><span>Un bouton, et chaque demande a son salon privé avec l'équipe. À la fermeture, le transcript part dans Discord.</span></button>
+                    <button class="qv-tab" type="button" role="tab" id="tab-moderation" aria-controls="panel-moderation" aria-selected="false" tabindex="-1"><b>02</b><strong>Modération</strong><span>Avertir, rendre muet, exclure, bannir : chaque sanction est numérotée, journalisée et retrouvable.</span></button>
+                    <button class="qv-tab" type="button" role="tab" id="tab-vocaux" aria-controls="panel-vocaux" aria-selected="false" tabindex="-1"><b>03</b><strong>Vocaux temporaires</strong><span>Chaque membre crée son salon vocal en rejoignant un salon dédié, le règle avec des boutons, et le salon disparaît quand tout le monde part.</span></button>
+                </div>
+                <div class="qv-panels">
+                    <div class="qv-panel is-active" role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" tabindex="0">
+                        <div class="qv-chat">
+                            <div class="qv-chat__top"><b>support</b><span>Le Repaire</span></div>
+                            <div class="qv-chat__body">
+                                <div class="qv-msg">
+                                    <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                    <div>
+                                        <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span></div>
+                                        <div class="qv-embed" style="--bar:#de3163">
+                                            <p class="qv-embed__title">🎫 Support — Ouvrir un ticket</p>
+                                            <p class="qv-embed__desc">Cliquez sur le bouton ci-dessous pour ouvrir un ticket.<br>Un membre du staff vous répondra dès que possible.</p>
+                                        </div>
+                                        <div class="qv-buttons"><span class="is-primary">🎫 Ouvrir un ticket</span></div>
+                                        <p class="qv-ephemeral">✅ Votre ticket a été créé : <span class="qv-mention">#ticket-nova-3</span> · Message visible par vous uniquement</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="qv-chat__top" style="border-top:1px solid #ffffff12"><b>ticket-nova-3</b><span>Privé</span></div>
+                            <div class="qv-chat__body">
+                                <div class="qv-msg">
+                                    <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                    <div>
+                                        <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span></div>
+                                        <p class="qv-msg__text"><span class="qv-mention">@nova</span> | <span class="qv-mention">@Staff</span></p>
+                                        <div class="qv-embed" style="--bar:#de3163">
+                                            <p class="qv-embed__title">🎫 Ticket #3</p>
+                                            <p class="qv-embed__desc">Bienvenue <span class="qv-mention">@nova</span> !<br><br>Un membre du staff va vous répondre sous peu. Décrivez votre problème en détail.</p>
+                                            <dl class="qv-embed__fields"><div><dt>Ouvert par</dt><dd><span class="qv-mention">@nova</span></dd></div><div><dt>Staff</dt><dd><span class="qv-mention">@Staff</span></dd></div></dl>
+                                        </div>
+                                        <div class="qv-buttons"><span class="is-danger">🔒 Fermer le ticket</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qv-panel" role="tabpanel" id="panel-moderation" aria-labelledby="tab-moderation" tabindex="0">
+                        <div class="qv-chat">
+                            <div class="qv-chat__top"><b>modération</b><span>Le Repaire</span></div>
+                            <div class="qv-chat__body">
+                                <div class="qv-msg">
+                                    <span class="qv-avatar qv-avatar--c">O</span>
+                                    <div>
+                                        <div class="qv-msg__head"><span class="qv-msg__name">Orage</span><span class="qv-msg__time">a utilisé /warn</span></div>
+                                    </div>
+                                </div>
+                                <div class="qv-msg">
+                                    <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                    <div>
+                                        <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span><span class="qv-msg__time">Aujourd'hui à 21:07</span></div>
+                                        <div class="qv-embed" style="--bar:#f1c40f">
+                                            <p class="qv-embed__title">⚠️ Avertissement</p>
+                                            <dl class="qv-embed__fields">
+                                                <div><dt>Membre</dt><dd><span class="qv-mention">@Spark</span> (spark)</dd></div>
+                                                <div><dt>Modérateur</dt><dd><span class="qv-mention">@Orage</span></dd></div>
+                                                <div class="is-wide"><dt>Raison</dt><dd>Publicité non sollicitée en message privé</dd></div>
+                                                <div><dt>Warns actifs</dt><dd>2</dd></div>
+                                                <div><dt>ID sanction</dt><dd>#41</dd></div>
+                                            </dl>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="qv-panel" role="tabpanel" id="panel-vocaux" aria-labelledby="tab-vocaux" tabindex="0">
+                        <div class="qv-chat">
+                            <div class="qv-chat__top"><b>🎧 Salon de Lumen</b><span>Vocal temporaire</span></div>
+                            <div class="qv-chat__body">
+                                <div class="qv-msg">
+                                    <span class="qv-avatar"><img src="/icons/icon-192.png?v=__VERSION__" alt=""></span>
+                                    <div>
+                                        <div class="qv-msg__head"><span class="qv-msg__name">Quasar</span><span class="qv-msg__tag">APP</span></div>
+                                        <div class="qv-embed" style="--bar:#c86e8e">
+                                            <p class="qv-embed__title">🎧 C'est votre salon, Lumen !</p>
+                                            <p class="qv-embed__desc">Personnalisez-le avec les boutons ci-dessous ou les commandes <code>/voice</code>.</p>
+                                            <p class="qv-embed__desc">Vos préférences (nom, limite) seront <b>mémorisées</b> pour cette catégorie. ✨</p>
+                                            <p class="qv-embed__foot">Ce salon sera supprimé quand tout le monde sera parti.</p>
+                                        </div>
+                                        <div class="qv-buttons"><span>✏️ Renommer</span><span>👥 Limite</span><span>🔒 Verrouiller</span><span>🔓 Déverrouiller</span></div>
+                                        <div class="qv-buttons" style="margin-top:6px"><span>✅ Autoriser</span><span>👋 Expulser</span><span>🗑️ Reset préfs</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Les modules ═══ -->
+        <section class="qv-section qv-wrap" id="modules" aria-labelledby="titre-modules">
+            <div class="qv-heading">
+                <p class="qv-kicker">Les modules</p>
+                <h2 id="titre-modules" data-title-reveal>Ce qu'un serveur demande.<br><span class="is-dim">Au même endroit.</span></h2>
+                <p data-reveal>Chaque module s'active ou se coupe d'un geste, serveur par serveur, depuis le dashboard.</p>
+            </div>
+            <ul class="qv-modules">
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <h3>Modération</h3>
+                    <p>Avertissements, mise en sourdine, exclusion, bannissement, nettoyage de salon, historique des sanctions et journaux automatiques.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
+                    <h3>Modération auto <span class="qv-badge">bêta</span></h3>
+                    <p>L'AutoMod de Discord piloté depuis le dashboard, escalade par avertissements, anti-raid et salon piège. Tout arrive désactivé.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+                    <h3>Bienvenue et départs</h3>
+                    <p>Messages d'arrivée et de départ, en texte ou en embed, avec l'avatar du membre.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                    <h3>Rôles par réaction</h3>
+                    <p>Des panneaux d'emojis pour se servir en rôles, en mode unique ou multiple. Plus les rôles automatiques à l'arrivée et les rôles vocaux.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+                    <h3>Embeds personnalisés</h3>
+                    <p>Composer, sauvegarder et envoyer des embeds, avec l'aperçu sous les yeux pendant l'écriture.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    <h3>Commandes personnalisées</h3>
+                    <p>Vos propres commandes, qui répondent par un texte ou un embed.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>
+                    <h3>Tickets</h3>
+                    <p>Un panneau personnalisable, un salon privé par demande, et le transcript envoyé dans Discord à la fermeture, jamais gardé en base.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+                    <h3>Vocaux temporaires</h3>
+                    <p>Des salons vocaux créés à la demande, réglables par boutons, supprimés quand ils se vident.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/></svg>
+                    <h3>Rappels</h3>
+                    <p>Des messages programmés, ponctuels ou récurrents, avec les mentions de votre choix.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><path d="M5 7h14"/><path d="m5 7-3 6a3.5 3.5 0 0 0 6 0z"/><path d="m19 7-3 6a3.5 3.5 0 0 0 6 0z"/><path d="M7 21h10"/></svg>
+                    <h3>Droits des personnes</h3>
+                    <p>Chaque membre consulte ses données avec <code>/mes-donnees</code> ; les demandes de suppression arrivent à l'administration du serveur.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                    <h3>Mise à jour en un clic</h3>
+                    <p>Chez vous, la nouvelle version s'installe depuis le dashboard, avec son journal affiché en direct.</p>
+                </li>
+                <li class="qv-module" data-reveal>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                    <h3>Dashboard web</h3>
+                    <p>Tout se règle depuis un navigateur, en thème clair ou sombre, sans taper une commande.</p>
+                </li>
             </ul>
         </section>
 
-        <section class="quasar-privacy vnct-iris-border vnct-appear vnct-appear--d3" aria-label="Engagements sur la vie privée">
-            <h2 class="quasar-privacy__title">Ce que Quasar ne fait pas</h2>
-            <ul class="quasar-privacy__list">
-                <li class="quasar-privacy__item">
-                    <b>Aucun tracking</b>
-                    <span>Ni analytics, ni compteur d'usage, ni mouchard. Rien ne mesure ce que vous faites du bot.</span>
-                </li>
-                <li class="quasar-privacy__item">
-                    <b>Aucune remontée</b>
-                    <span>Une instance que vous hébergez ne parle à Venacity pour rien — pas même pour dire qu'elle existe.</span>
-                </li>
-                <li class="quasar-privacy__item">
-                    <b>Aucune revente</b>
-                    <span>Vos données ne sont ni recoupées, ni cédées, ni exploitées pour de la publicité ciblée.</span>
-                </li>
+        <!-- ═══ Deux façons de l'utiliser ═══ -->
+        <section class="qv-section qv-wrap" id="installer" aria-labelledby="titre-installer">
+            <div class="qv-heading">
+                <p class="qv-kicker">Installer</p>
+                <!-- __DASHBOARD_CTA_ON__ -->
+                <h2 id="titre-installer" data-title-reveal>Deux façons de l'utiliser.<br><span class="is-dim">Le même Quasar.</span></h2>
+                <p data-reveal>L'instance publique et une installation chez vous font tourner exactement le même code. La seule différence : qui héberge vos données.</p>
+                <!-- /__DASHBOARD_CTA_ON__ -->
+                <h2 class="qv-cta-off" data-title-reveal>Chez vous,<br><span class="is-dim">en une commande.</span></h2>
+                <p class="qv-cta-off" data-reveal>Quasar tourne sur votre machine, et vos données y restent.</p>
+            </div>
+            <div class="qv-paths">
+                <!-- __DASHBOARD_CTA_ON__ -->
+                <!-- Carte de l'instance publique. Sa présence est décidée par le
+                     serveur (PUBLIC_INSTANCE_OPEN ET mode `public`, cf.
+                     api/index.js) : quand le bouton est fermé, tout ce bloc est
+                     retiré du HTML et la carte « Chez vous » occupe seule la largeur. -->
+                <article class="qv-path qv-path--hot" data-reveal>
+                    <p class="qv-path__kicker">Sans rien installer</p>
+                    <h3>L'instance publique</h3>
+                    <p>
+                        Quasar est déjà en ligne, maintenu par Venacity. Rien à héberger, rien à
+                        configurer sur votre machine : connexion avec Discord, et le dashboard est là.
+                    </p>
+                    <!-- Compteur de l'instance Venacity, rempli par vitrine.js depuis
+                         /api/public/stats (cf. api/routes/publicStats.js). Masqué tant
+                         que l'API n'a pas répondu, et pour de bon si elle échoue :
+                         aucun « … » ni zéro trompeur. Il ne compte QUE l'instance
+                         Venacity ; les instances auto-hébergées ne remontent rien. -->
+                    <p class="qv-path__stat" id="instance-stats" hidden>
+                        L'instance de Venacity est présente sur
+                        <strong data-stat="servers"></strong> <span data-stat="unit"></span> Discord.
+                        Les instances auto-hébergées ne sont pas comptées : elles ne communiquent rien.
+                    </p>
+                    <div class="qv-path__actions">
+                        <a class="qv-btn qv-btn--primary" href="/dashboard">Ouvrir le dashboard</a>
+                        <a class="qv-link" href="/soutenir">Soutenir Quasar</a>
+                    </div>
+                </article>
+                <!-- /__DASHBOARD_CTA_ON__ -->
+                <article class="qv-path" data-reveal>
+                    <p class="qv-path__kicker">Chez vous</p>
+                    <h3>Auto-hébergement</h3>
+                    <p>
+                        Une commande, et Quasar tourne sur votre machine. Docker suffit, même sur un
+                        Raspberry&nbsp;Pi. Vos configurations, vos sanctions et vos tickets restent dans
+                        une base SQLite que vous seule ou seul hébergez.
+                    </p>
+                    <div class="qv-term">
+                        <div class="qv-term__bar"><span>TERMINAL</span><span class="qv-dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+                        <div class="qv-term__body">
+                            <span class="qv-term__prompt" aria-hidden="true">$</span>
+                            <code class="qv-term__cmd" id="install-cmd">curl -sSL https://raw.githubusercontent.com/venaciteam/quasar/main/install.sh | bash</code>
+                            <button class="qv-term__copy" type="button" data-quasar-action="copy-install" aria-label="Copier la commande d'installation">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <span class="qv-term__label">Copier</span>
+                                <span class="qv-term__done">Copié</span>
+                            </button>
+                        </div>
+                    </div>
+                    <ol class="qv-steps">
+                        <li>Il faut Docker et une application bot créée sur le portail développeur de Discord.</li>
+                        <li>Le script demande vos identifiants, en expliquant où les trouver, et vérifie le jeton avant de construire quoi que ce soit.</li>
+                        <li>Il donne le lien d'invitation du bot, démarre, puis contrôle que tout répond.</li>
+                    </ol>
+                    <div class="qv-path__actions">
+                        <a class="qv-btn qv-btn--ghost" href="https://github.com/venaciteam/quasar#-quick-start" target="_blank" rel="noopener">Guide d'installation<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a>
+                        <a class="qv-link" href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">Code source<span class="vnct-sr-only"> sur GitHub (nouvelle fenêtre)</span></a>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <!-- ═══ Vie privée ═══ -->
+        <section class="qv-section qv-wrap" id="vie-privee" aria-labelledby="titre-vie-privee">
+            <div class="qv-heading qv-heading--center">
+                <p class="qv-kicker">Vie privée</p>
+                <h2 id="titre-vie-privee" data-title-reveal>Ce que Quasar<br><span class="qv-iris">ne fait pas.</span></h2>
+            </div>
+            <ul class="qv-privacy">
+                <li data-reveal><b>Aucun tracking</b><span>Ni analytics, ni compteur d'usage, ni mouchard. Rien ne mesure ce que vous faites du bot.</span></li>
+                <li data-reveal><b>Aucune remontée</b><span>Une instance que vous hébergez ne parle à Venacity pour rien, pas même pour dire qu'elle existe.</span></li>
+                <li data-reveal><b>Aucune revente</b><span>Vos données ne sont ni recoupées, ni cédées, ni exploitées pour de la publicité ciblée.</span></li>
             </ul>
-            <p class="quasar-privacy__more">
-                Le code est ouvert, <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">vérifiez par vous-même<span class="vnct-sr-only"> sur GitHub (nouvelle fenêtre)</span></a> — ou lisez <a href="/ethique">les engagements en détail</a>.
+            <p class="qv-privacy__more" data-reveal>
+                Le code est ouvert : <a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">vérifiez par vous-même<span class="vnct-sr-only"> sur GitHub (nouvelle fenêtre)</span></a>, ou lisez <a href="/ethique">les engagements en détail</a>.
             </p>
         </section>
 
-        <p class="quasar-version vnct-appear vnct-appear--d4">v__VERSION__</p>
+        <!-- ═══ Questions ═══ -->
+        <section class="qv-section qv-wrap" id="questions" aria-labelledby="titre-questions">
+            <div class="qv-faq-grid">
+                <div class="qv-heading">
+                    <p class="qv-kicker">Questions</p>
+                    <h2 id="titre-questions" data-title-reveal>Avant de<br><span class="is-dim">l'inviter.</span></h2>
+                    <p data-reveal>Une autre question ? Le drapeau en haut de la page l'envoie directement.</p>
+                </div>
+                <div class="qv-faq">
+                    <details>
+                        <summary>Quasar est-il vraiment gratuit ?</summary>
+                        <div>
+                            <p>Oui. Il n'existe qu'une seule version de Quasar, sans abonnement ni option payante, et tous les modules sont ouverts.</p>
+                            <p>Pour participer aux frais d'hébergement, la page <a href="/soutenir">Soutenir</a> explique comment, sans que rien ne change dans le bot.</p>
+                        </div>
+                    </details>
+                    <!-- __DASHBOARD_CTA_ON__ -->
+                    <details>
+                        <summary>Instance publique ou installation chez soi ?</summary>
+                        <div>
+                            <p>Les deux font tourner le même code. L'instance publique ne demande rien : connexion avec Discord, et c'est prêt. Ses données sont hébergées par Venacity.</p>
+                            <p>Chez vous, tout reste sur votre machine, et vous choisissez quand mettre à jour.</p>
+                        </div>
+                    </details>
+                    <!-- /__DASHBOARD_CTA_ON__ -->
+                    <details>
+                        <summary>Que faut-il pour l'installer chez soi ?</summary>
+                        <div>
+                            <p>Docker, et une application bot créée sur le portail développeur de Discord. Une commande lance le script, qui guide chaque étape et donne le lien d'invitation du bot.</p>
+                            <p>Il installe la dernière version publiée : deux personnes qui installent le même jour obtiennent le même code.</p>
+                        </div>
+                    </details>
+                    <details>
+                        <summary>Le dashboard est-il accessible à tout le monde ?</summary>
+                        <div>
+                            <p>Chez vous, non : par défaut, il n'écoute que sur la machine qui l'héberge. Le script propose de l'ouvrir au réseau local, et ne le fait jamais sans votre accord.</p>
+                            <p>Dans tous les cas, un serveur n'apparaît dans le dashboard que pour les personnes qui y ont la permission Administrateur, après connexion avec leur compte Discord.</p>
+                        </div>
+                    </details>
+                    <details>
+                        <summary>Quelles données Quasar garde-t-il ?</summary>
+                        <div>
+                            <p>Ce qu'il faut pour fonctionner : la configuration des modules, l'historique des sanctions, les tickets en cours. Les transcripts de tickets partent dans Discord à la fermeture et ne sont jamais gardés en base.</p>
+                            <p>Quand le bot quitte un serveur, les données de ce serveur sont supprimées après un court délai. Chaque membre peut consulter les siennes avec <code>/mes-donnees</code>.</p>
+                        </div>
+                    </details>
+                    <details>
+                        <summary>Que permet la licence AGPL-3.0 ?</summary>
+                        <div>
+                            <p>Lire, installer, modifier et redistribuer Quasar librement. En échange, quiconque fait tourner une version modifiée pour d'autres personnes doit publier ses modifications : pas de copie fermée qui ferait autre chose de vos données en silence.</p>
+                        </div>
+                    </details>
+                    <details>
+                        <summary>Comment signaler un bug ou proposer une idée ?</summary>
+                        <div>
+                            <p>Avec le drapeau en haut de cette page, ou directement sur Discord avec la commande <code>/signaler bug</code>. Les nouveautés de chaque version sont listées sur la page <a href="/nouveautes">Nouveautés</a>.</p>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Appel final ═══ -->
+        <section class="qv-wrap" aria-labelledby="titre-final">
+            <div class="qv-final" data-reveal>
+                <img src="/icons/icon-192.png?v=__VERSION__" alt="" width="64" height="64">
+                <h2 id="titre-final">Votre serveur mérite<br><span class="qv-iris">tout le premium.</span></h2>
+                <p>Gratuit, en français, ouvert. Il ne manque que votre serveur.</p>
+                <div class="qv-hero__actions">
+                    <!-- __DASHBOARD_CTA_ON__ -->
+                    <a class="qv-btn qv-btn--primary" href="/dashboard">Ouvrir le dashboard</a>
+                    <a class="qv-btn qv-btn--ghost" href="#installer">Installer chez vous</a>
+                    <!-- /__DASHBOARD_CTA_ON__ -->
+                    <a class="qv-btn qv-btn--primary qv-cta-off" href="#installer">Installer chez vous</a>
+                </div>
+            </div>
+        </section>
+
     </main>
 
+    {{> footer}}
     {{> scripts}}
 </body>
 </html>

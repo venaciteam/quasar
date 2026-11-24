@@ -19,6 +19,7 @@
     <meta property="og:image" content="https://quasar.vena.city/icons/icon-512.png">
     <meta name="twitter:card" content="summary">
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <link rel="stylesheet" href="/vitrine.css?v=__VERSION__">
     <style>
         /* Page « nouveautés » : changelog rendu CÔTÉ SERVEUR à partir des blocs
            markdown du journal (cf. api/services/nouveautes.js). Une carte par
@@ -106,10 +107,10 @@
         .quasar-news__foot a { color: var(--accent); }
     </style>
 </head>
-<body>
+<body class="qv-body">
     {{> header}}
 
-    <main class="quasar-news">
+    <main id="contenu" class="quasar-news qv-page-top">
         <h1 class="quasar-news__title vnct-appear">Les nouveautés de Qua<span class="vnct-iris-text">sar</span></h1>
         <p class="quasar-news__lead vnct-appear vnct-appear--d1">
             Version après version, tout ce qui change dans Quasar est consigné ici — les
@@ -131,6 +132,7 @@
         </p>
     </main>
 
+    {{> footer}}
     {{> scripts}}
 </body>
 </html>
