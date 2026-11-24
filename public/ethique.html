@@ -22,6 +22,7 @@
     <meta property="og:image:alt" content="Quasar, bot Discord français : le dashboard web, en thème sombre, avec ses modules de modération, tickets et rôles.">
     <meta name="twitter:card" content="summary_large_image">
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <link rel="stylesheet" href="/vitrine.css?v=__VERSION__">
     <style>
         /* Page de lecture : colonne étroite, cartes en verre dépoli.
            Même gabarit que /pourquoi, /nouveautes et /soutenir. */
@@ -58,10 +59,10 @@
         .quasar-read__foot { display: flex; justify-content: center; margin-top: var(--space-8); }
     </style>
 </head>
-<body>
+<body class="qv-body">
     {{> header}}
 
-    <main class="quasar-read">
+    <main id="contenu" class="quasar-read qv-page-top">
         <h1 class="quasar-read__title vnct-appear">L'éthique de Qua<span class="vnct-iris-text">sar</span></h1>
         <p class="quasar-read__lead vnct-appear vnct-appear--d1">
             Un bot Discord voit passer beaucoup de choses&nbsp;: qui rejoint un serveur, qui
@@ -172,6 +173,7 @@
         </div>
     </main>
 
+    {{> footer}}
     {{> scripts}}
 </body>
 </html>
