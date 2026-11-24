@@ -11,8 +11,9 @@
     <meta name="theme-color" content="#06060c">
     <meta name="robots" content="noindex">
     <link rel="stylesheet" href="__VNCT_CSS_URL__">
+    <link rel="stylesheet" href="/vitrine.css?v=__VERSION__">
     <style>
-        /* <main> et non <div> : le DS v2 élève automatiquement body > main
+        /* <main id="contenu" class="qv-page-top"> et non <div> : le DS v2 élève automatiquement body > main
            au-dessus du canvas de fond (contrat --z-content: 2).
 
            Hauteur : 100dvh moins la place du header flottant, pour que la carte
@@ -73,7 +74,7 @@
         }
     </style>
 </head>
-<body>
+<body class="qv-body">
     {{> header}}
 
     <main>
@@ -95,6 +96,7 @@
         </section>
     </main>
 
+    {{> footer}}
     {{> scripts}}
 </body>
 </html>

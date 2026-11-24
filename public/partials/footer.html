@@ -1,0 +1,54 @@
+<!--
+    Pied de page commun aux pages de la vitrine (v4.13.0).
+
+    Les liens légaux y figurent EN PLUS du menu « … » : ils portent une
+    obligation légale (vnct-design-system/MIGRATION.md, « Bloc légal ») et
+    doivent rester visibles sans ouvrir de menu. Mêmes adresses que menu.html :
+    les deux listes ne doivent jamais diverger.
+
+    Le bouton « Animations » n'apparaît qu'une fois vitrine.js chargé (sans
+    script, il n'aurait aucun effet).
+-->
+<footer class="qv-footer">
+  <div class="qv-wrap">
+    <div class="qv-footer__grid">
+      <div class="qv-footer__about">
+        <a class="qv-brand" href="/" aria-label="Quasar, accueil">
+          <img src="/icons/icon-192.png?v=__VERSION__" alt="" width="32" height="32">
+          <span>Qua<span class="qv-iris">sar</span></span>
+        </a>
+        <p>Bot Discord français, gratuit et open source, avec un dashboard web. Un projet Venacity.</p>
+      </div>
+      <div>
+        <h2>Quasar</h2>
+        <ul>
+          <li><a href="/nouveautes">Nouveautés</a></li>
+          <li><a href="/pourquoi">Un mot de la créatrice</a></li>
+          <li><a href="/ethique">Éthique</a></li>
+          <li><a href="/soutenir">Soutenir Quasar</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Code</h2>
+        <ul>
+          <li><a href="https://github.com/venaciteam/quasar" target="_blank" rel="noopener">Code source<span class="vnct-sr-only"> sur GitHub (nouvelle fenêtre)</span></a></li>
+          <li><a href="https://github.com/venaciteam/quasar#-quick-start" target="_blank" rel="noopener">Guide d'installation<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a></li>
+          <li><a href="https://github.com/venaciteam/quasar/releases" target="_blank" rel="noopener">Versions publiées<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a></li>
+          <li><button class="qv-footer__report" type="button" data-quasar-action="report">Signaler un problème</button></li>
+        </ul>
+      </div>
+      <div>
+        <h2>Légal</h2>
+        <ul>
+          <li><a href="https://strata.vena.city/ml" target="_blank" rel="noopener noreferrer">Mentions légales<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a></li>
+          <li><a href="https://strata.vena.city/pdc" target="_blank" rel="noopener noreferrer">Politique de confidentialité<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a></li>
+          <li><a href="https://strata.vena.city/cgu" target="_blank" rel="noopener noreferrer">Conditions générales d'utilisation<span class="vnct-sr-only"> (nouvelle fenêtre)</span></a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="qv-footer__bottom">
+      <span>&copy; 2026 Venacity · Quasar v__VERSION__ · Licence AGPL-3.0</span>
+      <button class="qv-motion" id="qv-motion" type="button" aria-pressed="false" hidden>Animations actives</button>
+    </div>
+  </div>
+</footer>

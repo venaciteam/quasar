@@ -246,9 +246,10 @@ function supportLinks() {
 }
 
 const PAGE_DATA = {
-    // L'accueil porte le chrome applicatif : pas de marque à gauche (on est
-    // déjà sur la page de la marque, le hero la porte en grand), drapeau de
-    // signalement + menu à droite.
+    // Depuis la v4.13.0, la barre du haut est la même sur toutes les pages
+    // (partials/header.html) : `app` et `ctx` ne pilotent plus le header. Ils
+    // restent des variables de page disponibles ; seul /soutenir en a besoin
+    // (liens de paiement).
     [pageFile('index.html')]: { app: true },
     [pageFile('ethique.html')]: { ctx: 'éthique' },
     [pageFile('pourquoi.html')]: { ctx: 'un mot de la créatrice' },
