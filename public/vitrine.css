@@ -90,7 +90,7 @@ html, body { overflow-x: clip; }
 html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 
 /* ── Ouverture ─────────────────────────────────────────────────────── */
-.qv-hero { position: relative; isolation: isolate; padding-top: 72px; text-align: center; }
+.qv-hero { position: relative; isolation: isolate; padding-top: 64px; text-align: center; }
 .qv-hero::before {
     content: '';
     position: absolute;
@@ -177,7 +177,7 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 .qv-ephemeral { margin-top: 4px; color: var(--d-muted); font-size: 11px; }
 
 /* ── Sections ──────────────────────────────────────────────────────── */
-.qv-section { position: relative; padding-block: 120px; }
+.qv-section { position: relative; padding-block: 88px; }
 .qv-kicker { margin: 0 0 18px; color: var(--accent); font: var(--qv-caps); letter-spacing: .14em; text-transform: uppercase; }
 .qv-section h2 { margin: 0; font-family: var(--font-display); font-size: clamp(32px, 3.8vw, 50px); font-weight: 700; line-height: 1.1; letter-spacing: -.035em; color: var(--text-primary); }
 .qv-section h2 .is-dim { color: var(--text-muted); }
@@ -190,7 +190,7 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 .qv-rule { height: 1px; background: var(--qv-line); border: 0; margin: 0; }
 
 /* Le principe : trois engagements numérotés */
-.qv-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 56px 0 0; padding: 0; list-style: none; }
+.qv-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 44px 0 0; padding: 0; list-style: none; }
 .qv-facts li { padding: 24px 22px; border: 1px solid var(--qv-line); border-radius: var(--qv-r-md); background: color-mix(in srgb, var(--qv-surface) 75%, transparent); }
 .qv-facts b { display: inline-block; padding: 3px 8px; border: 1px solid var(--qv-accent-line); border-radius: 7px; background: var(--qv-accent-soft); color: var(--accent); font: var(--qv-caps); }
 .qv-facts h3 { margin-top: 16px; font-size: 19px; }
@@ -198,7 +198,7 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 .qv-facts a { color: var(--accent); }
 
 /* Scène : réglé dans le dashboard, visible sur Discord */
-.qv-story { --spread: 1; --shared: 1; margin-top: 56px; }
+.qv-story { --spread: 1; --shared: 1; margin-top: 44px; }
 .qv-chapters { display: flex; align-items: center; gap: 18px; margin: 0 0 20px; padding: 0; list-style: none; color: var(--text-muted); font-size: 13px; font-weight: 600; }
 .qv-chapters li { display: flex; align-items: center; gap: 10px; transition: color .3s; }
 .qv-chapters li b { padding: 4px 7px; border: 1px solid var(--qv-line); border-radius: 8px; font-size: 12px; font-weight: 800; transition: color .3s, background .3s, border-color .3s; }
@@ -262,13 +262,13 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 .qv-story.is-instant * { transition: none !important; }
 .qv-note { margin: 16px 0 0; text-align: center; color: var(--text-muted); font-size: 12px; }
 
-.qv-outro { display: flex; justify-content: space-between; align-items: center; gap: 30px; padding: 90px 0; border-bottom: 1px solid var(--qv-line); }
+.qv-outro { display: flex; justify-content: space-between; align-items: center; gap: 30px; padding: 64px 0 0; }
 .qv-outro > p { margin: 0; font-family: var(--font-display); font-size: clamp(24px, 3.2vw, 40px); font-weight: 700; line-height: 1.2; letter-spacing: -.03em; color: var(--text-muted); }
 .qv-outro strong { color: var(--text-primary); }
 .qv-outro__note { color: var(--text-muted); font: var(--qv-caps); line-height: 1.9; letter-spacing: .12em; white-space: nowrap; text-align: right; }
 
 /* Sur Discord : messages à onglets */
-.qv-showcase { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 48px; align-items: start; margin-top: 56px; }
+.qv-showcase { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 48px; align-items: start; margin-top: 44px; }
 .qv-tabs { display: flex; flex-direction: column; gap: 8px; }
 .qv-tab { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px 14px; width: 100%; padding: 16px; border: 1px solid var(--qv-line); border-radius: var(--qv-r-md); background: transparent; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; transition: border-color .25s, background .25s, color .25s; }
 .qv-tab b { grid-row: span 2; align-self: start; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--qv-line); border-radius: 10px; color: var(--text-muted); font-size: 12px; font-weight: 800; }
@@ -287,7 +287,7 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 html:not(.qv-js) .qv-panel { display: block; margin-bottom: 18px; }
 
 /* Modules */
-.qv-modules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 56px 0 0; padding: 0; list-style: none; }
+.qv-modules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 44px 0 0; padding: 0; list-style: none; }
 .qv-module { position: relative; padding: 22px; border: 1px solid var(--qv-line); border-radius: var(--qv-r-md); background: color-mix(in srgb, var(--qv-surface) 75%, transparent); transition: border-color .25s, transform .25s; }
 @media (hover: hover) and (pointer: fine) { .qv-module:hover { border-color: var(--qv-accent-line); transform: translateY(-3px); } }
 .qv-module svg { width: 28px; height: 28px; fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -296,7 +296,7 @@ html:not(.qv-js) .qv-panel { display: block; margin-bottom: 18px; }
 .qv-badge { padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--warning, #f2c14e) 55%, transparent); border-radius: 999px; color: var(--warning, #f2c14e); font: 700 11px/1.4 var(--font-family); letter-spacing: .04em; }
 
 /* Deux façons de l'utiliser */
-.qv-paths { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 18px; margin-top: 56px; }
+.qv-paths { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 18px; margin-top: 44px; }
 .qv-path { display: flex; flex-direction: column; gap: 16px; padding: 30px 28px; border: 1px solid var(--qv-line); border-radius: var(--qv-r-lg); background: color-mix(in srgb, var(--qv-surface) 80%, transparent); }
 .qv-path--hot { border: 1px solid transparent; background: linear-gradient(var(--qv-surface), var(--qv-surface)) padding-box, linear-gradient(135deg, var(--iris-rose), var(--iris-violet), var(--iris-cyan)) border-box; }
 .qv-path__kicker { margin: 0; color: var(--text-muted); font: var(--qv-caps); letter-spacing: .12em; text-transform: uppercase; }
@@ -323,7 +323,7 @@ html:not(.qv-js) .qv-panel { display: block; margin-bottom: 18px; }
 .qv-term__copy[data-copied="true"] .qv-term__done { display: inline; color: #7ee2a8; }
 
 /* Vie privée */
-.qv-privacy { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 56px 0 0; padding: 0; list-style: none; border: 1px solid var(--qv-line); border-radius: var(--qv-r-lg); background: color-mix(in srgb, var(--qv-surface) 70%, transparent); }
+.qv-privacy { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 44px 0 0; padding: 0; list-style: none; border: 1px solid var(--qv-line); border-radius: var(--qv-r-lg); background: color-mix(in srgb, var(--qv-surface) 70%, transparent); }
 .qv-privacy li { padding: 30px 28px; }
 .qv-privacy li + li { border-left: 1px solid var(--qv-line); }
 .qv-privacy b { display: block; font-family: var(--font-display); font-size: 21px; color: var(--text-primary); }
@@ -435,7 +435,7 @@ html.reduce-motion { scroll-behavior: auto; }
     .qv-pane--left, .qv-pane--right { display: none; }
     .qv-pane--center { position: relative; left: 0; width: 100%; top: 0; }
     .qv-window__bar { height: 26px; font-size: 9px; }
-    .qv-section { padding-block: 80px; }
+    .qv-section { padding-block: 60px; }
     .qv-chapters { gap: 8px; font-size: 12px; justify-content: space-between; }
     .qv-chapters li { flex-direction: column; align-items: start; gap: 6px; }
     .qv-chapters .qv-chapters__line { max-width: 20px; }
@@ -444,7 +444,7 @@ html.reduce-motion { scroll-behavior: auto; }
     .qv-shared { grid-template-columns: 1fr; gap: 8px; }
     .qv-modules { grid-template-columns: 1fr; }
     .qv-path { padding: 24px 20px; }
-    .qv-outro { padding: 56px 0; }
+    .qv-outro { padding: 44px 0 0; }
     .qv-outro > p { font-size: 24px; }
     .qv-final { padding: 48px 22px; border-radius: 22px; }
     .qv-footer__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
