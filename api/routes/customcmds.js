@@ -4,19 +4,29 @@ const { getDb, CUSTOM_CMD_ACCESS_MODES, CUSTOM_CMD_ACCESS_DEFAULT, effectiveAcce
 const { SNOWFLAKE } = require('../services/mentions');
 const legal = require('../services/legalJournal');
 // Noyau partagé avec `/cmd` : validation des noms, écriture transactionnelle et
-// synchronisation Discord. Le dashboard et la commande du bot doivent se
-// comporter à l'identique — une seule implémentation, pas deux copies.
+// enregistrement auprès de la plateforme. Le dashboard et la commande du bot
+// doivent se comporter à l'identique — une seule implémentation, pas deux copies.
+//
+// ⚠️ `enregistrementAdaptateur` remplace les trois fonctions qui montaient leur
+// propre client REST discord.js sur les variables d'environnement. Elles
+// n'existaient que parce que cette route ne recevait pas l'adaptateur ; c'est
+// réglé depuis que `createApi` le lui passe. Sur une plateforme sans commandes
+// d'application, l'enregistrement est inerte et rend `true` — « il n'y a rien à
+// faire » est un succès.
 const {
     normalizeCustomCommandName,
     reservedCommandNames,
     validateCustomCommandRename,
     updateCustomCommand,
-    deployCustomCommand,
-    removeCustomCommand,
+    enregistrementAdaptateur,
     syncCustomCommandRename,
 } = require('../../bot/commands/customcmd');
 const { validateChatInputName } = require('../../bot/utils/slashCommandSpec');
+const plateforme = require('../services/plateforme');
 const router = express.Router({ mergeParams: true });
+
+/** Voie d'enregistrement de cette requête. */
+const enregistrement = (req) => enregistrementAdaptateur(plateforme.adaptateur(req));
 
 // Un corps de requête peut contenir n'importe quoi, y compris un objet dont la
 // conversion en texte lève une exception (`{ toString: 1 }`) : un `String(...)`
@@ -157,9 +167,10 @@ router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
         });
     })();
 
-    // Déployer la commande slash sur Discord — même chemin que `/cmd create`,
-    // pour que les deux surfaces posent exactement la même commande.
-    await deployCustomCommand(req.params.guildId, cmdName, response || null);
+    // Enregistrer la commande auprès de la plateforme — même chemin que
+    // `/cmd create`, pour que les deux surfaces posent exactement la même
+    // commande.
+    await enregistrement(req).deployer(req.params.guildId, cmdName, response || null);
 
     res.json({ success: true });
 });
@@ -225,12 +236,14 @@ router.put('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
         return res.status(status).json({ error: `${ecriture.error.cause} ${ecriture.error.action}` });
     }
 
-    // Base d'abord, Discord ensuite : le renommage est déjà commité, un échec
+    // Base d'abord, plateforme ensuite : le renommage est déjà commité, un échec
     // réseau ici ne l'annule pas. Voir le bloc « ordre des opérations » de
     // bot/commands/customcmd.js.
     let warning = null;
     if (newName) {
-        ({ warning } = await syncCustomCommandRename(req.params.guildId, req.params.name, newName, response || null));
+        ({ warning } = await syncCustomCommandRename(
+            req.params.guildId, req.params.name, newName, response || null, enregistrement(req),
+        ));
     }
 
     res.json({ success: true, name: ecriture.name, ...(warning ? { warning } : {}) });
@@ -249,8 +262,8 @@ router.delete('/:name', requireAuth, requireGuildAdmin, async (req, res) => {
         }
     })();
 
-    // Retirer la commande slash de Discord — même chemin que `/cmd delete`.
-    await removeCustomCommand(req.params.guildId, req.params.name);
+    // Retirer la commande auprès de la plateforme — même chemin que `/cmd delete`.
+    await enregistrement(req).retirer(req.params.guildId, req.params.name);
 
     res.json({ success: true });
 });

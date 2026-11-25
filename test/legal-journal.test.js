@@ -2,8 +2,9 @@
 // attendus » et section « Quasar »).
 //
 // Base jetable en mémoire, routeurs du dashboard montés seuls sur une
-// application Express (comme test/authz-tempvoice.test.js), commandes du robot
-// appelées avec de fausses interactions. Le test lit la table directement : le
+// application Express (comme test/authz-tempvoice.test.js) sur un faux
+// adaptateur, commandes et boutons du robot appelés avec un faux contexte
+// neutre — une fois en Discord, une fois en Fluxer. Le test lit la table directement : le
 // service, lui, n'a aucune voie de lecture du journal.
 //
 // QUASAR_DB_PATH et JWT_SECRET doivent être posés AVANT les require.
@@ -34,40 +35,58 @@ const ROLE = '920000000000000001';
 const DAY = 24 * 60 * 60 * 1000;
 const ISO_SECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
-// ── Faux Discord (le strict nécessaire aux routes qui postent) ──
+// ── Faux adaptateur (le strict nécessaire aux routes qui postent) ──
+//
+// v5 : les routes ne lisent plus le client discord.js, elles passent par
+// api/services/plateforme.js et le contrat neutre de l'adaptateur. Le même
+// faux sert une instance « discord » et une instance « fluxer » : seul le nom
+// change, exactement comme entre les deux déploiements réels.
 
-function fakeMessage(id) {
+function fauxAdaptateur(nom) {
+    const canaux = new Map([[CHANNEL, { id: CHANNEL, nom: 'general', type: 'texte', guildeId: GUILD, parentId: null }]]);
+    const message = (id) => ({ id, canalId: CHANNEL, guildeId: GUILD, reactions: [] });
     return {
-        id,
-        edit: async () => {},
-        delete: async () => {},
-        react: async () => {},
-        reactions: { cache: { find: () => null } },
+        nom,
+        capacites: { interactions: nom === 'discord', ephemere: nom === 'discord' },
+        moi: { id: '990000000000000001', nom: 'Quasar' },
+        api: {
+            async obtenirCanal(id) { return canaux.get(String(id)) || null; },
+            async obtenirRole(guildeId, roleId) {
+                return String(roleId) === ROLE && String(guildeId) === GUILD
+                    ? { id: ROLE, nom: 'Joueurs', position: 1, gere: false, guildeId: GUILD }
+                    : null;
+            },
+            async verifierRoleAttribuable() { return null; },
+            async envoyerMessage() { return message('950000000000000001'); },
+            async obtenirMessage(canalId, id) { return message(String(id)); },
+            async modifierMessage(canalId, id) { return message(String(id)); },
+            async supprimerMessage() {},
+            async ajouterReaction() {},
+            async retirerReaction() {},
+            async listerGuildes() { return [GUILD]; },
+            async obtenirGuilde(id) { return { id: String(id), nom: 'Serveur de test', proprietaireId: null, membreCount: 3, disponible: true }; },
+            async permissionsSurCanal() { return { aPermission: () => true }; },
+        },
+        async poserPanneau() { return message('950000000000000002'); },
     };
 }
-const fakeChannel = {
-    id: CHANNEL,
-    send: async () => fakeMessage('950000000000000001'),
-    messages: { fetch: async () => fakeMessage('950000000000000001') },
-};
-const fakeGuild = {
-    id: GUILD,
-    channels: { cache: new Map([[CHANNEL, fakeChannel]]) },
-    roles: { cache: new Map([[ROLE, { id: ROLE, managed: false, position: 1 }]]) },
-    members: { me: null },
-};
 
-const app = express();
-app.use(express.json());
-// trust proxy à true : req.ip vaut alors X-Forwarded-For, que le journal doit ignorer.
-app.set('trust proxy', true);
-app.set('discordClient', { guilds: { cache: new Map([[GUILD, fakeGuild]]) } });
-for (const [segment, file] of [
-    ['embeds', 'embeds'], ['customcmds', 'customcmds'], ['welcome', 'welcome'],
-    ['scheduled', 'scheduled'], ['reactionroles', 'reactionroles'], ['tickets', 'tickets'],
-]) {
-    app.use(`/api/guilds/:guildId/${segment}`, require(`../api/routes/${file}`));
+function monterApp(adaptateur) {
+    const app = express();
+    app.use(express.json());
+    // trust proxy à true : req.ip vaut alors X-Forwarded-For, que le journal doit ignorer.
+    app.set('trust proxy', true);
+    app.set('plateforme', adaptateur);
+    for (const [segment, file] of [
+        ['embeds', 'embeds'], ['customcmds', 'customcmds'], ['welcome', 'welcome'],
+        ['scheduled', 'scheduled'], ['reactionroles', 'reactionroles'], ['tickets', 'tickets'],
+    ]) {
+        app.use(`/api/guilds/:guildId/${segment}`, require(`../api/routes/${file}`));
+    }
+    return app;
 }
+
+const app = monterApp(fauxAdaptateur('discord'));
 
 const token = generateToken({
     id: ADMIN, username: 'admin', avatar: null, guilds: [{ id: GUILD, permissions: '8' }],
@@ -124,26 +143,54 @@ function assertLine(line, { contentId, contentType, operation, ip = '198.51.100.
     assert.ok(Math.abs(Date.parse(line.occurred_at) - Date.now()) < 60_000, 'horodatage UTC du moment');
 }
 
-// Fausse interaction Discord : options lues dans un objet simple.
-function interaction({ sub, options = {}, user = ADMIN, voiceChannel = null }) {
+// Faux contexte NEUTRE (bot/platform/, DA multiplateforme §5) : c'est la seule
+// chose qu'une commande ou un bouton voit, sur Discord comme sur Fluxer. Les
+// mêmes scénarios sont donc joués une fois par plateforme, avec des
+// identifiants d'auteur distincts — chaque instance a sa base et ses propres
+// identifiants, le journal doit consigner ceux de SA plateforme.
+const AUTEURS = {
+    discord: { admin: ADMIN, membre: MEMBER },
+    fluxer: { admin: '1300000000000000001', membre: '1400000000000000001' },
+};
+
+function faireCtx({ plateforme, sub = null, options = {}, user, canalId = CHANNEL, canalVocalId = null, reponses = null }) {
     const replies = [];
+    const membre = {
+        id: user, nom: 'Sam', mention: `<@${user}>`, roles: [], estAdmin: true, canalVocalId,
+        aPermission: () => true, avatar: () => 'https://cdn.example/avatar.png',
+    };
+    const message = (id) => ({ id, canalId, guildeId: GUILD, reactions: [] });
+    const api = new Proxy({
+        async obtenirCanal(id) { return { id: String(id), nom: 'salon', type: 'texte', guildeId: GUILD, parentId: null }; },
+        async envoyerMessage() { return message('960000000000000099'); },
+        async permissionsSurCanal() { return { aPermission: () => true }; },
+        async verifierRoleAttribuable() { return null; },
+    }, {
+        // Toute autre méthode du client REST : succès neutre. Le journal ne
+        // dépend d'aucune d'elles, seules les écritures en base comptent ici.
+        get: (cible, nom) => (nom in cible ? cible[nom] : async () => message('960000000000000098')),
+    });
     return {
-        user: { id: user, displayAvatarURL: () => 'https://cdn.example/avatar.png' },
-        guild: { id: GUILD, name: 'Serveur de test' },
-        member: {
-            voice: { channel: voiceChannel }, user: { id: user, username: 'sam' }, displayName: 'Sam',
-            guild: { name: 'Serveur de test', memberCount: 3 }, toString: () => `<@${user}>`,
-        },
-        options: {
-            getSubcommand: () => sub,
-            getString: (k) => options[k] ?? null,
-            getInteger: (k) => options[k] ?? null,
-        },
-        replied: false,
-        deferred: false,
-        reply: async (p) => { replies.push(p); },
-        followUp: async (p) => { replies.push(p); },
+        plateforme,
+        capacites: { interactions: plateforme === 'discord', ephemere: plateforme === 'discord' },
+        guildeId: GUILD,
+        canalId,
+        auteur: { id: user, nom: 'Sam', mention: `<@${user}>`, etiquette: 'sam' },
+        membre,
+        guilde: { id: GUILD, nom: 'Serveur de test', membreCount: 3 },
+        moi: { id: '990000000000000001', nom: 'Quasar' },
+        options: { sousCommande: sub, get: (k) => options[k] ?? null },
+        db,
+        api,
         replies,
+        async repondre(p) { replies.push(p); },
+        async suivre(p) { replies.push(p); },
+        async erreurUtilisateur(spec) { replies.push({ erreur: spec }); },
+        async prompt() { return reponses; },
+        async modifierPanneau(p) { replies.push(p); },
+        async poserPanneau() { return message('960000000000000097'); },
+        deployerCommandeServeur: async () => true,
+        retirerCommandeServeur: async () => true,
     };
 }
 
@@ -296,51 +343,150 @@ test('tickets : textes par défaut (rien), message d\'accueil créé puis modifi
     assert.equal((await written('GET', '/tickets')).lines.length, 0);
 });
 
-// ── Commandes du robot : auteur = identifiant Discord, pas de connexion ──
+// ── Commandes et boutons du robot : auteur = ctx.auteur, pas de connexion ──
 
-test('/embed create puis delete : lignes sans ip, auteur = identifiant Discord', async () => {
-    const embedCmd = require('../bot/commands/embed');
-    const n = count();
-    await embedCmd.execute(interaction({ sub: 'create', options: { nom: 'annonce', titre: 'Annonce' } }));
-    await embedCmd.execute(interaction({ sub: 'delete', options: { nom: 'annonce' } }));
-    const lines = since(n);
-    assert.deepEqual(lines.map(l => l.operation), ['create', 'delete']);
-    for (const l of lines) {
-        assert.equal(l.content_type, 'embed');
+test('legal.fromCtx : auteur = ctx.auteur.id, jamais d\'ip ni de protocole', () => {
+    assert.deepEqual(legal.fromCtx({ auteur: { id: ADMIN }, membre: { id: 'autre' } }),
+        { ip: null, protocol: null, authorId: ADMIN });
+    // Un identifiant numérique est rangé en texte, comme les snowflakes partout ailleurs.
+    assert.equal(legal.fromCtx({ auteur: { id: 1300000000000000 } }).authorId, '1300000000000000');
+    // Pas d'auteur : la ligne s'écrit quand même, sans identifiant (jamais d'exception).
+    assert.deepEqual(legal.fromCtx({}), { ip: null, protocol: null, authorId: null });
+    assert.deepEqual(legal.fromCtx(null), { ip: null, protocol: null, authorId: null });
+    assert.equal(legal.fromInteraction, undefined, 'plus de voie discord.js dans le journal');
+});
+
+for (const plateforme of ['discord', 'fluxer']) {
+    const { admin, membre } = AUTEURS[plateforme];
+    const sansConnexion = (l, authorId = admin) => {
         assert.equal(l.ip, null);
         assert.equal(l.protocol, null);
-        assert.equal(l.author_id, ADMIN);
-    }
-    assert.equal(lines[0].content_id, lines[1].content_id);
-});
+        assert.equal(l.author_id, authorId);
+    };
 
-test('/welcome message : ligne welcome_message, auteur = identifiant Discord', async () => {
-    const welcomeCmd = require('../bot/commands/welcome');
-    const n = count();
-    await welcomeCmd.execute(interaction({ sub: 'message', options: { texte: 'Coucou {user}' } }));
-    const lines = since(n);
-    assert.equal(lines.length, 1);
-    assertLine(lines[0], { contentId: GUILD, contentType: 'welcome_message', operation: 'update', ip: null, protocol: null });
-});
+    test(`[${plateforme}] /embed create puis delete : lignes sans ip, auteur = identifiant ${plateforme}`, async () => {
+        const embedCmd = require('../bot/commands/embed');
+        const nom = `annonce-${plateforme}`;
+        const n = count();
+        await embedCmd.executer(faireCtx({ plateforme, sub: 'create', options: { nom, titre: 'Annonce' }, user: admin }));
+        await embedCmd.executer(faireCtx({ plateforme, sub: 'create', options: { nom, titre: 'Annonce' }, user: admin })); // identique : rien
+        await embedCmd.executer(faireCtx({ plateforme, sub: 'delete', options: { nom }, user: admin }));
+        const lines = since(n);
+        assert.deepEqual(lines.map(l => l.operation), ['create', 'delete']);
+        for (const l of lines) {
+            assert.equal(l.content_type, 'embed');
+            sansConnexion(l);
+        }
+        assert.equal(lines[0].content_id, lines[1].content_id);
+    });
 
-test('nom de salon vocal choisi par un membre : création, modification, réinitialisation', async () => {
-    const voiceCmd = require('../bot/commands/voice');
-    const voiceChannel = { id: '960000000000000001', setName: async () => {}, setUserLimit: async () => {} };
-    db.prepare('INSERT INTO tempvoice_active (channel_id, guild_id, owner_id, category_id) VALUES (?, ?, ?, ?)')
-        .run(voiceChannel.id, GUILD, MEMBER, 'cat1');
-    const run = (sub, options = {}) => voiceCmd.execute(interaction({ sub, options, user: MEMBER, voiceChannel }));
-    const contentId = `${GUILD}:cat1:${MEMBER}`;
+    test(`[${plateforme}] /cmd create, edit (renommage), delete : auteur = identifiant ${plateforme}`, async () => {
+        const cmd = require('../bot/commands/customcmd');
+        const nom = `regle-${plateforme}`;
+        const n = count();
+        await cmd.executer(faireCtx({ plateforme, sub: 'create', options: { nom, reponse: 'Soyez sympas.' }, user: admin }));
+        await cmd.executer(faireCtx({ plateforme, sub: 'edit', options: { nom, nouveau_nom: `${nom}s` }, user: admin }));
+        await cmd.executer(faireCtx({ plateforme, sub: 'delete', options: { nom: `${nom}s` }, user: admin }));
+        const lines = since(n);
+        assert.deepEqual(lines.map(l => [l.operation, l.content_id]),
+            [['create', `${GUILD}:${nom}`], ['update', `${GUILD}:${nom}s`], ['delete', `${GUILD}:${nom}s`]]);
+        for (const l of lines) {
+            assert.equal(l.content_type, 'custom_command');
+            sansConnexion(l);
+        }
+    });
 
-    const n = count();
-    await run('name', { nom: 'Le salon de Sam' });
-    await run('name', { nom: 'Le salon de Sam' }); // identique : rien
-    await run('limit', { places: 5 });              // réglage technique : rien
-    await run('name', { nom: 'Soirée jeux' });
-    await run('reset');
-    const lines = since(n);
-    assert.deepEqual(lines.map(l => l.operation), ['create', 'update', 'delete']);
-    for (const l of lines) {
-        assertLine(l, { contentId, contentType: 'tempvoice_name', operation: l.operation, ip: null, protocol: null, authorId: MEMBER });
+    test(`[${plateforme}] /welcome message : ligne welcome_message, auteur = identifiant ${plateforme}`, async () => {
+        const welcomeCmd = require('../bot/commands/welcome');
+        const n = count();
+        await welcomeCmd.executer(faireCtx({ plateforme, sub: 'message', options: { texte: `Coucou {user} (${plateforme})` }, user: admin }));
+        const lines = since(n);
+        assert.equal(lines.length, 1);
+        assertLine(lines[0], { contentId: GUILD, contentType: 'welcome_message', operation: 'update', ip: null, protocol: null, authorId: admin });
+    });
+
+    test(`[${plateforme}] /reactionrole create, add, remove, delete : une ligne par changement du panneau`, async () => {
+        const descripteur = require('../bot/commands/reactionrole');
+        const rr = { executer: (ctx) => descripteur.sousCommandes.find(x => x.nom === ctx.options.sousCommande).executer(ctx) };
+        const role = { id: ROLE, nom: 'Joueurs', mention: `<@&${ROLE}>`, position: 1, gere: false, guildeId: GUILD };
+        const n = count();
+        await rr.executer(faireCtx({ plateforme, sub: 'create', options: { channel: { id: CHANNEL }, titre: `Jeux ${plateforme}` }, user: admin }));
+        const panelId = db.prepare('SELECT id FROM reaction_panels WHERE title = ?').get(`Jeux ${plateforme}`).id;
+        await rr.executer(faireCtx({ plateforme, sub: 'add', options: { panel_id: panelId, emoji: '🎮', role }, user: admin }));
+        await rr.executer(faireCtx({ plateforme, sub: 'remove', options: { panel_id: panelId, emoji: '🎮' }, user: admin }));
+        await rr.executer(faireCtx({ plateforme, sub: 'delete', options: { panel_id: panelId }, user: admin }));
+        const lines = since(n);
+        assert.deepEqual(lines.map(l => l.operation), ['create', 'update', 'update', 'delete']);
+        for (const l of lines) {
+            assert.equal(l.content_type, 'reaction_panel');
+            assert.equal(l.content_id, `${GUILD}:${panelId}`);
+            sansConnexion(l);
+        }
+    });
+
+    test(`[${plateforme}] /ticket setup : ligne ticket_texts seulement si le message d\'accueil change`, async () => {
+        const descripteur = require('../bot/commands/ticket');
+        const ticket = { executer: (ctx) => descripteur.sousCommandes.find(x => x.nom === ctx.options.sousCommande).executer(ctx) };
+        const options = (message) => ({ salon: { id: CHANNEL, nom: 'support', guildeId: GUILD }, staff: { id: ROLE, nom: 'Staff', guildeId: GUILD }, message });
+        const n = count();
+        await ticket.executer(faireCtx({ plateforme, sub: 'setup', options: options(`Accueil ${plateforme}`), user: admin }));
+        await ticket.executer(faireCtx({ plateforme, sub: 'setup', options: options(`Accueil ${plateforme}`), user: admin })); // identique : rien
+        const lines = since(n);
+        assert.deepEqual(lines.map(l => l.operation), ['update']);
+        assert.equal(lines[0].content_type, 'ticket_texts');
+        sansConnexion(lines[0]);
+    });
+
+    test(`[${plateforme}] nom de salon vocal : /voice et boutons du panneau, auteur = le membre ${plateforme}`, async () => {
+        const voiceCmd = require('../bot/commands/voice');
+        const { handlerPanneauTempVoice } = require('../bot/interactions/tempvoice');
+        const salon = plateforme === 'discord' ? '960000000000000001' : '1600000000000000001';
+        const categorie = `cat-${plateforme}`;
+        db.prepare('INSERT INTO tempvoice_active (channel_id, guild_id, owner_id, category_id) VALUES (?, ?, ?, ?)')
+            .run(salon, GUILD, membre, categorie);
+        const voix = (sub, options = {}) => voiceCmd.executer(faireCtx({ plateforme, sub, options, user: membre, canalVocalId: salon }));
+        // Bouton du panneau : contexte de panneau, l'auteur est la personne qui CLIQUE.
+        const bouton = (cle, reponses = null) => handlerPanneauTempVoice(
+            faireCtx({ plateforme, user: membre, canalId: salon, canalVocalId: salon, reponses }), cle);
+        const contentId = `${GUILD}:${categorie}:${membre}`;
+
+        const n = count();
+        await voix('name', { nom: 'Le salon de Sam' });
+        await voix('name', { nom: 'Le salon de Sam' });   // identique : rien
+        await voix('limit', { places: 5 });               // réglage technique : rien
+        await bouton('limit', { limit: '7' });            // idem, par le bouton : rien
+        await bouton('rename', { name: 'Soirée jeux' });  // update, par le bouton
+        await bouton('rename', null);                     // formulaire abandonné : rien
+        await bouton('reset');                            // delete, par le bouton
+        await voix('name', { nom: 'Retour' });            // create
+        await voix('reset');                              // delete
+        const lines = since(n);
+        assert.deepEqual(lines.map(l => l.operation), ['create', 'update', 'delete', 'create', 'delete']);
+        for (const l of lines) {
+            assertLine(l, { contentId, contentType: 'tempvoice_name', operation: l.operation, ip: null, protocol: null, authorId: membre });
+        }
+    });
+}
+
+test('[fluxer] dashboard : même règle (IP Cloudflare, auteur = identifiant Fluxer de l\'admin)', async () => {
+    const fluxer = monterApp(fauxAdaptateur('fluxer')).listen(0);
+    await new Promise((r) => fluxer.once('listening', r));
+    try {
+        const admin = AUTEURS.fluxer.admin;
+        const jeton = generateToken({ id: admin, username: 'admin-fluxer', avatar: null, guilds: [{ id: GUILD, permissions: '8' }] });
+        const n = count();
+        const res = await fetch(`http://127.0.0.1:${fluxer.address().port}/api/guilds/${GUILD}/embeds`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${jeton}`, 'content-type': 'application/json', ...CF },
+            body: JSON.stringify({ name: 'regles-fluxer', data: { titre: 'Règles' } }),
+        });
+        const corps = await res.text();
+        assert.ok(res.status < 400, `POST /embeds → ${res.status} ${corps}`);
+        const lines = since(n);
+        assert.equal(lines.length, 1);
+        assertLine(lines[0], { contentId: `${GUILD}:${JSON.parse(corps).id}`, contentType: 'embed', operation: 'create', authorId: admin });
+    } finally {
+        fluxer.close();
     }
 });
 
@@ -411,9 +557,11 @@ test('export : filtres, JSON sur la sortie standard, refus sans filtre', async (
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'quasar-lcen-'));
     const file = path.join(tmp, 'quasar.db');
     await db.backup(file);
-    const run = (args) => new Promise((resolve) => {
+    const run = (args, env = {}) => new Promise((resolve) => {
+        const base = { ...process.env, QUASAR_DB_PATH: file };
+        delete base.QUASAR_PLATFORM;
         execFile(process.execPath, [path.join(ROOT, 'scripts/legal-export.js'), ...args],
-            { env: { ...process.env, QUASAR_DB_PATH: file } },
+            { env: { ...base, ...env } },
             (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
     });
     try {
@@ -421,6 +569,7 @@ test('export : filtres, JSON sur la sortie standard, refus sans filtre', async (
         assert.equal(byGuild.code, 0, byGuild.stderr);
         const out = JSON.parse(byGuild.stdout);
         assert.equal(out.service, 'quasar');
+        assert.equal(out.platform, 'discord', 'QUASAR_PLATFORM absent : instance Discord');
         assert.ok(out.count > 0);
         assert.ok(out.entries.every(e => e.content_id === GUILD || e.content_id.startsWith(`${GUILD}:`)));
 
@@ -432,6 +581,17 @@ test('export : filtres, JSON sur la sortie standard, refus sans filtre', async (
         const byContent = JSON.parse((await run(['--content-id', `${GUILD}:faq`, '--from', today, '--to', today])).stdout);
         assert.deepEqual(byContent.entries.map(e => e.operation), ['update', 'delete']);
         assert.equal(JSON.parse((await run(['--to', '2020-01-01'])).stdout).count, 0);
+
+        // Instance Fluxer : l'export le dit, pour qu'une autorité sache à quel
+        // service rattacher les identifiants. Une valeur inconnue arrête tout.
+        const surFluxer = await run(['--author-id', AUTEURS.fluxer.admin], { QUASAR_PLATFORM: 'fluxer' });
+        assert.equal(surFluxer.code, 0, surFluxer.stderr);
+        const fluxerOut = JSON.parse(surFluxer.stdout);
+        assert.equal(fluxerOut.platform, 'fluxer');
+        assert.ok(fluxerOut.count >= 4 && fluxerOut.entries.every(e => e.author_id === AUTEURS.fluxer.admin));
+        const inconnue = await run(['--guild-id', GUILD], { QUASAR_PLATFORM: 'myspace' });
+        assert.equal(inconnue.code, 2);
+        assert.equal(inconnue.stdout, '');
 
         const none = await run([]);
         assert.equal(none.code, 2);

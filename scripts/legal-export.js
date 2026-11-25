@@ -9,15 +9,22 @@
 //
 //   docker exec <conteneur> node scripts/legal-export.js --guild-id <serveur>
 //   docker exec <conteneur> node scripts/legal-export.js --content-id <id>
-//   docker exec <conteneur> node scripts/legal-export.js --author-id <id Discord>
+//   docker exec <conteneur> node scripts/legal-export.js --author-id <id Discord ou Fluxer>
 //   docker exec <conteneur> node scripts/legal-export.js --from 2026-11-01 --to 2026-11-30
 //
 // Les filtres se combinent (ET). Au moins un est obligatoire : pas d'export
 // intégral par mégarde. --guild-id retient les contenus d'un serveur Discord
-// (leur content_id commence par son identifiant). --from et --to sont
+// ou Fluxer (leur content_id commence par son identifiant). --from et --to sont
 // inclusifs, en UTC ; une date seule (AAAA-MM-JJ) vaut le début du jour pour
 // --from et la fin du jour pour --to.
 // Sortie : JSON sur la sortie standard. Erreurs : sortie d'erreur, code 2.
+//
+// v5 : chaque instance sert UNE plateforme et a sa propre base. Les
+// identifiants (serveur, auteur) sont donc ceux de cette plateforme, et
+// l'export le dit dans son champ `platform` (QUASAR_PLATFORM de l'instance,
+// `discord` par défaut) : sans lui, une liste d'identifiants remise à une
+// autorité ne dirait pas à quel service s'adresser pour les rattacher à une
+// personne.
 //
 // Le script ouvre la base en LECTURE SEULE et n'importe pas
 // api/services/database.js (qui crée le schéma, migre et écrirait dans la
@@ -25,6 +32,8 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+
+const { resolvePlatformName } = require('../bot/platform');
 
 const DB_PATH = process.env.QUASAR_DB_PATH || path.join(__dirname, '..', 'data', 'quasar.db');
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -63,6 +72,15 @@ function toJournalTimestamp(raw, endOfDay) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+
+// Lue AVANT d'ouvrir la base : une plateforme mal orthographiée arrête
+// l'export au lieu de produire un fichier qui en annoncerait une fausse.
+let platform;
+try {
+    platform = resolvePlatformName(process.env);
+} catch (e) {
+    fail(e.message);
+}
 if (!args.guildId && !args.contentId && !args.authorId && !args.from && !args.to) fail('Aucun filtre fourni.');
 // Chiffres seuls : la valeur entre dans un LIKE, aucun joker ne doit passer.
 if (args.guildId && !SNOWFLAKE.test(args.guildId)) fail(`Identifiant de serveur invalide : ${args.guildId}`);
@@ -98,6 +116,7 @@ try {
 
 process.stdout.write(JSON.stringify({
     service: 'quasar',
+    platform,
     generated_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     filters: {
         guild_id: args.guildId ?? null,

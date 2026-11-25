@@ -100,6 +100,31 @@ const CONFIG = {
     DISCORD_CLIENT_SECRET: 'secret-client-factice',
 };
 
+// Le même parcours, sur l'autre plateforme. Un jeton Fluxer a la forme
+// « <identifiant de l'application>.<secret> » (applications.mdx, « Bot token
+// format ») : la valeur factice respecte cette forme, parce que l'installateur
+// en déduit l'identifiant par défaut.
+const CONFIG_FLUXER = {
+    QUASAR_PLATFORM: 'fluxer',
+    FLUXER_TOKEN: '987654321098765432.jeton-factice',
+    FLUXER_CLIENT_ID: '987654321098765432',
+    FLUXER_CLIENT_SECRET: 'secret-client-factice-fluxer',
+};
+
+// Les trois secrets de l'autre plateforme. « Absentes » vaut ici « sans valeur » :
+// la ligne peut subsister, vide, pour qui basculerait plus tard — ce qui compte
+// est qu'aucune valeur d'une plateforme ne vive dans le .env de l'autre, et que
+// le garde de démarrage d'index.js (variablesRequises) n'y trouve rien.
+function assertSansValeur(env, cles, brut) {
+    for (const cle of cles) {
+        const valeur = env.get(cle);
+        assert.ok(!valeur, `${cle} porte une valeur dans le .env de l'autre plateforme : « ${valeur} »`);
+    }
+    for (const exemple of ['your_bot_token_here', 'your_client_id_here', 'your_client_secret_here']) {
+        assert.ok(!brut.includes(exemple), `valeur d'exemple laissée en place : ${exemple}`);
+    }
+}
+
 test('le .env produit porte toute la configuration, et plus aucune valeur d\'exemple', () => {
     const lieu = atelier();
     const run = lancer(lieu, { ...CONFIG, PORT: '4000', BOT_OWNER_ID: '987654321098765432' });
@@ -264,4 +289,207 @@ test('le jeton n\'apparaît jamais en clair dans la sortie', () => {
     assert.equal(run.code, 0, run.sortie);
     assert.ok(!run.sortie.includes(CONFIG.DISCORD_TOKEN), 'le jeton du bot est affiché');
     assert.ok(!run.sortie.includes(CONFIG.DISCORD_CLIENT_SECRET), 'le secret client est affiché');
+});
+
+// ── Le même parcours, sur Fluxer ─────────────────────────────────────────────
+//
+// Depuis la v5.0.0, la même base de code anime un bot Discord ou un bot Fluxer.
+// L'installateur écrit donc deux .env très différents à partir du même fichier
+// d'exemple, et c'est exactement le genre de bifurcation qu'on livre cassée sans
+// s'en apercevoir : rien ne l'exerçait jusqu'ici.
+
+test('le .env produit pour Fluxer porte la plateforme et les trois secrets Fluxer', () => {
+    const lieu = atelier();
+    const run = lancer(lieu, { ...CONFIG_FLUXER, PORT: '4100', BOT_OWNER_ID: '987654321098765432' });
+    assert.equal(run.code, 0, run.sortie);
+
+    const env = run.env();
+    // Écrite EXPLICITEMENT : le défaut du code est « discord », un .env muet
+    // ferait donc démarrer un bot Discord avec des secrets Fluxer.
+    assert.equal(env.get('QUASAR_PLATFORM'), 'fluxer');
+    assert.equal(env.get('FLUXER_TOKEN'), CONFIG_FLUXER.FLUXER_TOKEN);
+    assert.equal(env.get('FLUXER_CLIENT_ID'), CONFIG_FLUXER.FLUXER_CLIENT_ID);
+    assert.equal(env.get('FLUXER_CLIENT_SECRET'), CONFIG_FLUXER.FLUXER_CLIENT_SECRET);
+    assert.equal(env.get('BOT_OWNER_ID'), '987654321098765432');
+    assert.equal(env.get('PORT'), '4100');
+    assert.equal(env.get('BIND_ADDRESS'), '127.0.0.1');
+    // Le chemin /callback est le même sur les deux plateformes.
+    assert.equal(env.get('CALLBACK_URL'), 'http://localhost:4100/callback');
+    assert.match(env.get('JWT_SECRET'), /^[0-9a-f]{64}$/);
+});
+
+test('un .env Fluxer ne porte aucune valeur Discord, et réciproquement', () => {
+    // C'est une exigence de cloisonnement, pas de propreté : deux déploiements,
+    // deux bases, deux publics. Un .env qui porte les deux jeux de secrets
+    // laisse croire qu'un seul processus peut servir les deux.
+    const fluxer = lancer(atelier(), CONFIG_FLUXER);
+    assert.equal(fluxer.code, 0, fluxer.sortie);
+    assertSansValeur(fluxer.env(), ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
+        fluxer.brut());
+
+    const discord = lancer(atelier(), CONFIG);
+    assert.equal(discord.code, 0, discord.sortie);
+    assert.equal(discord.env().get('QUASAR_PLATFORM'), 'discord');
+    assertSansValeur(discord.env(), ['FLUXER_TOKEN', 'FLUXER_CLIENT_ID', 'FLUXER_CLIENT_SECRET'],
+        discord.brut());
+});
+
+test('les secrets de l\'autre plateforme, même fournis, sont écartés', () => {
+    // Le cas de la personne qui relance l'installateur avec son ancien
+    // environnement encore chargé, ou d'un déploiement automatisé qui exporte
+    // tout « au cas où ». Les garder produirait un .env qui semble configuré
+    // pour deux plateformes à la fois.
+    const lieu = atelier();
+    const run = lancer(lieu, { ...CONFIG_FLUXER, ...CONFIG });
+    assert.equal(run.code, 0, run.sortie);
+
+    assert.equal(run.env().get('QUASAR_PLATFORM'), 'fluxer');
+    assert.equal(run.env().get('FLUXER_TOKEN'), CONFIG_FLUXER.FLUXER_TOKEN);
+    assertSansValeur(run.env(), ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
+        run.brut());
+    assert.match(run.sortie, /DISCORD_\* présentes dans l'environnement : écartées/);
+    // Et le jeton écarté n'est pas recopié dans la sortie au passage.
+    assert.ok(!run.sortie.includes(CONFIG.DISCORD_TOKEN), 'le jeton Discord écarté est affiché');
+});
+
+test('les adresses d\'une instance Fluxer auto-hébergée sont écrites telles quelles', () => {
+    // Elles ne servent qu'à viser une instance autre que fluxer.app. Une valeur
+    // fournie doit arriver au .env sans être « corrigée » : c'est l'opérateur de
+    // l'instance qui sait, pas l'installateur.
+    const lieu = atelier();
+    const run = lancer(lieu, {
+        ...CONFIG_FLUXER,
+        FLUXER_API_BASE: 'https://fluxer.exemple.org/api/v1',
+        FLUXER_GATEWAY_URL: 'wss://fluxer.exemple.org/gateway/?v=1',
+        FLUXER_MEDIA_BASE: 'https://fluxer.exemple.org/media',
+        COMMAND_PREFIX: '?',
+    });
+    assert.equal(run.code, 0, run.sortie);
+
+    const env = run.env();
+    assert.equal(env.get('FLUXER_API_BASE'), 'https://fluxer.exemple.org/api/v1');
+    assert.equal(env.get('FLUXER_GATEWAY_URL'), 'wss://fluxer.exemple.org/gateway/?v=1');
+    assert.equal(env.get('FLUXER_MEDIA_BASE'), 'https://fluxer.exemple.org/media');
+    assert.equal(env.get('COMMAND_PREFIX'), '?');
+    // Le lien d'invitation suit l'instance visée : il ne renvoie pas vers
+    // fluxer.app une personne qui héberge son propre Fluxer.
+    assert.match(run.sortie, /https:\/\/fluxer\.exemple\.org\/api\/v1\/oauth2\/authorize/);
+});
+
+test('le préfixe et les adresses Fluxer ne sont pas écrits sur une installation Discord', () => {
+    // Ces quatre variables n'ont aucun sens là où les commandes sont des « / ».
+    // Les écrire quand même laisserait croire à un réglage qui ne s'applique pas.
+    const lieu = atelier();
+    const run = lancer(lieu, {
+        ...CONFIG,
+        FLUXER_API_BASE: 'https://fluxer.exemple.org/api/v1',
+        COMMAND_PREFIX: '?',
+    });
+    assert.equal(run.code, 0, run.sortie);
+    for (const cle of ['FLUXER_API_BASE', 'FLUXER_GATEWAY_URL', 'FLUXER_MEDIA_BASE', 'COMMAND_PREFIX']) {
+        assert.ok(!run.env().get(cle), `${cle} écrite sur une installation Discord`);
+    }
+});
+
+test('une valeur Fluxer contenant « | », « & » ou des espaces ne corrompt pas le fichier', () => {
+    // Même garantie que côté Discord, et pour la même raison : le .env est écrit
+    // ligne à ligne par printf, jamais par « sed » — dont le « -i » sans suffixe
+    // échoue par ailleurs sur macOS et BSD.
+    const lieu = atelier();
+    const piege = 'a|b&c d e';
+    const run = lancer(lieu, { ...CONFIG_FLUXER, FLUXER_CLIENT_SECRET: piege });
+    assert.equal(run.code, 0, run.sortie);
+
+    assert.equal(run.env().get('FLUXER_CLIENT_SECRET'), piege);
+    assert.ok(run.brut().includes(`\nFLUXER_CLIENT_SECRET=${piege}\n`),
+        'la ligne n\'est pas écrite telle quelle');
+    assert.equal(run.env().get('FLUXER_TOKEN'), CONFIG_FLUXER.FLUXER_TOKEN);
+    assert.equal(run.env().get('QUASAR_PLATFORM'), 'fluxer');
+});
+
+test('en mode non interactif, ce sont les variables de LA plateforme qui sont exigées', () => {
+    // Réclamer un DISCORD_TOKEN à qui installe pour Fluxer enverrait chercher un
+    // jeton qui n'existe pas.
+    const lieu = atelier();
+    const run = lancer(lieu, { QUASAR_PLATFORM: 'fluxer' });
+    assert.equal(run.code, 1, run.sortie);
+    for (const variable of ['FLUXER_TOKEN', 'FLUXER_CLIENT_ID', 'FLUXER_CLIENT_SECRET']) {
+        assert.ok(run.sortie.includes(variable), `variable manquante non nommée : ${variable}`);
+    }
+    assert.ok(!run.sortie.includes('DISCORD_TOKEN'),
+        'un jeton Discord est réclamé pour une installation Fluxer');
+    assert.ok(!/compose build/.test(run.journal), 'une image a été construite malgré tout');
+});
+
+test('une plateforme illisible arrête tout avant la construction', () => {
+    // Quasar refuse lui aussi de démarrer sur une valeur inconnue, et pour la
+    // même raison : un bot Discord démarré là où on attendait un bot Fluxer, ce
+    // sont deux jeux de données confondus sans que rien ne le signale.
+    const lieu = atelier();
+    const run = lancer(lieu, { ...CONFIG, QUASAR_PLATFORM: 'matrix' });
+    assert.equal(run.code, 1, run.sortie);
+    assert.match(run.sortie, /QUASAR_PLATFORM invalide/);
+    assert.match(run.sortie, /discord, fluxer/);
+    assert.ok(!/compose build/.test(run.journal), 'une image a été construite malgré tout');
+});
+
+test('QUASAR_PLATFORM accepte une casse quelconque', () => {
+    // « Fluxer » saisi avec une majuscule ne doit pas arrêter une installation.
+    // resolvePlatformName() en fait autant côté code.
+    const lieu = atelier();
+    const run = lancer(lieu, { ...CONFIG_FLUXER, QUASAR_PLATFORM: 'FLUXER' });
+    assert.equal(run.code, 0, run.sortie);
+    assert.equal(run.env().get('QUASAR_PLATFORM'), 'fluxer');
+});
+
+test('un .env Fluxer incomplet est signalé sans réclamer de variable Discord', () => {
+    const lieu = atelier();
+    const cible = path.join(lieu.app, '.env');
+    fs.writeFileSync(cible, [
+        'QUASAR_PLATFORM=fluxer',
+        'FLUXER_CLIENT_ID=987654321098765432',
+        'CALLBACK_URL=http://localhost:3000/callback',
+        `JWT_SECRET=${'a'.repeat(64)}`,
+        '',
+    ].join('\n'));
+
+    const run = lancer(lieu, CONFIG_FLUXER);
+    assert.equal(run.code, 0, run.sortie);
+    assert.match(run.sortie, /existant conservé/);
+    assert.match(run.sortie, /Plateforme : Fluxer/);
+    assert.match(run.sortie, /incomplet/);
+    assert.match(run.sortie, /FLUXER_TOKEN/);
+    assert.match(run.sortie, /FLUXER_CLIENT_SECRET/);
+    assert.ok(!run.sortie.includes('DISCORD_TOKEN'),
+        'le .env d\'une installation Fluxer est jugé sur les variables de Discord');
+});
+
+test('un .env sans QUASAR_PLATFORM reste une installation Discord', () => {
+    // La compatibilité qui compte : toutes les installations d'avant la v5.0.0
+    // n'ont pas cette variable. Relancer l'installateur ne doit pas les
+    // déplacer, ni leur réclamer des secrets Fluxer.
+    const lieu = atelier();
+    fs.writeFileSync(path.join(lieu.app, '.env'), [
+        'DISCORD_TOKEN=MTA0.ancien.jeton',
+        'DISCORD_CLIENT_ID=123456789012345678',
+        'DISCORD_CLIENT_SECRET=ancien-secret',
+        'CALLBACK_URL=http://localhost:3000/callback',
+        `JWT_SECRET=${'a'.repeat(64)}`,
+        '',
+    ].join('\n'));
+
+    const run = lancer(lieu, {});
+    assert.equal(run.code, 0, run.sortie);
+    assert.match(run.sortie, /Plateforme : Discord/);
+    assert.ok(!/incomplet/.test(run.sortie), `un .env complet est jugé incomplet :\n${run.sortie}`);
+    assert.equal(run.env().get('DISCORD_TOKEN'), 'MTA0.ancien.jeton');
+    assert.match(run.sortie, /discord\.com\/oauth2\/authorize/);
+});
+
+test('le jeton Fluxer n\'apparaît jamais en clair dans la sortie', () => {
+    const lieu = atelier();
+    const run = lancer(lieu, CONFIG_FLUXER);
+    assert.equal(run.code, 0, run.sortie);
+    assert.ok(!run.sortie.includes(CONFIG_FLUXER.FLUXER_TOKEN), 'le jeton du bot est affiché');
+    assert.ok(!run.sortie.includes(CONFIG_FLUXER.FLUXER_CLIENT_SECRET), 'le secret client est affiché');
 });

@@ -62,6 +62,12 @@ const PURGE_STEPS = [
     // et donc TOUTE la transaction de purge, indéfiniment. Au départ du serveur,
     // la purge intégrale prime (art. 5.1.e) : la trace de la demande part aussi.
     { table: 'erasure_requests', sql: 'DELETE FROM erasure_requests WHERE guild_id = ?' },
+    // Panneaux persistants. La table n'était purgée par RIEN — ni ici, ni par un
+    // DELETE ailleurs dans le dépôt. Chaque salon vocal temporaire pose un
+    // panneau côté Fluxer, donc une ligne, et le salon meurt sans que la ligne
+    // parte : la croissance n'était bornée par rien. Elle porte `guild_id NOT
+    // NULL`, elle appartenait donc à cette liste depuis le premier jour.
+    { table: 'interaction_panels', sql: 'DELETE FROM interaction_panels WHERE guild_id = ?' },
     { table: 'modules', sql: 'DELETE FROM modules WHERE guild_id = ?' },
     { table: 'guilds', sql: 'DELETE FROM guilds WHERE guild_id = ?' },
 ];

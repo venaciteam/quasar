@@ -84,8 +84,11 @@ async function loadModeration(container, guildId) {
                     <option value="ban">🔨 Bans</option>
                     <!-- Type écrit par les déclenchements de l'AutoMod natif de Discord.
                          Ces lignes existaient déjà en base et s'affichaient en « Tous types » :
-                         il ne manquait que l'entrée pour les filtrer. -->
-                    <option value="automod">🤖 AutoMod Discord</option>
+                         il ne manquait que l'entrée pour les filtrer.
+                         Masquée là où la plateforme n'a pas d'AutoMod natif : ce
+                         filtre ne trouverait jamais rien, et proposer un filtre
+                         vide laisse croire qu'on a raté quelque chose. -->
+                    ${QuasarPlateforme.a('automod') ? '<option value="automod">🤖 AutoMod Discord</option>' : ''}
                 </select>
             </div>
             <div id="sanctions-list"><p style="color:var(--text-secondary)">Chargement...</p></div>

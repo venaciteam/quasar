@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-//  Compteur public de l'instance — nombre de serveurs Discord
+//  Compteur public de l'instance — nombre de serveurs (Discord ou Fluxer,
+//  selon la plateforme de l'instance qui sert la vitrine)
 //
 //  Alimente la ligne « L'instance de Venacity est présente sur N serveurs » de
 //  la vitrine. Montée UNIQUEMENT en mode `public` (cf. createApi) : c'est le
@@ -14,9 +15,10 @@
 //  v3.3.0, promesse de la politique de confidentialité). Ne jamais agréger ici
 //  un chiffre venu d'ailleurs.
 //
-//  Source : le cache du client discord.js, pas la table `guilds`. Le cache est
-//  tenu par Discord lui-même (GUILD_CREATE / GUILD_DELETE) et dit où le robot
-//  est présent À L'INSTANT. La table, elle, contient une ligne technique
+//  Source : l'état tenu par la passerelle de la plateforme, lu par le contrat
+//  de l'adaptateur (`nombreServeurs`, via api/services/plateforme.js), pas la
+//  table `guilds`. Cet état est tenu par la plateforme elle-même (GUILD_CREATE /
+//  GUILD_DELETE) et dit où le robot est présent À L'INSTANT. La table, elle, contient une ligne technique
 //  (`__quasar_instance_id`) et garde un serveur quitté jusqu'à sa purge : elle
 //  surcompterait.
 //
@@ -26,6 +28,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const express = require('express');
+const plateforme = require('../services/plateforme');
 
 // Durée de vie du chiffre, côté serveur ET côté navigateur. Cinq minutes : le
 // nombre de serveurs bouge à l'échelle de la journée, et la vitrine n'a pas à
@@ -44,15 +47,15 @@ function createPublicStatsRouter() {
         const now = Date.now();
 
         if (!snapshot || now - snapshot.at >= TTL_S * 1000) {
-            const client = req.app.get('discordClient');
+            const servers = plateforme.nombreServeurs(req);
             // Robot pas encore connecté (démarrage, reconnexion) : le cache est
             // vide ou partiel. Répondre 0 serait faux ; 503 laisse la vitrine
             // masquer la ligne. L'échec n'est pas mis en cache, et mountNoStore
             // a déjà interdit sa mise en cache côté navigateur.
-            if (!client || typeof client.isReady !== 'function' || !client.isReady()) {
+            if (servers === null) {
                 return res.status(503).json({ error: 'Compteur indisponible pour le moment.' });
             }
-            snapshot = { servers: client.guilds.cache.size, at: now };
+            snapshot = { servers, at: now };
         }
 
         // Réponse identique pour tout le monde : elle remplace le no-store posé

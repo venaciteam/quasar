@@ -39,20 +39,27 @@ function seedDelivery(db) {
     `).run(messageId, GUILD, ADMIN).lastInsertRowid;
 }
 
-/** Client Discord minimal : seul le message privé est nécessaire ici. */
+/**
+ * Adaptateur de plateforme minimal : seul le message privé est nécessaire ici.
+ *
+ * La boucle reçoit l'ADAPTATEUR depuis la consolidation, plus le client
+ * discord.js. Le garde « connexion incomplète » lit `moi.id` — et non plus le
+ * cache de serveurs, qui ne distinguait pas « pas encore connecté » de « sur
+ * aucun serveur ».
+ */
 function makeClient(onSend = null) {
     const sends = [];
-    const user = {
-        send: async (payload) => {
-            sends.push(payload);
-            if (onSend) await onSend();
-        },
-    };
-    const guild = { id: GUILD, channels: { cache: new Map() } };
     return {
         client: {
-            guilds: { cache: new Map([[GUILD, guild]]) },
-            users: { fetch: async () => user },
+            moi: { id: '222222222222222222', nom: 'Quasar#0000' },
+            api: {
+                async ouvrirMessagePrive() { return 'dm-canal'; },
+                async envoyerMessage(canalId, contenu) {
+                    sends.push(contenu);
+                    if (onSend) await onSend();
+                    return { id: '1', canalId };
+                },
+            },
         },
         sends,
     };
@@ -158,7 +165,7 @@ test('une exception dans un traitement ne bloque pas la boucle pour toujours', a
     const db = getDb();
     const id = seedDelivery(db);
 
-    const poison = { get guilds() { throw new Error('cache indisponible'); } };
+    const poison = { get moi() { throw new Error('adaptateur indisponible'); } };
     await assert.rejects(() => processPending(poison));
 
     const { client, sends } = makeClient();

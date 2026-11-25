@@ -1,0 +1,437 @@
+// ═══════════════════════════════════════════════════════════════
+//  Rendu Discord des structures neutres
+//
+//  Trois traductions, et elles seules :
+//    embed neutre  -> EmbedBuilder
+//    ctx.choose    -> ActionRowBuilder de ButtonBuilder
+//    ctx.prompt    -> ModalBuilder de TextInputBuilder
+//
+//  Rien ici n'appelle l'API : ces fonctions construisent, `context.js` envoie.
+//  La séparation permet de tester le rendu sans client ni jeton.
+// ═══════════════════════════════════════════════════════════════
+
+const {
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    UserSelectMenuBuilder,
+    StringSelectMenuBuilder,
+} = require('discord.js');
+const { estEmbed, ressembleAEmbedDiscord } = require('../embed');
+
+// Clés reconnues d'un corps de message composé. Un objet qui n'en porte aucune
+// et qui n'est pas un embed neutre est REFUSÉ : voir `rendreContenu`.
+const CLES_CORPS = Object.freeze(['contenu', 'embeds', 'fichiers', 'composants', 'mentionsAutorisees']);
+
+// Discord plafonne à 5 boutons par rangée et 5 rangées par message, soit 25
+// choix. Au-delà, l'API refuse le message entier : mieux vaut lever ici, avec
+// un message qui dit quoi faire.
+const BOUTONS_PAR_RANGEE = 5;
+const RANGEES_MAX = 5;
+
+// Un modal Discord accepte au maximum 5 champs. Même raison.
+const CHAMPS_PROMPT_MAX = 5;
+
+const STYLES_BOUTON = Object.freeze({
+    primaire: ButtonStyle.Primary,
+    secondaire: ButtonStyle.Secondary,
+    succes: ButtonStyle.Success,
+    danger: ButtonStyle.Danger,
+    lien: ButtonStyle.Link,
+});
+
+const STYLES_SAISIE = Object.freeze({
+    ligne: TextInputStyle.Short,
+    paragraphe: TextInputStyle.Paragraph,
+});
+
+/**
+ * Couleur neutre -> entier discord.js.
+ * Accepte l'entier historique du dépôt (0xc8a86e) et la chaîne « #rrggbb »,
+ * qui est la forme stockée en base pour les embeds du dashboard.
+ */
+function couleurVersEntier(couleur) {
+    if (couleur === undefined || couleur === null) return undefined;
+    if (typeof couleur === 'number') return couleur;
+    if (typeof couleur === 'string') {
+        const entier = Number.parseInt(couleur.replace(/^#/, ''), 16);
+        return Number.isNaN(entier) ? undefined : entier;
+    }
+    return undefined;
+}
+
+/** `horodatage` neutre -> valeur acceptée par setTimestamp (true = maintenant). */
+function horodatageVersDate(horodatage) {
+    if (horodatage === true) return new Date();
+    if (horodatage instanceof Date) return horodatage;
+    if (typeof horodatage === 'number' || typeof horodatage === 'string') return new Date(horodatage);
+    return null;
+}
+
+/**
+ * Embed neutre -> EmbedBuilder.
+ *
+ * Chaque champ n'est posé que s'il est renseigné : `setTitle(undefined)` est
+ * accepté par le builder mais produit `title: null` dans le JSON, ce qui n'est
+ * pas la même chose qu'une absence de titre pour l'API.
+ */
+function rendreEmbed(neutre) {
+    // Garde d'entrée : `rendreEmbed` est aussi appelée en boucle sur
+    // `corps.embeds`, où un EmbedBuilder recopié par habitude passerait sans
+    // bruit et ressortirait vide.
+    if (!estEmbed(neutre)) {
+        throw new TypeError(
+            ressembleAEmbedDiscord(neutre)
+                ? 'Embed au format Discord passé à rendreEmbed(). Construisez-le avec `embed({ … })` '
+                    + 'de bot/platform/embed.js.'
+                : `Embed neutre attendu, reçu ${neutre === null ? 'null' : typeof neutre}.`
+        );
+    }
+
+    const builder = new EmbedBuilder();
+
+    if (neutre.titre) builder.setTitle(neutre.titre);
+    if (neutre.description) builder.setDescription(neutre.description);
+
+    const couleur = couleurVersEntier(neutre.couleur);
+    if (couleur !== undefined) builder.setColor(couleur);
+
+    if (Array.isArray(neutre.champs) && neutre.champs.length > 0) {
+        builder.addFields(neutre.champs.map(champ => ({
+            name: champ.nom,
+            value: champ.valeur,
+            inline: Boolean(champ.enLigne),
+        })));
+    }
+
+    if (neutre.pied) {
+        builder.setFooter({
+            text: typeof neutre.pied === 'string' ? neutre.pied : neutre.pied.texte,
+            iconURL: typeof neutre.pied === 'string' ? undefined : neutre.pied.icone,
+        });
+    }
+    if (neutre.auteur) {
+        builder.setAuthor({
+            name: typeof neutre.auteur === 'string' ? neutre.auteur : neutre.auteur.nom,
+            iconURL: typeof neutre.auteur === 'string' ? undefined : neutre.auteur.icone,
+            url: typeof neutre.auteur === 'string' ? undefined : neutre.auteur.url,
+        });
+    }
+    if (neutre.image) builder.setImage(neutre.image);
+    if (neutre.vignette) builder.setThumbnail(neutre.vignette);
+    // Rendu sur le TITRE : Discord n'affiche le lien d'un embed que là.
+    if (neutre.lien) builder.setURL(neutre.lien);
+
+    const date = horodatageVersDate(neutre.horodatage);
+    if (date) builder.setTimestamp(date);
+
+    return builder;
+}
+
+/**
+ * Pièce jointe neutre -> forme acceptée par discord.js.
+ * `{ nom, donnees, description? }` où `donnees` est un Buffer, une chaîne ou un
+ * flux. C'est ce qui permet à un ticket de rendre son transcript.
+ */
+function rendreFichier(fichier) {
+    if (!fichier || !fichier.nom) {
+        throw new Error('Pièce jointe invalide : { nom, donnees } est le minimum attendu.');
+    }
+    return { attachment: fichier.donnees, name: fichier.nom, description: fichier.description };
+}
+
+/**
+ * Contenu neutre -> corps de message discord.js.
+ *
+ * Formes acceptées :
+ *   - une chaîne ;
+ *   - un embed neutre, ou un tableau d'embeds neutres ;
+ *   - un corps composé `{ contenu, embeds, fichiers, composants, mentionsAutorisees }`.
+ *
+ * ⚠️ Un embed au format Discord (`EmbedBuilder` ou `APIEmbed`) est REFUSÉ, avec
+ * une exception qui le dit. Le tolérer produirait un embed à moitié rendu — la
+ * description survivrait, le titre, la couleur, les champs et le pied non — ou
+ * un corps vide, et l'erreur (« Cannot send an empty message ») apparaîtrait
+ * très loin de sa cause. Il reste 146 `EmbedBuilder` à migrer : mieux vaut que
+ * chacun échoue à l'endroit exact où il est passé.
+ */
+function rendreContenu(contenuOuEmbed) {
+    if (contenuOuEmbed === null || contenuOuEmbed === undefined) return {};
+    if (typeof contenuOuEmbed === 'string') return { content: contenuOuEmbed };
+    if (Array.isArray(contenuOuEmbed)) return { embeds: contenuOuEmbed.map(rendreEmbed) };
+    if (estEmbed(contenuOuEmbed)) return { embeds: [rendreEmbed(contenuOuEmbed)] };
+
+    if (typeof contenuOuEmbed === 'object' && CLES_CORPS.some(cle => cle in contenuOuEmbed)) {
+        const payload = {};
+        if (contenuOuEmbed.contenu !== undefined) payload.content = contenuOuEmbed.contenu;
+        if (contenuOuEmbed.embeds) payload.embeds = contenuOuEmbed.embeds.map(rendreEmbed);
+        if (contenuOuEmbed.fichiers) payload.files = contenuOuEmbed.fichiers.map(rendreFichier);
+        if (contenuOuEmbed.composants) payload.components = contenuOuEmbed.composants;
+        if (contenuOuEmbed.mentionsAutorisees) payload.allowedMentions = contenuOuEmbed.mentionsAutorisees;
+        return payload;
+    }
+
+    if (ressembleAEmbedDiscord(contenuOuEmbed)) {
+        throw new TypeError(
+            'Embed au format Discord passé à la couche neutre. Construisez-le avec '
+            + '`embed({ titre, description, couleur, champs, … })` de bot/platform/embed.js : '
+            + 'un EmbedBuilder ou un APIEmbed ne serait rendu qu\'à moitié.'
+        );
+    }
+
+    throw new TypeError(
+        `Contenu non reconnu par la couche neutre (${Object.keys(contenuOuEmbed).join(', ') || 'objet vide'}). `
+        + `Attendu : une chaîne, un embed neutre, ou un corps { ${CLES_CORPS.join(', ')} }.`
+    );
+}
+
+/**
+ * Corps d'un panneau persistant : contenu + choix, prêt pour `api.envoyerMessage`
+ * ou `api.modifierMessage`.
+ *
+ * Écrit une seule fois parce qu'il sert aux DEUX sens — poser un panneau
+ * (`ctx.poserPanneau`) et le réécrire (`api.modifierPanneau`). Deux
+ * constructions séparées finiraient par diverger d'une clé, et un panneau
+ * réécrit sans ses boutons est un panneau mort.
+ *
+ * Le contenu accepte les trois formes de `rendreContenu` — chaîne, embed neutre,
+ * corps composé `{ contenu, embeds, fichiers }` — parce qu'un panneau porte
+ * parfois les deux à la fois : à l'ouverture d'un ticket, les mentions doivent
+ * être dans le MÊME message que l'embed d'accueil, sans quoi elles ne notifient
+ * personne (celles d'un embed ne notifient pas).
+ *
+ * @param {string|object} contenuOuEmbed
+ * @param {Array} choix
+ * @param {string} panneau  nom du panneau, préfixe des `customId`
+ * @returns {object} corps NEUTRE composé, `composants` compris
+ */
+function corpsPanneau(contenuOuEmbed, choix, panneau) {
+    let corps;
+    if (typeof contenuOuEmbed === 'string') {
+        corps = { contenu: contenuOuEmbed };
+    } else if (contenuOuEmbed && typeof contenuOuEmbed === 'object'
+        && !estEmbed(contenuOuEmbed) && CLES_CORPS.some(cle => cle in contenuOuEmbed)) {
+        corps = { ...contenuOuEmbed };
+    } else {
+        corps = { embeds: [contenuOuEmbed] };
+    }
+
+    if (corps.composants !== undefined) {
+        throw new Error(
+            'Panneau : « composants » n\'a pas à être fourni — ce sont les choix qui les décident. '
+            + 'Passez-les dans l\'argument `choix`.'
+        );
+    }
+
+    // `toJSON()` explicite : un `ActionRowBuilder` sérialisé tel quel par
+    // `JSON.stringify` ressort en `{ data: … }`, que l'API ignore — le panneau
+    // partirait sans aucun bouton, sans erreur.
+    corps.composants = rendreChoix(choix, panneau).map(rangee => rangee.toJSON());
+    return corps;
+}
+
+/**
+ * Découpe une liste de choix en rangées.
+ *
+ * Le découpage est une donnée de MISE EN PAGE, pas de plateforme : « ces trois
+ * boutons vont ensemble » se dit de la même façon partout, et un adaptateur qui
+ * n'a pas de rangées (Fluxer, où un choix est une réaction) l'ignore simplement.
+ * Trois écritures, pour la même chose :
+ *
+ *   • un tableau PLAT — rempli à cinq boutons par rangée, le défaut ;
+ *   • un tableau de RANGÉES, `[[a, b, c], [d, e]]` — découpage explicite ;
+ *   • un tableau plat dont un choix porte `nouvelleRangee: true` — il ouvre une
+ *     rangée. C'est la forme la plus légère quand une seule coupure compte, et
+ *     c'est celle du panneau des salons vocaux temporaires (4 + 3).
+ *
+ * @param {Array} choix
+ * @returns {Array<Array>} les rangées, vides écartées
+ */
+function decouperRangees(choix) {
+    const rangeesExplicites = choix.filter(entree => Array.isArray(entree));
+    if (rangeesExplicites.length > 0) {
+        if (rangeesExplicites.length !== choix.length) {
+            throw new Error(
+                'ctx.choose : mélange de choix et de rangées. Passez un tableau PLAT de choix, '
+                + 'ou un tableau de rangées — jamais les deux dans la même liste.'
+            );
+        }
+        return choix.filter(rangee => rangee.length > 0);
+    }
+
+    // Marqueur de rangée porté par le choix qui l'ouvre. Un marqueur posé sur le
+    // premier choix n'ouvre rien : la rangée courante est déjà vide.
+    if (!choix.some(option => option?.nouvelleRangee)) {
+        const rangees = [];
+        for (let debut = 0; debut < choix.length; debut += BOUTONS_PAR_RANGEE) {
+            rangees.push(choix.slice(debut, debut + BOUTONS_PAR_RANGEE));
+        }
+        return rangees;
+    }
+
+    const rangees = [[]];
+    for (const option of choix) {
+        if (option?.nouvelleRangee && rangees[rangees.length - 1].length > 0) rangees.push([]);
+        rangees[rangees.length - 1].push(option);
+    }
+    return rangees.filter(rangee => rangee.length > 0);
+}
+
+/**
+ * Choix neutres -> rangées de boutons.
+ *
+ * `prefixe` est le préfixe de `customId`. Il porte l'identité de l'appel :
+ * `context.js` y met un identifiant unique pour un panneau éphémère (afin de ne
+ * collecter QUE ses propres clics), et le code métier y met un identifiant
+ * stable pour un panneau persistant, qui doit rester reconnaissable après un
+ * redémarrage.
+ *
+ * @param {Array<{cle: string, libelle: string, emoji?: string, style?: string, url?: string, desactive?: boolean, nouvelleRangee?: boolean}>|Array<Array>} choix
+ *   tableau plat, ou tableau de rangées — cf. `decouperRangees`.
+ * @param {string} prefixe
+ * @returns {ActionRowBuilder[]}
+ */
+function rendreChoix(choix, prefixe) {
+    if (!Array.isArray(choix) || choix.length === 0) return [];
+
+    const decoupe = decouperRangees(choix);
+    const total = decoupe.reduce((somme, rangee) => somme + rangee.length, 0);
+    if (total > BOUTONS_PAR_RANGEE * RANGEES_MAX) {
+        throw new Error(
+            `ctx.choose : ${total} choix demandés, Discord en accepte ${BOUTONS_PAR_RANGEE * RANGEES_MAX} au maximum. `
+            + 'Découpez le panneau en plusieurs messages.'
+        );
+    }
+    if (decoupe.length > RANGEES_MAX) {
+        throw new Error(
+            `ctx.choose : ${decoupe.length} rangées demandées, Discord en accepte ${RANGEES_MAX} au maximum. `
+            + 'Regroupez des choix, ou découpez le panneau en plusieurs messages.'
+        );
+    }
+    const tropPleine = decoupe.findIndex(rangee => rangee.length > BOUTONS_PAR_RANGEE);
+    if (tropPleine !== -1) {
+        throw new Error(
+            `ctx.choose : la rangée ${tropPleine + 1} porte ${decoupe[tropPleine].length} choix, `
+            + `Discord en accepte ${BOUTONS_PAR_RANGEE} par rangée.`
+        );
+    }
+
+    const rangees = [];
+    for (const contenuRangee of decoupe) {
+        const rangee = new ActionRowBuilder();
+        for (const option of contenuRangee) {
+            const style = STYLES_BOUTON[option.style] || ButtonStyle.Secondary;
+            const bouton = new ButtonBuilder().setStyle(style);
+
+            // Un bouton de style « lien » ne porte pas de customId mais une URL,
+            // et Discord refuse le message si on lui donne les deux.
+            if (style === ButtonStyle.Link) bouton.setURL(option.url);
+            else bouton.setCustomId(`${prefixe}:${option.cle}`);
+
+            // Libellé texte toujours posé quand il existe : une icône seule est
+            // illisible pour qui ne connaît pas le panneau (convention VNCT).
+            if (option.libelle) bouton.setLabel(option.libelle);
+            if (option.emoji) bouton.setEmoji(option.emoji);
+            if (option.desactive) bouton.setDisabled(true);
+
+            rangee.addComponents(bouton);
+        }
+        rangees.push(rangee);
+    }
+    return rangees;
+}
+
+/**
+ * Questions neutres -> ModalBuilder.
+ *
+ * @param {Array<{cle: string, libelle: string, style?: 'ligne'|'paragraphe', max?: number, min?: number, requis?: boolean, valeur?: string, exemple?: string}>} questions
+ * @param {{titre?: string}} [options]
+ * @param {string} identifiant  customId du modal, utilisé pour filtrer la soumission
+ */
+function rendrePrompt(questions, options = {}, identifiant) {
+    if (!Array.isArray(questions) || questions.length === 0) {
+        throw new Error('ctx.prompt : au moins une question est nécessaire.');
+    }
+    if (questions.length > CHAMPS_PROMPT_MAX) {
+        throw new Error(
+            `ctx.prompt : ${questions.length} champs demandés, Discord en accepte ${CHAMPS_PROMPT_MAX} au maximum.`
+        );
+    }
+
+    const modal = new ModalBuilder()
+        .setCustomId(identifiant)
+        .setTitle(options.titre || 'Quasar');
+
+    for (const question of questions) {
+        const saisie = new TextInputBuilder()
+            .setCustomId(question.cle)
+            .setLabel(question.libelle)
+            .setStyle(STYLES_SAISIE[question.style] || TextInputStyle.Short)
+            // `requis` par défaut à false : un champ facultatif oublié est une
+            // gêne, un champ obligatoire imposé par erreur bloque le parcours.
+            .setRequired(Boolean(question.requis));
+
+        if (question.max) saisie.setMaxLength(question.max);
+        if (question.min) saisie.setMinLength(question.min);
+        if (question.valeur) saisie.setValue(question.valeur);
+        if (question.exemple) saisie.setPlaceholder(question.exemple);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(saisie));
+    }
+
+    return modal;
+}
+
+/**
+ * Sélecteur de membre -> rangée de composants.
+ *
+ * Deux rendus selon le périmètre :
+ *   'serveur'    -> sélecteur natif d'utilisateur, qui laisse Discord faire la
+ *                   recherche et la pagination ;
+ *   'salonVocal' -> menu de choix construit sur une LISTE fournie, le sélecteur
+ *                   natif ne sachant pas se restreindre à un salon vocal.
+ *
+ * @param {string} identifiant customId du composant
+ * @param {{perimetre: string, membres?: Array<{id, nom}>, exemple?: string}} options
+ */
+function rendreSelecteurMembre(identifiant, { perimetre, membres = [], exemple } = {}) {
+    if (perimetre === 'salonVocal') {
+        const menu = new StringSelectMenuBuilder()
+            .setCustomId(identifiant)
+            .setPlaceholder(exemple || 'Choisissez une personne')
+            // 25 est le plafond d'un menu Discord. Au-delà, on tronque plutôt
+            // que de faire refuser le message entier : un salon vocal de plus de
+            // 25 personnes est déjà hors de l'usage de TempVoice.
+            .addOptions(membres.slice(0, 25).map(m => ({ label: m.nom ?? m.id, value: m.id })));
+        return new ActionRowBuilder().addComponents(menu);
+    }
+
+    const selecteur = new UserSelectMenuBuilder()
+        .setCustomId(identifiant)
+        .setPlaceholder(exemple || 'Choisissez une personne')
+        .setMinValues(1)
+        .setMaxValues(1);
+    return new ActionRowBuilder().addComponents(selecteur);
+}
+
+module.exports = {
+    rendreEmbed,
+    rendreSelecteurMembre,
+    rendreContenu,
+    rendreFichier,
+    CLES_CORPS,
+    corpsPanneau,
+    decouperRangees,
+    rendreChoix,
+    rendrePrompt,
+    couleurVersEntier,
+    STYLES_BOUTON,
+    STYLES_SAISIE,
+    BOUTONS_PAR_RANGEE,
+    RANGEES_MAX,
+    CHAMPS_PROMPT_MAX,
+};

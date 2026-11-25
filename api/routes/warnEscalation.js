@@ -32,6 +32,7 @@ const {
     MIN_THRESHOLD, MAX_THRESHOLD, MAX_TIERS_PER_GUILD,
 } = require('../../bot/utils/warnEscalation');
 const { getRetentionMonths } = require('../../bot/modules/retention/sanctions');
+const plateforme = require('../services/plateforme');
 
 const router = express.Router({ mergeParams: true });
 
@@ -150,6 +151,9 @@ function parseTierPayload(body) {
 
     const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
     if (logChannel.error) return { error: logChannel.error };
+    // NOTE : la forme seule est contrôlée ici. Le SCELLEMENT au serveur est fait
+    // par les deux routes d'écriture, qui connaissent la valeur déjà en base et
+    // peuvent donc laisser passer une valeur inchangée.
 
     const responseMessage = String(body.response_message ?? '').trim();
     if (responseMessage.length > MAX_RESPONSE_MESSAGE) {
@@ -256,6 +260,12 @@ router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const { data } = parsed;
 
+    // Salon des journaux SCELLÉ au serveur de l'URL : c'est là que partiront les
+    // sanctions automatiques de CE serveur.
+    const scelle = await plateforme.exigerCanalDuServeur(req, data.logChannel, { champ: 'Le salon des journaux' });
+    if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+    data.logChannel = scelle.value;
+
     const count = listTiers(guildId).length;
     if (count >= MAX_TIERS_PER_GUILD) {
         return res.status(409).json({
@@ -302,6 +312,12 @@ router.put('/:id', requireAuth, requireGuildAdmin, async (req, res) => {
     const parsed = parseTierPayload(req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const { data } = parsed;
+
+    const scelle = await plateforme.exigerCanalDuServeur(req, data.logChannel, {
+        champ: 'Le salon des journaux', actuel: tier.log_channel,
+    });
+    if (scelle.error) return res.status(scelle.status || 400).json({ error: scelle.error });
+    data.logChannel = scelle.value;
 
     if (thresholdTaken(guildId, data.threshold, tier.id)) {
         return res.status(409).json(DUPLICATE_THRESHOLD);

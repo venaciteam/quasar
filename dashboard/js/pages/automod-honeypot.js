@@ -564,7 +564,8 @@ function hpRenderCases() {
 
     return `
         <p style="color:var(--text-muted);font-size:.78rem;margin:0 0 .75rem">
-            Les ${HP_CASES_LIMIT} derniers cas. Ils se tranchent dans Discord, depuis les boutons du salon
+            Les ${HP_CASES_LIMIT} derniers cas. Ils se tranchent dans ${escapeHtml(QuasarPlateforme.libelle())}, depuis
+            ${QuasarPlateforme.a('interactions') ? 'les boutons' : 'les réactions'} du salon
             d'arbitrage : cette liste est là pour suivre, pas pour décider.
         </p>
         <div style="display:flex;flex-direction:column;gap:.5rem">

@@ -11,6 +11,7 @@ const APP_SHELL = [
   '/dashboard/css/style.css',
   '/dashboard/css/vnct-fab-only.css',
   '/dashboard/js/vnct-common.js',
+  '/dashboard/js/plateforme.js',
   '/dashboard/js/utils.js',
   '/dashboard/js/commandsBlock.js',
   '/dashboard/js/pages/moderation.js',

@@ -78,27 +78,27 @@ function countWarnsInEscalationWindow(guildId, userId) {
 }
 
 /**
- * Récupère les identifiants des membres actuellement bannis sur un serveur.
+ * Le bannissement d'une personne produit-il encore ses effets ?
  *
- * La colonne `active` de la table ne dit PAS si un ban produit encore ses effets :
- * `/unban` ne la remet pas à 0. La seule source fiable est Discord.
+ * La colonne `active` de la table ne le dit PAS : `/unban` ne la remet pas à 0.
+ * La seule source fiable est la plateforme.
  *
- * @returns {Promise<{ known: boolean, ids: Set<string> }>} known=false si la liste
- *          n'a pas pu être établie — dans ce cas aucun ban ne doit être purgé.
+ * ⚠️ Trois issues, et la troisième est celle qui compte : `null` signifie « je
+ * ne sais pas » — permission « Bannir des membres » absente, API injoignable —
+ * et dans ce cas la sanction est CONSERVÉE. Confondre « je ne sais pas » et
+ * « plus bannie » effacerait la trace d'un bannissement en vigueur.
+ *
+ * Le plafond de 1000 entrées par requête, qui faisait renoncer la lecture en
+ * bloc, n'a plus d'objet : la question est posée personne par personne.
+ *
+ * @returns {Promise<boolean|null>} true = encore banni, false = ne l'est plus,
+ *   null = indéterminable.
  */
-async function fetchActiveBans(guild) {
+async function banEncoreActif(api, guildeId, utilisateurId) {
     try {
-        const bans = await guild.bans.fetch();
-        // L'API plafonne à 1000 entrées par requête. Une liste pleine signale un
-        // possible dépassement : on préfère ne rien purger plutôt que d'effacer la
-        // trace d'un bannissement toujours en vigueur.
-        if (bans.size >= 1000) {
-            return { known: false, ids: new Set() };
-        }
-        return { known: true, ids: new Set(bans.map(b => b.user.id)) };
+        return (await api.obtenirBannissement(guildeId, utilisateurId)) !== null;
     } catch {
-        // Permission « Bannir des membres » absente, ou API indisponible.
-        return { known: false, ids: new Set() };
+        return null;
     }
 }
 
@@ -106,11 +106,13 @@ async function fetchActiveBans(guild) {
  * Supprime les sanctions d'un serveur qui ont dépassé sa durée de conservation.
  * Les bannissements encore en vigueur sont préservés : ils produisent leurs effets.
  *
+ * @param {string} guildeId
+ * @param {object} api  client REST normalisé (`adaptateur.api`)
  * @returns {Promise<{ deleted: number, keptActiveBans: number, skipped: string|null }>}
  */
-async function purgeGuildSanctions(guild) {
+async function purgeGuildSanctions(guildeId, api) {
     const db = getDb();
-    const months = getRetentionMonths(guild.id);
+    const months = getRetentionMonths(guildeId);
 
     if (months === 0) {
         return { deleted: 0, keptActiveBans: 0, skipped: 'conservation illimitée (réglage du serveur)' };
@@ -120,16 +122,18 @@ async function purgeGuildSanctions(guild) {
     const candidates = db.prepare(`
         SELECT id, type, user_id FROM sanctions
         WHERE guild_id = ? AND created_at < datetime('now', ?)
-    `).all(guild.id, cutoff);
+    `).all(guildeId, cutoff);
 
     if (candidates.length === 0) {
         return { deleted: 0, keptActiveBans: 0, skipped: null };
     }
 
-    const bannedCandidates = candidates.filter(s => s.type === 'ban');
-    let activeBans = { known: true, ids: new Set() };
-    if (bannedCandidates.length > 0) {
-        activeBans = await fetchActiveBans(guild);
+    // Une seule question par PERSONNE, pas par sanction : plusieurs bans échus
+    // d'un même compte ne valent pas plusieurs appels.
+    const aVerifier = [...new Set(candidates.filter(s => s.type === 'ban').map(s => s.user_id))];
+    const verdicts = new Map();
+    for (const userId of aVerifier) {
+        verdicts.set(userId, await banEncoreActif(api, guildeId, userId));
     }
 
     const toDelete = [];
@@ -137,12 +141,9 @@ async function purgeGuildSanctions(guild) {
 
     for (const sanction of candidates) {
         if (sanction.type === 'ban') {
-            if (!activeBans.known) {
-                // Impossible de savoir si le ban court encore : on conserve.
-                keptActiveBans++;
-                continue;
-            }
-            if (activeBans.ids.has(sanction.user_id)) {
+            const encoreBanni = verdicts.get(sanction.user_id);
+            // `null` (indéterminable) et `true` (banni) conservent tous les deux.
+            if (encoreBanni !== false) {
                 keptActiveBans++;
                 continue;
             }
@@ -165,19 +166,27 @@ async function purgeGuildSanctions(guild) {
 
 /**
  * Applique la rétention des sanctions sur tous les serveurs où le bot est présent.
+ *
+ * @param {object} adaptateur  adaptateur de plateforme
  */
-async function purgeAllSanctions(client) {
-    if (!client?.guilds?.cache) return [];
+async function purgeAllSanctions(adaptateur) {
+    const api = adaptateur?.api;
+    if (!api) return [];
+
+    // `listerGuildes()` rend `null` quand la connexion n'est pas établie : on ne
+    // purge alors RIEN. `[]` veut dire « connecté, aucun serveur ».
+    const guildes = await api.listerGuildes().catch(() => null);
+    if (!guildes) return [];
 
     const results = [];
-    for (const guild of client.guilds.cache.values()) {
+    for (const guildeId of guildes) {
         try {
-            const result = await purgeGuildSanctions(guild);
+            const result = await purgeGuildSanctions(guildeId, api);
             if (result.deleted > 0 || result.keptActiveBans > 0) {
-                results.push({ guildId: guild.id, ...result });
+                results.push({ guildId: guildeId, ...result });
             }
         } catch (err) {
-            console.error(`[Quasar Rétention] Purge des sanctions du serveur ${guild.id} échouée :`, err.message);
+            console.error(`[Quasar Rétention] Purge des sanctions du serveur ${guildeId} échouée :`, err.message);
         }
     }
     return results;
@@ -190,6 +199,7 @@ module.exports = {
     normalizeRetentionMonths,
     getRetentionMonths,
     countWarnsInEscalationWindow,
+    banEncoreActif,
     purgeGuildSanctions,
     purgeAllSanctions,
 };

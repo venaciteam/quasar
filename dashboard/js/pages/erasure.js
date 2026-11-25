@@ -47,7 +47,7 @@ async function loadErasure(container, guildId) {
             <div class="card-title">✍️ Enregistrer une demande</div>
             <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
                 Pour une demande reçue par e-mail (contact@vena.city) ou autrement. Les demandes
-                déposées via la commande <code>/mes-donnees</code> apparaissent directement dans la liste.
+                déposées via la commande <code>${escapeHtml(QuasarPlateforme.commande('mes-donnees'))}</code> apparaissent directement dans la liste.
             </p>
             <div style="display:grid;gap:1rem;max-width:560px">
                 <div style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap">

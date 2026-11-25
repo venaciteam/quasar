@@ -1,10 +1,13 @@
 // ═══════════════════════════════════════════════════════════════
 //  Notification de violation — Boucle d'envoi
 //
-//  Dépile les breach_deliveries en 'pending' et tente leur envoi Discord. Rien
-//  n'est envoyé depuis la route HTTP (voir api/routes/breach.js) : la route se
+//  Dépile les breach_deliveries en 'pending' et tente leur envoi. Rien n'est
+//  envoyé depuis la route HTTP (voir api/routes/breach.js) : la route se
 //  contente d'ENFILER les envois après prévisualisation + confirmation. Cette
-//  boucle est le seul canal Discord réel.
+//  boucle est le seul canal d'envoi réel.
+//
+//  Elle reçoit l'ADAPTATEUR de plateforme, jamais le client natif : c'est ce qui
+//  a permis de retirer la voie historique de `./notify.js`.
 //
 //  Propriétés (art. 33.5 — traçabilité de qui a / n'a pas reçu) :
 //   • Étalement : un délai entre deux envois pour ne pas se faire limiter.
@@ -116,7 +119,7 @@ function recoverInterrupted(db) {
  * déclenchement à la demande) ou par la boucle.
  * @returns {Promise<{ processed:number, sent:number, failed:number, skipped:number }>}
  */
-async function processPending(client) {
+async function processPending(plateforme) {
     // Verrou de ré-entrance : si un traitement est déjà en cours (il peut dormir
     // entre deux envois), ne pas relire la file en parallèle — sinon les mêmes
     // lignes 'pending' seraient envoyées deux fois. Le traitement courant videra
@@ -126,9 +129,12 @@ async function processPending(client) {
     }
     running = true;
     try {
-        // Garde-fou identique à la rétention : un cache vide = connexion incomplète,
-        // pas un bot sans serveur. On ne tente rien, les pending repartiront au tick suivant.
-        if (!client?.guilds?.cache || client.guilds.cache.size === 0) {
+        // Garde-fou : tant que l'adaptateur ne connaît pas l'identité du bot, la
+        // connexion n'est pas faite. On ne tente rien, les pending repartiront au
+        // tick suivant. Le cache de serveurs de discord.js disait la même chose
+        // en moins bien — il ne distinguait pas « pas encore connecté » de
+        // « connecté et sur aucun serveur ».
+        if (!plateforme?.moi?.id) {
             return { processed: 0, sent: 0, failed: 0, skipped: 0 };
         }
 
@@ -195,12 +201,12 @@ async function processPending(client) {
             if (row.channel === 'guild_channel') {
                 // Repli salon : POINTEUR NEUTRE dans le salon de logs de modération.
                 // Jamais le contenu de la violation — il reste en MP + bannière dashboard.
-                res = await sendToGuildChannel(client, row.guild_id);
+                res = await sendToGuildChannel(plateforme, row.guild_id);
             } else {
                 // MP : embed COMPLET (contenu de la notification).
                 const incident = db.prepare('SELECT * FROM breach_incidents WHERE id = ?').get(message.incident_id);
                 const embed = buildBreachEmbed(incident, message);
-                res = await sendDM(client, row.recipient_id, embed);
+                res = await sendDM(plateforme, row.recipient_id, embed);
             }
 
             const attempts = row.attempts + 1; // déjà écrit par le marquage ci-dessus
@@ -241,9 +247,9 @@ async function processPending(client) {
     }
 }
 
-async function tick(client) {
+async function tick(plateforme) {
     try {
-        const r = await processPending(client);
+        const r = await processPending(plateforme);
         if (r.processed > 0) {
             console.log(
                 `[Quasar Violation] File traitée : ${r.sent} envoyé(s), ${r.failed} en échec définitif, ` +
@@ -255,12 +261,13 @@ async function tick(client) {
     }
 }
 
-function start(client) {
+/** @param {object} plateforme adaptateur de plateforme (bot/platform/index.js) */
+function start(plateforme) {
     if (tickHandle) return;
 
     console.log('[Quasar Violation] Boucle de notification active (tick 30 s, repli salon + bannière dashboard en filet).');
 
-    const safeTick = () => Promise.resolve(tick(client))
+    const safeTick = () => Promise.resolve(tick(plateforme))
         .catch(err => console.error('[Quasar Violation] Erreur inattendue :', err.message));
 
     bootHandle = setTimeout(safeTick, BOOT_DELAY_MS);

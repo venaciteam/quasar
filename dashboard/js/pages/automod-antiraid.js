@@ -156,6 +156,18 @@ async function renderAutomodAntiraid(container, guildId) {
     arRenderForm();
 }
 
+/**
+ * La plateforme sait-elle suspendre les invitations d'un serveur ?
+ *
+ * Tout le mode panique en dépend : la carte d'action, le réglage de durée, et
+ * la phrase qui l'annonce dans l'introduction. Là où la réponse est non, la
+ * route répond 501 et le bouton ne pourrait que produire une erreur — on ne
+ * l'affiche pas.
+ */
+function arPeutFermerLesInvitations() {
+    return QuasarPlateforme.a('pauseInvitations');
+}
+
 function arField(label, help, inner) {
     return `
         <div>
@@ -183,7 +195,9 @@ function arRenderIntro() {
             <p style="color:var(--text-secondary);font-size:.85rem;margin:0 0 .5rem">
                 Je surveille le rythme des arrivées. Au-delà du seuil que vous fixez, j'applique les
                 sanctions configurées à l'ensemble de la vague — pas seulement à la dernière personne
-                arrivée — et je peux mettre les invitations du serveur en pause le temps que ça passe.
+                arrivée${arPeutFermerLesInvitations()
+                    ? ' — et je peux mettre les invitations du serveur en pause le temps que ça passe.'
+                    : '.'}
             </p>
             <p style="color:var(--text-muted);font-size:.78rem;margin:0 0 .5rem">
                 C'est de la détection de seuil, pas de la détection « intelligente » : distinguer un raid
@@ -215,6 +229,7 @@ function arRenderIntro() {
 function arRenderPanic() {
     const host = document.getElementById('ar-panic');
     if (!host) return;
+    if (!arPeutFermerLesInvitations()) { host.innerHTML = ''; return; }
 
     const panic = _arState.data.panic || { active: false };
     const config = _arState.data.config || {};
@@ -356,6 +371,7 @@ function arRenderForm() {
             </div>
         </div>
 
+        ${arPeutFermerLesInvitations() ? `
         <div class="card">
             <div class="card-title">🛑 Durée du mode panique</div>
             <div style="display:flex;flex-direction:column;gap:.85rem">
@@ -374,6 +390,7 @@ function arRenderForm() {
                 </p>
             </div>
         </div>
+        ` : ''}
 
         <div class="card">
             <div class="card-title">✉️ Messages et journaux</div>
@@ -509,18 +526,23 @@ function arValidate() {
     arNotices('ar-age-feedback', ageNotices);
 
     // ─── Mode panique ───
-    const panicSeconds = arReadInt('ar-panic-seconds');
-    const panicNotices = [];
-    if (panicSeconds === null) {
-        panicNotices.push({ tone: 'danger', text: 'Indiquez une durée en secondes, ou 0 pour désactiver le mode panique.' });
-    } else if (panicSeconds < 0 || panicSeconds > (limits.MAX_PANIC_SECONDS || 86400)) {
-        panicNotices.push({ tone: 'danger', text: `La durée doit être comprise entre 0 et ${limits.MAX_PANIC_SECONDS} secondes.` });
-    } else if (panicSeconds === 0) {
-        panicNotices.push({ tone: 'text-muted', text: 'Mode panique désactivé : les invitations ne seront jamais mises en pause automatiquement.' });
-    } else {
-        panicNotices.push({ tone: 'text-muted', text: `Les invitations resteront en pause ${arFormatSeconds(panicSeconds)} après une détection.` });
+    // Ni champ ni conteneur de retour là où la plateforme ne sait pas suspendre
+    // ses invitations : il n'y a rien à valider, et un avertissement posé dans
+    // un conteneur absent ne dirait rien à personne.
+    if (arPeutFermerLesInvitations()) {
+        const panicSeconds = arReadInt('ar-panic-seconds');
+        const panicNotices = [];
+        if (panicSeconds === null) {
+            panicNotices.push({ tone: 'danger', text: 'Indiquez une durée en secondes, ou 0 pour désactiver le mode panique.' });
+        } else if (panicSeconds < 0 || panicSeconds > (limits.MAX_PANIC_SECONDS || 86400)) {
+            panicNotices.push({ tone: 'danger', text: `La durée doit être comprise entre 0 et ${limits.MAX_PANIC_SECONDS} secondes.` });
+        } else if (panicSeconds === 0) {
+            panicNotices.push({ tone: 'text-muted', text: 'Mode panique désactivé : les invitations ne seront jamais mises en pause automatiquement.' });
+        } else {
+            panicNotices.push({ tone: 'text-muted', text: `Les invitations resteront en pause ${arFormatSeconds(panicSeconds)} après une détection.` });
+        }
+        arNotices('ar-panic-feedback', panicNotices);
     }
-    arNotices('ar-panic-feedback', panicNotices);
 
     // ─── Sanctions ───
     const value = document.getElementById('ar-punishments')?.value ?? '';
@@ -562,7 +584,12 @@ function arCollectPayload() {
         join_count: document.getElementById('ar-join-count')?.value ?? '',
         join_window_seconds: document.getElementById('ar-window')?.value ?? '',
         min_account_age_hours: document.getElementById('ar-account-age')?.value ?? '',
-        panic_duration_seconds: document.getElementById('ar-panic-seconds')?.value ?? '',
+        // Le champ est absent là où la plateforme ne sait pas suspendre ses
+        // invitations : on renvoie alors la valeur déjà en base. Envoyer une
+        // chaîne vide ferait refuser TOUT l'enregistrement pour un réglage
+        // qu'on a volontairement caché.
+        panic_duration_seconds: document.getElementById('ar-panic-seconds')?.value
+            ?? String(_arState.data?.config?.panic_duration_seconds ?? 0),
         punishments: document.getElementById('ar-punishments')?.value.trim() || '',
         log_channel: document.getElementById('ar-log')?.value || null,
         response_message: document.getElementById('ar-response')?.value.trim() || null,

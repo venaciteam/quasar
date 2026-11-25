@@ -6,6 +6,13 @@
 #   Il pose les questions, écrit le .env, construit l'image, démarre le
 #   conteneur, puis contrôle que tout répond vraiment.
 #
+#   PREMIÈRE QUESTION : la plateforme. Depuis la v5.0.0, la même base de code
+#   anime un bot Discord OU un bot Fluxer, selon QUASAR_PLATFORM. Tout ce qui est
+#   demandé ensuite en dépend : les deux jeux de jetons ne se mélangent jamais, et
+#   aucun message ne parle de Discord à qui installe pour Fluxer. L'absence de
+#   QUASAR_PLATFORM vaut `discord`, exactement comme dans le code — une
+#   installation existante qui relance ce script retrouve donc sa plateforme.
+#
 #   Sans terminal (CI, conteneur sans TTY) ou avec --non-interactive, la
 #   configuration est lue dans l'environnement : ./setup.sh --help en donne la
 #   liste. C'est aussi ce qui rend ce script testable de bout en bout.
@@ -74,6 +81,78 @@ erreur() { printf '\n%s❌ %s%s\n' "$C_ERR" "$1" "$C_FIN" >&2; }
 # sans que rien ne le laisse deviner.
 elaguer() { printf '%s' "${1:-}" | awk '{ gsub(/^[ \t]+|[ \t]+$/, ""); print }'; }
 
+minuscules() { printf '%s' "${1:-}" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz'; }
+
+# ── Plateforme ──────────────────────────────────────────────────
+# Une seule base de code, deux plateformes. Le défaut est `discord` et il l'est
+# aussi dans le code (bot/platform/index.js, PLATEFORME_PAR_DEFAUT) : les deux
+# doivent rester d'accord, sans quoi l'installateur écrirait un .env pour une
+# plateforme et le bot démarrerait sur l'autre.
+PLATEFORME_PAR_DEFAUT="discord"
+
+plateforme_valide() {
+    case "${1:-}" in
+        discord|fluxer) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Aucun message ne doit dire « Discord » à qui installe pour Fluxer : ce serait
+# la première chose à faire douter d'avoir lancé le bon script.
+libelle_plateforme() {
+    case "${1:-}" in
+        fluxer) printf 'Fluxer' ;;
+        *) printf 'Discord' ;;
+    esac
+}
+
+# Les trois variables qu'exige la plateforme active. Même table qu'index.js
+# (VARIABLES_PLATEFORME) : en mode `fluxer`, l'absence de DISCORD_TOKEN n'est pas
+# une erreur, et réciproquement. Exiger les deux jeux obligerait chaque
+# déploiement à porter les secrets de l'autre plateforme — exactement ce que la
+# ségrégation des deux instances existe pour empêcher.
+variables_plateforme() {
+    case "${1:-}" in
+        fluxer) printf '%s' 'FLUXER_TOKEN FLUXER_CLIENT_ID FLUXER_CLIENT_SECRET' ;;
+        *) printf '%s' 'DISCORD_TOKEN DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET' ;;
+    esac
+}
+
+# Plateforme telle qu'elle est connue À CET INSTANT. Utilisée par les messages
+# qui peuvent tomber avant la question (entrée perdue, absence de terminal) :
+# une valeur illisible y vaut le défaut, parce qu'un message d'aide ne doit
+# jamais échouer — c'est le refus de démarrage de Quasar qui tranchera.
+plateforme_courante() {
+    local p
+    p=$(minuscules "${QUASAR_PLATFORM:-}")
+    if ! plateforme_valide "$p"; then p=$PLATEFORME_PAR_DEFAUT; fi
+    printf '%s' "$p"
+}
+
+# Exemple d'installation sans question, pour la plateforme visée. Imprimé à deux
+# endroits, et il doit nommer les variables de CETTE plateforme : une commande
+# d'exemple qui réclame un jeton Discord à qui installe pour Fluxer ne répare
+# rien, elle égare.
+exemple_non_interactif() {
+    if [ "$(plateforme_courante)" = "fluxer" ]; then
+        info "       QUASAR_PLATFORM=fluxer FLUXER_TOKEN=… FLUXER_CLIENT_ID=… \\"
+        info "         FLUXER_CLIENT_SECRET=… ./setup.sh --non-interactive"
+    else
+        info "       DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… \\"
+        info "         ./setup.sh --non-interactive"
+    fi
+}
+
+# Base REST de l'instance Fluxer visée, sans barre oblique finale. Même
+# normalisation qu'api/routes/auth.js : « …/v1/ » suivi de « /oauth2/… »
+# donnerait un double séparateur que l'API refuse.
+base_rest_fluxer() {
+    local base=${FLUXER_API_BASE:-}
+    if [ -z "$base" ]; then base="https://api.fluxer.app/v1"; fi
+    while [ "${base%/}" != "$base" ]; do base=${base%/}; done
+    printf '%s' "$base"
+}
+
 # ── Options ─────────────────────────────────────────────────────
 RECONFIGURER=0
 
@@ -92,27 +171,50 @@ aide() {
 
   Variables lues dans l'environnement (toute variable déjà posée n'est pas
   demandée) :
+    QUASAR_PLATFORM         discord (défaut) ou fluxer. Elle décide lesquelles
+                            des variables ci-dessous sont demandées.
+
+  Sur Discord :
     DISCORD_TOKEN           Jeton du bot. Obligatoire.
     DISCORD_CLIENT_ID       Identifiant de l'application. Obligatoire.
     DISCORD_CLIENT_SECRET   Secret OAuth2 de l'application. Obligatoire.
-    BOT_OWNER_ID            Votre identifiant Discord. Optionnel.
+
+  Sur Fluxer :
+    FLUXER_TOKEN            Jeton du bot. Obligatoire.
+    FLUXER_CLIENT_ID        Identifiant de l'application. Obligatoire.
+    FLUXER_CLIENT_SECRET    Secret OAuth2 de l'application. Obligatoire.
+    FLUXER_API_BASE         Base REST versionnée, pour viser une instance
+                            auto-hébergée. Défaut : https://api.fluxer.app/v1
+    FLUXER_GATEWAY_URL      Passerelle. Défaut : wss://gateway.fluxer.app/?v=1
+    FLUXER_MEDIA_BASE       Proxy média des avatars. Défaut :
+                            https://media.fluxer.app
+    COMMAND_PREFIX          Préfixe des commandes texte. Défaut : !
+
+  Sur les deux :
+    BOT_OWNER_ID            Votre identifiant sur la plateforme. Optionnel.
     PORT                    Port du dashboard. Défaut : 3000.
     BIND_ADDRESS            127.0.0.1 (défaut, accès local seul) ou 0.0.0.0
                             pour ouvrir le dashboard au réseau.
     CALLBACK_URL            Adresse de retour OAuth2. Déduite du port et de
-                            BIND_ADDRESS si elle n'est pas fournie.
+                            BIND_ADDRESS si elle n'est pas fournie. Le chemin
+                            /callback est le même sur les deux plateformes.
     JWT_SECRET              Clé de signature des sessions. Générée si absente.
-    QUASAR_MODE             bot (défaut), site ou public.
+    QUASAR_MODE             bot (défaut), site ou public. Indépendante de la
+                            plateforme : elle décide de ce qui démarre et de ce
+                            qui est servi, pas de la plateforme du bot.
     DOCKER_GID              Groupe propriétaire du socket Docker. Détecté seul.
 
   Réglages avancés :
-    QUASAR_SKIP_TOKEN_CHECK=1   Ne pas contrôler le jeton auprès de Discord.
+    QUASAR_SKIP_TOKEN_CHECK=1   Ne pas contrôler le jeton auprès de la plateforme.
     QUASAR_HEALTH_TIMEOUT=90    Secondes d'attente du dashboard au démarrage.
     NO_COLOR=1                  Sortie sans couleur.
 
-  Exemple d'installation sans aucune question :
+  Exemples d'installation sans aucune question :
     DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… \
       ./setup.sh --non-interactive
+
+    QUASAR_PLATFORM=fluxer FLUXER_TOKEN=… FLUXER_CLIENT_ID=… \
+      FLUXER_CLIENT_SECRET=… ./setup.sh --non-interactive
 AIDE
 }
 
@@ -145,8 +247,7 @@ entree_perdue() {
     info "  1. Relancer depuis un terminal :"
     info "       cd \"$RACINE\" && ./setup.sh"
     info "  2. Fournir la configuration par l'environnement, sans aucune question :"
-    info "       DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… \\"
-    info "         ./setup.sh --non-interactive"
+    exemple_non_interactif
     printf '\n'
     info "La liste complète des variables : ./setup.sh --help"
     exit 1
@@ -286,9 +387,19 @@ fi
 ok "Docker et Docker Compose répondent"
 
 # ── Valeurs déjà présentes dans l'environnement ─────────────────
+QUASAR_PLATFORM=$(minuscules "$(elaguer "${QUASAR_PLATFORM:-}")")
 DISCORD_TOKEN=$(elaguer "${DISCORD_TOKEN:-}")
 DISCORD_CLIENT_ID=$(elaguer "${DISCORD_CLIENT_ID:-}")
 DISCORD_CLIENT_SECRET=$(elaguer "${DISCORD_CLIENT_SECRET:-}")
+FLUXER_TOKEN=$(elaguer "${FLUXER_TOKEN:-}")
+FLUXER_CLIENT_ID=$(elaguer "${FLUXER_CLIENT_ID:-}")
+FLUXER_CLIENT_SECRET=$(elaguer "${FLUXER_CLIENT_SECRET:-}")
+FLUXER_API_BASE=$(elaguer "${FLUXER_API_BASE:-}")
+FLUXER_GATEWAY_URL=$(elaguer "${FLUXER_GATEWAY_URL:-}")
+FLUXER_MEDIA_BASE=$(elaguer "${FLUXER_MEDIA_BASE:-}")
+# Le préfixe est élagué comme le reste : index.js élague lui aussi les valeurs
+# qu'il lit dans le .env, un préfixe à espace finale ne survivrait pas au voyage.
+COMMAND_PREFIX=$(elaguer "${COMMAND_PREFIX:-}")
 BOT_OWNER_ID=$(elaguer "${BOT_OWNER_ID:-}")
 PORT=$(elaguer "${PORT:-}")
 BIND_ADDRESS=$(elaguer "${BIND_ADDRESS:-}")
@@ -299,9 +410,23 @@ DOCKER_GID=$(elaguer "${DOCKER_GID:-}")
 
 NOM_DU_BOT=""
 
+# Une plateforme fournie mais illisible arrête tout de suite. Quasar refuse
+# lui-même de démarrer dans ce cas et il a raison : un bot Discord démarré là où
+# un bot Fluxer était attendu, ce sont deux jeux de données et deux publics
+# confondus, sans que rien ne le signale. Autant le dire avant la construction de
+# l'image plutôt qu'après.
+if [ -n "$QUASAR_PLATFORM" ] && ! plateforme_valide "$QUASAR_PLATFORM"; then
+    erreur "QUASAR_PLATFORM invalide : « ${QUASAR_PLATFORM} »."
+    info "Valeurs acceptées : discord, fluxer."
+    info "Laissée vide, c'est « discord » : une installation existante n'a rien à changer."
+    exit 1
+fi
+
 # ── Contrôles de forme ──────────────────────────────────────────
-# Un identifiant Discord est un « snowflake » : 17 à 20 chiffres. Le contrôle
-# évite surtout la confusion classique entre identifiant et nom d'utilisateur.
+# Un identifiant de plateforme est un « snowflake » : 17 à 20 chiffres. Discord
+# et Fluxer partagent ce format et la même époque (1420070400000), le contrôle
+# vaut donc pour les deux. Il évite surtout la confusion classique entre
+# identifiant et nom d'utilisateur.
 identifiant_valide() {
     case "$1" in
         ''|*[!0-9]*) return 1 ;;
@@ -319,17 +444,34 @@ port_valide() {
     return 1
 }
 
-# ── Contrôle du jeton auprès de Discord ─────────────────────────
+# ── Contrôle du jeton auprès de la plateforme ───────────────────
 # Un jeton faux est le premier mode d'échec du projet, et il coûtait jusqu'ici
 # plusieurs minutes de construction d'image sur un Raspberry Pi avant de se
-# manifester par un TokenInvalid en boucle. Discord répond en quelques centaines
-# de millisecondes ; autant demander avant de construire quoi que ce soit.
-# Codes de retour : 0 = jeton accepté, 1 = refusé par Discord, 2 = indéterminé
-# (curl absent, réseau coupé). L'indéterminé n'arrête JAMAIS l'installation.
+# manifester par un TokenInvalid en boucle (une fermeture 4004 côté Fluxer, tout
+# aussi bouclante). Les deux plateformes répondent en quelques centaines de
+# millisecondes ; autant demander avant de construire quoi que ce soit.
+# Codes de retour : 0 = jeton accepté, 1 = refusé par la plateforme, 2 =
+# indéterminé (curl absent, réseau coupé). L'indéterminé n'arrête JAMAIS
+# l'installation.
+#
+# Les deux routes se ressemblent parce que Fluxer reprend le schéma `Bot` de
+# Discord dans son en-tête d'autorisation :
+#   Discord : GET https://discord.com/api/v10/users/@me      -> champ username
+#   Fluxer  : GET <base REST>/oauth2/applications/@me        -> champ name
+# (applications.mdx, « Get current application » : la route n'accepte que le
+# schéma Bot, et rend l'application qui a émis le jeton.)
 verifier_jeton() {
-    local jeton=$1 corps code
+    local jeton=$1 corps code url champ
     if [ "${QUASAR_SKIP_TOKEN_CHECK:-0}" = "1" ]; then return 2; fi
     if ! command -v curl >/dev/null 2>&1; then return 2; fi
+
+    if [ "$(plateforme_courante)" = "fluxer" ]; then
+        url="$(base_rest_fluxer)/oauth2/applications/@me"
+        champ='"name"'
+    else
+        url="https://discord.com/api/v10/users/@me"
+        champ='"username"'
+    fi
 
     corps=$(mktemp 2>/dev/null || printf '%s' "/tmp/quasar-jeton.$$")
     # Le jeton passe par la configuration de curl sur son entrée, jamais par la
@@ -337,7 +479,7 @@ verifier_jeton() {
     # monde sur la machine (ps). L'entrée est rebranchée ici pour cette commande
     # seulement, le terminal des questions n'est pas perdu.
     code=$(curl --config - -sS -m 10 -o "$corps" -w '%{http_code}' <<CONFIG || printf '000'
-url = "https://discord.com/api/v10/users/@me"
+url = "${url}"
 header = "Authorization: Bot ${jeton}"
 header = "User-Agent: quasar-setup (https://github.com/venaciteam/quasar)"
 CONFIG
@@ -345,8 +487,9 @@ CONFIG
     case "$code" in
         200)
             # Pas de jq sur une machine neuve : le JSON est découpé, la valeur
-            # d'un champ est le 4e élément entre guillemets de sa ligne.
-            NOM_DU_BOT=$(tr ',{}' '\n\n\n' < "$corps" | grep '"username"' | head -1 | cut -d'"' -f4 || true)
+            # d'un champ est le 4e élément entre guillemets de sa ligne. Le motif
+            # porte ses guillemets : sans eux, « username » satisferait « name ».
+            NOM_DU_BOT=$(tr ',{}' '\n\n\n' < "$corps" | grep "$champ" | head -1 | cut -d'"' -f4 || true)
             rm -f "$corps"
             return 0
             ;;
@@ -362,16 +505,18 @@ CONFIG
 }
 
 annoncer_jeton() { # $1 = code de retour de verifier_jeton
+    local marque
+    marque=$(libelle_plateforme "$(plateforme_courante)")
     case "$1" in
         0)
             if [ -n "$NOM_DU_BOT" ]; then
                 ok "Connecté en tant que ${NOM_DU_BOT}"
             else
-                ok "Jeton accepté par Discord"
+                ok "Jeton accepté par ${marque}"
             fi
             ;;
         2)
-            doux "Jeton non vérifié (Discord injoignable ou contrôle désactivé) : je continue."
+            doux "Jeton non vérifié (${marque} injoignable ou contrôle désactivé) : je continue."
             ;;
     esac
 }
@@ -448,15 +593,43 @@ if [ -f .env ] && [ "$RECONFIGURER" -eq 0 ]; then
     if ! port_valide "$PORT"; then PORT=3000; fi
     BIND_ADDRESS=$(lire_valeur_env BIND_ADDRESS .env || true)
     if [ -z "$BIND_ADDRESS" ]; then BIND_ADDRESS=127.0.0.1; fi
-    DISCORD_CLIENT_ID=$(lire_valeur_env DISCORD_CLIENT_ID .env || true)
     CALLBACK_URL=$(lire_valeur_env CALLBACK_URL .env || true)
     QUASAR_MODE=$(lire_valeur_env QUASAR_MODE .env || true)
 
+    # La plateforme du .env fait foi : c'est ce fichier que lira le conteneur, pas
+    # l'environnement de ce shell. Absente, elle vaut « discord » — une
+    # installation d'avant la v5.0.0 relance ce script et retrouve sa plateforme.
+    PLATEFORME_ENV=$(minuscules "$(elaguer "$(lire_valeur_env QUASAR_PLATFORM .env || true)")")
+    if [ -n "$PLATEFORME_ENV" ]; then
+        if plateforme_valide "$PLATEFORME_ENV"; then
+            QUASAR_PLATFORM="$PLATEFORME_ENV"
+        else
+            avert "QUASAR_PLATFORM du .env est illisible : « ${PLATEFORME_ENV} »."
+            info "Quasar refusera de démarrer dessus. Valeurs acceptées : discord, fluxer."
+            QUASAR_PLATFORM=""
+        fi
+    fi
+    if [ -z "$QUASAR_PLATFORM" ]; then QUASAR_PLATFORM="$PLATEFORME_PAR_DEFAUT"; fi
+    MARQUE=$(libelle_plateforme "$QUASAR_PLATFORM")
+    doux "Plateforme : ${MARQUE}"
+
+    if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+        FLUXER_CLIENT_ID=$(lire_valeur_env FLUXER_CLIENT_ID .env || true)
+        FLUXER_API_BASE=$(lire_valeur_env FLUXER_API_BASE .env || true)
+        # Relu pour le seul récapitulatif : il annonce la commande à essayer, et
+        # « !help » serait faux sur une instance au préfixe personnalisé.
+        COMMAND_PREFIX=$(lire_valeur_env COMMAND_PREFIX .env || true)
+    else
+        DISCORD_CLIENT_ID=$(lire_valeur_env DISCORD_CLIENT_ID .env || true)
+    fi
+
     # Depuis la v4.9.0, Quasar refuse de démarrer si une variable vitale manque
     # ou est restée sur sa valeur d'exemple. Le dire ici évite de construire une
-    # image pour la voir refuser de démarrer ensuite.
+    # image pour la voir refuser de démarrer ensuite. Les variables contrôlées
+    # sont celles de LA plateforme du .env : réclamer un FLUXER_TOKEN à une
+    # installation Discord serait un faux signalement.
     MANQUANTES=""
-    for cle in DISCORD_TOKEN DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET CALLBACK_URL JWT_SECRET; do
+    for cle in $(variables_plateforme "$QUASAR_PLATFORM") CALLBACK_URL JWT_SECRET; do
         valeur=$(lire_valeur_env "$cle" .env || true)
         case "$valeur" in
             ''|your_bot_token_here|your_client_id_here|your_client_secret_here|change_this_to_a_random_string|quasar-secret)
@@ -472,13 +645,70 @@ if [ -f .env ] && [ "$RECONFIGURER" -eq 0 ]; then
 else
     titre "📝  Configuration du bot"
 
+    # ── Plateforme ──────────────────────────────────────────────
+    # PREMIÈRE question, parce que tout le reste en dépend : les jetons demandés,
+    # les adresses où aller les chercher, le lien d'invitation, l'endroit où
+    # déclarer l'adresse de retour. La poser après aurait obligé à redemander.
+    if [ -n "$QUASAR_PLATFORM" ]; then
+        doux "QUASAR_PLATFORM repris de l'environnement : ${QUASAR_PLATFORM}"
+    elif [ "$INTERACTIF" -eq 0 ]; then
+        QUASAR_PLATFORM="$PLATEFORME_PAR_DEFAUT"
+        doux "QUASAR_PLATFORM non fournie : plateforme « ${QUASAR_PLATFORM} », comme le code par défaut."
+    else
+        printf '\n'
+        info "La même base de code anime un bot Discord ou un bot Fluxer."
+        info "Un déploiement sert UNE plateforme : sa base de données appartient à cette"
+        info "plateforme, et aucune donnée ne passe de l'une à l'autre."
+        doux "Tenir les deux demande deux installations. Sur une même machine, la"
+        doux "seconde doit alors changer le nom du conteneur, le volume et le port"
+        doux "dans son docker-compose.yml, sinon elle prend la place de la première."
+        printf '\n'
+        choisir "Sur quelle plateforme ce bot va-t-il tourner ?" \
+            "Discord — commandes « / », boutons et fenêtres de saisie" \
+            "Fluxer — commandes préfixées « ! » et réactions (ni AutoMod, ni musique)"
+        if [ "$REPONSE_CHOIX" -eq 2 ]; then
+            QUASAR_PLATFORM="fluxer"
+        else
+            QUASAR_PLATFORM="discord"
+        fi
+        printf '\n'
+        ok "Plateforme : $(libelle_plateforme "$QUASAR_PLATFORM")"
+    fi
+    MARQUE=$(libelle_plateforme "$QUASAR_PLATFORM")
+
+    # Les deux jeux de secrets ne se mélangent JAMAIS dans un même .env. Une
+    # variable de l'autre plateforme trouvée dans l'environnement est donc
+    # écartée, et annoncée : la garder produirait un .env qui porte les secrets
+    # d'un déploiement dont ce n'est pas le rôle.
+    if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+        if [ -n "$DISCORD_TOKEN" ] || [ -n "$DISCORD_CLIENT_ID" ] || [ -n "$DISCORD_CLIENT_SECRET" ]; then
+            doux "Variables DISCORD_* présentes dans l'environnement : écartées, ce déploiement est Fluxer."
+        fi
+        DISCORD_TOKEN=""
+        DISCORD_CLIENT_ID=""
+        DISCORD_CLIENT_SECRET=""
+    else
+        if [ -n "$FLUXER_TOKEN" ] || [ -n "$FLUXER_CLIENT_ID" ] || [ -n "$FLUXER_CLIENT_SECRET" ]; then
+            doux "Variables FLUXER_* présentes dans l'environnement : écartées, ce déploiement est Discord."
+        fi
+        FLUXER_TOKEN=""
+        FLUXER_CLIENT_ID=""
+        FLUXER_CLIENT_SECRET=""
+        FLUXER_API_BASE=""
+        FLUXER_GATEWAY_URL=""
+        FLUXER_MEDIA_BASE=""
+        # Le préfixe ne sert qu'à la plateforme sans commandes d'application.
+        COMMAND_PREFIX=""
+    fi
+
     if [ "$INTERACTIF" -eq 0 ]; then
         # Mode non interactif : rien n'est demandé, tout vient de l'environnement.
-        # Le refus doit nommer ce qui manque, jamais se contenter d'échouer.
+        # Le refus doit nommer ce qui manque, jamais se contenter d'échouer — et
+        # nommer les variables de LA plateforme demandée, pas des trois autres.
         ABSENTES=""
-        [ -n "$DISCORD_TOKEN" ] || ABSENTES="${ABSENTES} DISCORD_TOKEN"
-        [ -n "$DISCORD_CLIENT_ID" ] || ABSENTES="${ABSENTES} DISCORD_CLIENT_ID"
-        [ -n "$DISCORD_CLIENT_SECRET" ] || ABSENTES="${ABSENTES} DISCORD_CLIENT_SECRET"
+        for cle in $(variables_plateforme "$QUASAR_PLATFORM"); do
+            if [ -z "${!cle}" ]; then ABSENTES="${ABSENTES} ${cle}"; fi
+        done
         if [ -n "$ABSENTES" ]; then
             if [ -t 0 ]; then
                 erreur "Mode non interactif : ces variables doivent être fournies :${ABSENTES}"
@@ -494,8 +724,7 @@ else
             info "  1. Relancer depuis un terminal :"
             info "       cd \"$RACINE\" && ./setup.sh"
             info "  2. Fournir la configuration par l'environnement :"
-            info "       DISCORD_TOKEN=… DISCORD_CLIENT_ID=… DISCORD_CLIENT_SECRET=… \\"
-            info "         ./setup.sh --non-interactive"
+            exemple_non_interactif
             printf '\n'
             info "La liste complète des variables : ./setup.sh --help"
             exit 1
@@ -503,61 +732,180 @@ else
         doux "Mode non interactif : la configuration est lue dans l'environnement."
     fi
 
-    # ── Jeton ───────────────────────────────────────────────────
-    if [ -n "$DISCORD_TOKEN" ]; then
-        doux "DISCORD_TOKEN repris de l'environnement."
-        verdict=0; verifier_jeton "$DISCORD_TOKEN" || verdict=$?
-        if [ "$verdict" -eq 1 ]; then
-            erreur "Discord refuse ce jeton (DISCORD_TOKEN)."
-            info "Developer Portal → votre application → Bot → Reset Token."
-            exit 1
-        fi
-        annoncer_jeton "$verdict"
-    else
-        info ""
-        doux "Le jeton se trouve dans le Developer Portal → votre application → Bot."
-        doux "Il ne s'affiche qu'une fois : « Reset Token » en fabrique un nouveau."
-        while :; do
-            lire_secret "Jeton du bot Discord"
-            DISCORD_TOKEN=$REPONSE
-            if [ -z "$DISCORD_TOKEN" ]; then
-                avert "Le jeton est obligatoire : sans lui, Quasar ne peut pas se connecter."
-                continue
+    if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+        # ── Instance Fluxer ─────────────────────────────────────
+        # Demandée AVANT le jeton : c'est cette adresse que le contrôle du jeton
+        # interroge. L'ordre inverse aurait vérifié le jeton de l'instance
+        # publique pour une installation qui vise la sienne.
+        if [ -n "$FLUXER_API_BASE" ] || [ -n "$FLUXER_GATEWAY_URL" ] || [ -n "$FLUXER_MEDIA_BASE" ]; then
+            doux "Adresses de l'instance reprises de l'environnement."
+            doux "  API       : $(base_rest_fluxer)"
+        elif [ "$INTERACTIF" -eq 1 ]; then
+            printf '\n'
+            choisir "Quelle instance Fluxer ?" \
+                "fluxer.app, l'instance publique" \
+                "Une instance Fluxer auto-hébergée"
+            if [ "$REPONSE_CHOIX" -eq 2 ]; then
+                printf '\n'
+                doux "Trois adresses, lisibles dans le document de découverte de l'instance :"
+                doux "GET <origine de l'instance>/.well-known/fluxer, objet « endpoints »."
+                doux "Un bot lit « api_public », pas « api » : les deux peuvent différer."
+                printf '\n'
+                doux "La base REST doit être VERSIONNÉE : « api_public » suivi de /v1."
+                lire_ligne "Base REST de l'API" "https://api.fluxer.app/v1"
+                FLUXER_API_BASE=$REPONSE
+                doux "« gateway », suivi de ?v=1. Le paramètre « v » doit valoir 1 : toute"
+                doux "autre valeur ferme la connexion avant le premier message (4012)."
+                lire_ligne "URL de la passerelle" "wss://gateway.fluxer.app/?v=1"
+                FLUXER_GATEWAY_URL=$REPONSE
+                doux "« media ». Ce proxy sert les avatars affichés dans les embeds : une"
+                doux "valeur fausse ne casse rien, elle rend seulement les avatars introuvables."
+                lire_ligne "Base du proxy média" "https://media.fluxer.app"
+                FLUXER_MEDIA_BASE=$REPONSE
             fi
-            verdict=0; verifier_jeton "$DISCORD_TOKEN" || verdict=$?
+        fi
+
+        # ── Jeton ───────────────────────────────────────────────
+        if [ -n "$FLUXER_TOKEN" ]; then
+            doux "FLUXER_TOKEN repris de l'environnement."
+            verdict=0; verifier_jeton "$FLUXER_TOKEN" || verdict=$?
             if [ "$verdict" -eq 1 ]; then
-                avert "Discord refuse ce jeton. Vérifiez qu'il s'agit bien du jeton du BOT,"
-                info "et non du « Client Secret » de l'application, puis recommencez."
-                continue
+                erreur "Fluxer refuse ce jeton (FLUXER_TOKEN)."
+                info "Réglages du compte → « Applications » → votre application →"
+                info "« Secrets & tokens » → « Bot token » → « Regenerate »."
+                exit 1
             fi
             annoncer_jeton "$verdict"
-            break
-        done
-    fi
+        else
+            info ""
+            doux "Le jeton du bot se trouve dans Fluxer, dans les réglages de votre compte :"
+            doux "catégorie « Developer » → « Applications » → votre application →"
+            doux "« Secrets & tokens » → « Bot token »."
+            doux "Il a la forme « identifiant de l'application » + un point + un secret."
+            doux "« Regenerate » en fabrique un nouveau, et met fin aux sessions en cours."
+            while :; do
+                lire_secret "Jeton du bot Fluxer"
+                FLUXER_TOKEN=$REPONSE
+                if [ -z "$FLUXER_TOKEN" ]; then
+                    avert "Le jeton est obligatoire : sans lui, Quasar ne peut pas se connecter."
+                    continue
+                fi
+                verdict=0; verifier_jeton "$FLUXER_TOKEN" || verdict=$?
+                if [ "$verdict" -eq 1 ]; then
+                    avert "Fluxer refuse ce jeton. Vérifiez qu'il s'agit bien du « Bot token »,"
+                    info "et non du « Client secret » de la même fiche, puis recommencez."
+                    continue
+                fi
+                annoncer_jeton "$verdict"
+                break
+            done
+        fi
 
-    # ── Identifiant et secret de l'application ──────────────────
-    if [ -n "$DISCORD_CLIENT_ID" ]; then
-        doux "DISCORD_CLIENT_ID repris de l'environnement."
-    else
-        doux "Developer Portal → votre application → OAuth2 → Client ID."
-        while :; do
-            lire_ligne "Identifiant de l'application (Client ID)"
-            DISCORD_CLIENT_ID=$REPONSE
-            if identifiant_valide "$DISCORD_CLIENT_ID"; then break; fi
-            avert "Un Client ID est une suite de 17 à 20 chiffres."
-        done
-    fi
+        # ── Identifiant et secret de l'application ──────────────
+        # Le jeton PORTE l'identifiant de l'application : sa forme est
+        # « <identifiant>.<secret> » (applications.mdx, « Bot token format »).
+        # Il est donc proposé par défaut, et reste modifiable — une personne qui
+        # colle son jeton n'a pas à retourner chercher un nombre dans l'interface.
+        ID_DEDUIT=""
+        case "$FLUXER_TOKEN" in
+            *.*) ID_DEDUIT=${FLUXER_TOKEN%%.*} ;;
+        esac
+        if ! identifiant_valide "$ID_DEDUIT"; then ID_DEDUIT=""; fi
 
-    if [ -n "$DISCORD_CLIENT_SECRET" ]; then
-        doux "DISCORD_CLIENT_SECRET repris de l'environnement."
+        if [ -n "$FLUXER_CLIENT_ID" ]; then
+            doux "FLUXER_CLIENT_ID repris de l'environnement."
+        else
+            doux "« Application ID », en tête de la fiche de votre application."
+            if [ -n "$ID_DEDUIT" ]; then
+                doux "Je le déduis du jeton que vous venez de donner : gardez la valeur proposée."
+            fi
+            while :; do
+                lire_ligne "Identifiant de l'application (Application ID)" "$ID_DEDUIT"
+                FLUXER_CLIENT_ID=$REPONSE
+                if identifiant_valide "$FLUXER_CLIENT_ID"; then break; fi
+                avert "Un Application ID est une suite de 17 à 20 chiffres."
+            done
+        fi
+
+        if [ -n "$FLUXER_CLIENT_SECRET" ]; then
+            doux "FLUXER_CLIENT_SECRET repris de l'environnement."
+        else
+            doux "« Secrets & tokens » → « Client secret », dans la même fiche."
+            while :; do
+                lire_secret "Secret de l'application (Client secret)"
+                FLUXER_CLIENT_SECRET=$REPONSE
+                if [ -n "$FLUXER_CLIENT_SECRET" ]; then break; fi
+                avert "Le secret est obligatoire : sans lui, la connexion au dashboard échoue."
+            done
+        fi
+
+        # ── Préfixe des commandes ───────────────────────────────
+        if [ -n "$COMMAND_PREFIX" ]; then
+            doux "COMMAND_PREFIX repris de l'environnement : ${COMMAND_PREFIX}"
+        elif [ "$INTERACTIF" -eq 1 ]; then
+            printf '\n'
+            doux "Fluxer n'a pas de commandes d'application : les commandes de Quasar y"
+            doux "sont des messages préfixés — « !warn @membre » au lieu de « /warn »."
+            lire_ligne "Préfixe des commandes" "!"
+            COMMAND_PREFIX=$REPONSE
+        fi
     else
-        doux "Developer Portal → votre application → OAuth2 → Client Secret."
-        while :; do
-            lire_secret "Secret de l'application (Client Secret)"
-            DISCORD_CLIENT_SECRET=$REPONSE
-            if [ -n "$DISCORD_CLIENT_SECRET" ]; then break; fi
-            avert "Le secret est obligatoire : sans lui, la connexion au dashboard échoue."
-        done
+        # ── Jeton ───────────────────────────────────────────────
+        if [ -n "$DISCORD_TOKEN" ]; then
+            doux "DISCORD_TOKEN repris de l'environnement."
+            verdict=0; verifier_jeton "$DISCORD_TOKEN" || verdict=$?
+            if [ "$verdict" -eq 1 ]; then
+                erreur "Discord refuse ce jeton (DISCORD_TOKEN)."
+                info "Developer Portal → votre application → Bot → Reset Token."
+                exit 1
+            fi
+            annoncer_jeton "$verdict"
+        else
+            info ""
+            doux "Le jeton se trouve dans le Developer Portal → votre application → Bot."
+            doux "Il ne s'affiche qu'une fois : « Reset Token » en fabrique un nouveau."
+            while :; do
+                lire_secret "Jeton du bot Discord"
+                DISCORD_TOKEN=$REPONSE
+                if [ -z "$DISCORD_TOKEN" ]; then
+                    avert "Le jeton est obligatoire : sans lui, Quasar ne peut pas se connecter."
+                    continue
+                fi
+                verdict=0; verifier_jeton "$DISCORD_TOKEN" || verdict=$?
+                if [ "$verdict" -eq 1 ]; then
+                    avert "Discord refuse ce jeton. Vérifiez qu'il s'agit bien du jeton du BOT,"
+                    info "et non du « Client Secret » de l'application, puis recommencez."
+                    continue
+                fi
+                annoncer_jeton "$verdict"
+                break
+            done
+        fi
+
+        # ── Identifiant et secret de l'application ──────────────
+        if [ -n "$DISCORD_CLIENT_ID" ]; then
+            doux "DISCORD_CLIENT_ID repris de l'environnement."
+        else
+            doux "Developer Portal → votre application → OAuth2 → Client ID."
+            while :; do
+                lire_ligne "Identifiant de l'application (Client ID)"
+                DISCORD_CLIENT_ID=$REPONSE
+                if identifiant_valide "$DISCORD_CLIENT_ID"; then break; fi
+                avert "Un Client ID est une suite de 17 à 20 chiffres."
+            done
+        fi
+
+        if [ -n "$DISCORD_CLIENT_SECRET" ]; then
+            doux "DISCORD_CLIENT_SECRET repris de l'environnement."
+        else
+            doux "Developer Portal → votre application → OAuth2 → Client Secret."
+            while :; do
+                lire_secret "Secret de l'application (Client Secret)"
+                DISCORD_CLIENT_SECRET=$REPONSE
+                if [ -n "$DISCORD_CLIENT_SECRET" ]; then break; fi
+                avert "Le secret est obligatoire : sans lui, la connexion au dashboard échoue."
+            done
+        fi
     fi
 
     # ── Port ────────────────────────────────────────────────────
@@ -628,8 +976,10 @@ else
         CALLBACK_URL="$CALLBACK_DEFAUT"
     else
         printf '\n'
-        doux "Adresse de retour de la connexion Discord. Gardez la valeur proposée,"
+        doux "Adresse de retour de la connexion ${MARQUE}. Gardez la valeur proposée,"
         doux "sauf si Quasar vit derrière un nom de domaine ou un reverse proxy."
+        doux "Le chemin /callback est le même sur les deux plateformes, et cette adresse"
+        doux "devra être déclarée à l'identique dans l'application (rappelé à la fin)."
         lire_ligne "Adresse de retour OAuth2" "$CALLBACK_DEFAUT"
         CALLBACK_URL=$REPONSE
     fi
@@ -639,16 +989,21 @@ else
         doux "BOT_OWNER_ID repris de l'environnement."
     elif [ "$INTERACTIF" -eq 1 ]; then
         printf '\n'
-        doux "Votre identifiant Discord ouvre les fonctions qui portent sur l'instance"
+        doux "Votre identifiant ${MARQUE} ouvre les fonctions qui portent sur l'instance"
         doux "entière : statut du bot, suspension d'un serveur, compteur de serveurs."
-        doux "Pour le trouver : Discord → Paramètres → Avancés → Mode développeur,"
-        doux "puis clic droit sur votre profil → Copier l'identifiant."
+        if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+            doux "Pour le trouver : Réglages → « Advanced » → « Enable developer mode »,"
+            doux "puis clic droit sur votre profil → « Copy user ID »."
+        else
+            doux "Pour le trouver : Discord → Paramètres → Avancés → Mode développeur,"
+            doux "puis clic droit sur votre profil → Copier l'identifiant."
+        fi
         while :; do
-            lire_ligne "Votre identifiant Discord (facultatif, Entrée pour passer)"
+            lire_ligne "Votre identifiant ${MARQUE} (facultatif, Entrée pour passer)"
             BOT_OWNER_ID=$REPONSE
             if [ -z "$BOT_OWNER_ID" ] || identifiant_valide "$BOT_OWNER_ID"; then break; fi
-            avert "Un identifiant Discord est une suite de 17 à 20 chiffres."
-            info "Ce n'est pas le nom d'utilisateur : il faut le Mode développeur pour le copier."
+            avert "Un identifiant ${MARQUE} est une suite de 17 à 20 chiffres."
+            info "Ce n'est pas le nom d'utilisateur : il faut le mode développeur pour le copier."
         done
     fi
 
@@ -718,9 +1073,17 @@ fi
 # écrit telles quelles.
 valeur_pilotee() { # $1 clé → écrit la valeur, ou rend 1 si la clé est étrangère
     case "$1" in
+        QUASAR_PLATFORM)       printf '%s' "$QUASAR_PLATFORM" ;;
         DISCORD_TOKEN)         printf '%s' "$DISCORD_TOKEN" ;;
         DISCORD_CLIENT_ID)     printf '%s' "$DISCORD_CLIENT_ID" ;;
         DISCORD_CLIENT_SECRET) printf '%s' "$DISCORD_CLIENT_SECRET" ;;
+        FLUXER_TOKEN)          printf '%s' "$FLUXER_TOKEN" ;;
+        FLUXER_CLIENT_ID)      printf '%s' "$FLUXER_CLIENT_ID" ;;
+        FLUXER_CLIENT_SECRET)  printf '%s' "$FLUXER_CLIENT_SECRET" ;;
+        FLUXER_API_BASE)       printf '%s' "$FLUXER_API_BASE" ;;
+        FLUXER_GATEWAY_URL)    printf '%s' "$FLUXER_GATEWAY_URL" ;;
+        FLUXER_MEDIA_BASE)     printf '%s' "$FLUXER_MEDIA_BASE" ;;
+        COMMAND_PREFIX)        printf '%s' "$COMMAND_PREFIX" ;;
         CALLBACK_URL)          printf '%s' "$CALLBACK_URL" ;;
         JWT_SECRET)            printf '%s' "$JWT_SECRET" ;;
         BOT_OWNER_ID)          printf '%s' "$BOT_OWNER_ID" ;;
@@ -733,10 +1096,19 @@ valeur_pilotee() { # $1 clé → écrit la valeur, ou rend 1 si la clé est étr
 }
 
 # Les clés dont la valeur est vide n'ont rien à faire dans le fichier si elles
-# n'y figuraient pas déjà : QUASAR_MODE et DOCKER_GID sont facultatifs.
+# n'y figuraient pas déjà : QUASAR_MODE, DOCKER_GID, les adresses d'une instance
+# Fluxer auto-hébergée et le préfixe des commandes sont facultatifs.
+#
+# Les trois secrets de la plateforme NON retenue, eux, sont écrits VIDES et non
+# omis : le fichier d'exemple porte « DISCORD_TOKEN=your_bot_token_here », et
+# laisser cette valeur en place sur une installation Fluxer donnerait un .env qui
+# semble configuré pour les deux. Une ligne vide dit ce qui est vrai — cette
+# plateforme n'est pas celle de ce déploiement — et suffit à qui voudrait
+# basculer plus tard.
 cle_facultative() {
     case "$1" in
         QUASAR_MODE|DOCKER_GID) return 0 ;;
+        FLUXER_API_BASE|FLUXER_GATEWAY_URL|FLUXER_MEDIA_BASE|COMMAND_PREFIX) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -785,7 +1157,9 @@ ecrire_env() {
     # Les clés que le fichier d'exemple ne contient pas (DOCKER_GID en premier)
     # sont ajoutées à la fin, avec de quoi comprendre à quoi elles servent.
     local complement=""
-    for cle in DISCORD_TOKEN DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET CALLBACK_URL \
+    for cle in QUASAR_PLATFORM DISCORD_TOKEN DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET \
+               FLUXER_TOKEN FLUXER_CLIENT_ID FLUXER_CLIENT_SECRET FLUXER_API_BASE \
+               FLUXER_GATEWAY_URL FLUXER_MEDIA_BASE COMMAND_PREFIX CALLBACK_URL \
                JWT_SECRET BOT_OWNER_ID PORT BIND_ADDRESS DOCKER_GID QUASAR_MODE; do
         case " $vues " in
             *" $cle "*) continue ;;
@@ -804,6 +1178,10 @@ ecrire_env() {
             printf '# DOCKER_GID : groupe propriétaire du socket Docker sur CETTE machine.\n'
             printf '# docker-compose.yml le passe à la construction de l'"'"'image pour que la\n'
             printf '# mise à jour depuis le dashboard ait le droit de parler à Docker.\n'
+            printf '#\n'
+            printf '# QUASAR_PLATFORM : la plateforme de CE déploiement, discord ou fluxer.\n'
+            printf '# En changer revient à changer de bot : la base de données de ce dossier\n'
+            printf '# appartient à la plateforme pour laquelle elle a été remplie.\n'
             printf '%s' "$complement"
         } >> "$temporaire"
     fi
@@ -854,23 +1232,48 @@ else
 fi
 
 # ── Invitation ──────────────────────────────────────────────────
-# AVANT le démarrage, et non après : les commandes slash sont déployées sur les
-# serveurs présents dans le cache au moment où le bot se connecte. Un bot invité
-# après coup n'a donc aucune commande tant qu'il n'a pas redémarré.
-if [ -z "$DISCORD_CLIENT_ID" ] && [ -f .env ]; then
-    DISCORD_CLIENT_ID=$(lire_valeur_env DISCORD_CLIENT_ID .env || true)
-fi
+# AVANT le démarrage, et non après : côté Discord, les commandes slash sont
+# déployées sur les serveurs présents dans le cache au moment où le bot se
+# connecte. Un bot invité après coup n'a donc aucune commande tant qu'il n'a pas
+# redémarré. Côté Fluxer, la question ne se pose pas : les commandes y sont des
+# messages préfixés, il n'y a rien à déployer.
+#
+# Le lien dépend de la plateforme, et c'est api/routes/bot.js qui en fait foi :
+# même paramètres, mais l'adresse d'autorisation de Fluxer vit sous son API, et
+# son registre de scopes ne connaît pas `applications.commands` — un scope
+# inconnu fait rejeter toute la demande, le lien serait mort.
 LIEN_INVITATION=""
-if [ -n "$DISCORD_CLIENT_ID" ]; then
-    LIEN_INVITATION="https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&permissions=8&scope=bot+applications.commands"
+if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+    if [ -z "$FLUXER_CLIENT_ID" ] && [ -f .env ]; then
+        FLUXER_CLIENT_ID=$(lire_valeur_env FLUXER_CLIENT_ID .env || true)
+    fi
+    if [ -n "$FLUXER_CLIENT_ID" ]; then
+        LIEN_INVITATION="$(base_rest_fluxer)/oauth2/authorize?client_id=${FLUXER_CLIENT_ID}&permissions=8&scope=bot"
+    fi
+else
+    if [ -z "$DISCORD_CLIENT_ID" ] && [ -f .env ]; then
+        DISCORD_CLIENT_ID=$(lire_valeur_env DISCORD_CLIENT_ID .env || true)
+    fi
+    if [ -n "$DISCORD_CLIENT_ID" ]; then
+        LIEN_INVITATION="https://discord.com/oauth2/authorize?client_id=${DISCORD_CLIENT_ID}&permissions=8&scope=bot+applications.commands"
+    fi
+fi
+
+if [ -n "$LIEN_INVITATION" ]; then
     titre "🤝  Invitation du bot"
     info "Ouvrez ce lien pour ajouter le bot à votre serveur :"
     printf '\n'
     printf '   %s%s%s\n' "$C_TITRE" "$LIEN_INVITATION" "$C_FIN"
     printf '\n'
-    doux "Permissions demandées : Administrateur (8), scopes bot et applications.commands."
-    doux "Invitez le bot MAINTENANT : ses commandes slash sont déployées sur les"
-    doux "serveurs qu'il connaît en se connectant."
+    if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+        doux "Permissions demandées : Administrateur (8), scope bot."
+        doux "Si « Require OAuth2 code grant » est activé sur votre application, ce lien"
+        doux "est refusé : désactivez la case, ou l'invitation réclamera un code."
+    else
+        doux "Permissions demandées : Administrateur (8), scopes bot et applications.commands."
+        doux "Invitez le bot MAINTENANT : ses commandes slash sont déployées sur les"
+        doux "serveurs qu'il connaît en se connectant."
+    fi
     if [ "$INTERACTIF" -eq 1 ]; then
         printf '\n'
         printf '   %sAppuyez sur Entrée quand c'"'"'est fait (ou pour passer)%s ' "$C_QUESTION" "$C_FIN"
@@ -977,10 +1380,20 @@ printf '%s   ══════════════════════�
 printf '%s     ✅  Quasar est en ligne%s\n' "$C_OK" "$C_FIN"
 printf '%s   ═══════════════════════════════════%s\n' "$C_OK" "$C_FIN"
 printf '\n'
+printf '   Plateforme: %s%s%s\n' "$C_TITRE" "$MARQUE" "$C_FIN"
 printf '   Dashboard : %s%s%s\n' "$C_TITRE" "$URL_DASHBOARD" "$C_FIN"
 printf '   Journaux  : %sdocker logs -f quasar%s\n' "$C_TITRE" "$C_FIN"
 printf '   Arrêt     : %sdocker compose stop%s\n' "$C_TITRE" "$C_FIN"
 printf '\n'
+
+# Le premier réflexe, sur Fluxer, est de taper « /help » et de conclure que le
+# bot est muet. Autant donner la commande qui marche.
+if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+    printf '   Première commande à essayer sur votre serveur : %s%shelp%s\n' \
+        "$C_TITRE" "${COMMAND_PREFIX:-!}" "$C_FIN"
+    doux "Fluxer n'a pas de commandes « / » : celles de Quasar sont des messages préfixés."
+    printf '\n'
+fi
 
 if [ "$BIND_ADDRESS" != "0.0.0.0" ] && [ "$EST_DISTANT" -eq 1 ]; then
     info "Le dashboard n'écoute que sur cette machine. Depuis votre ordinateur,"
@@ -994,8 +1407,17 @@ if [ "$BIND_ADDRESS" != "0.0.0.0" ] && [ "$EST_DISTANT" -eq 1 ]; then
 fi
 
 if [ -n "${CALLBACK_URL:-}" ]; then
-    info "À déclarer une fois dans le Developer Portal → OAuth2 → Redirects,"
-    info "sinon la connexion au dashboard sera refusée :"
+    # Le chemin est le même sur les deux plateformes ; l'endroit où le déclarer,
+    # non. Une adresse non déclarée fait refuser la connexion au dashboard, et le
+    # refus vient de la plateforme : rien n'apparaît dans les journaux de Quasar.
+    if [ "$QUASAR_PLATFORM" = "fluxer" ]; then
+        info "À déclarer une fois dans Fluxer — réglages du compte → « Applications »"
+        info "→ votre application → « Application information » → « Redirect URIs »,"
+        info "sinon la connexion au dashboard sera refusée :"
+    else
+        info "À déclarer une fois dans le Developer Portal → OAuth2 → Redirects,"
+        info "sinon la connexion au dashboard sera refusée :"
+    fi
     printf '   %s%s%s\n' "$C_TITRE" "$CALLBACK_URL" "$C_FIN"
     printf '\n'
 fi

@@ -24,13 +24,59 @@
 const express = require('express');
 const { requireAuth, requireGuildAdmin } = require('../middleware/auth');
 const { getDb, SCOPE_COLUMNS } = require('../services/database');
-const {
-    LIMITS, TRIGGERS, ACTIONS, PRESETS,
-    checkPermissions, describeDiscordError, syncGuildRules,
-    countByTrigger, serializeRule, findRow, nowSeconds,
-} = require('../../bot/utils/automodSync');
+const plateforme = require('../services/plateforme');
 
 const router = express.Router({ mergeParams: true });
+
+// ═══════════════════════════════════════════════════════════════
+//  Chargement PARESSEUX du miroir AutoMod
+//
+//  `bot/utils/automodSync.js` est une exception nommée du test d'étanchéité :
+//  il importe discord.js parce qu'il pilote les règles NATIVES de Discord, qui
+//  n'ont aucun équivalent ailleurs (DA §2.2). Importé en tête de ce fichier, il
+//  faisait charger toute la bibliothèque au démarrage — y compris dans un
+//  processus Fluxer, qui n'a rien à en faire.
+//
+//  Les symboles sont donc résolus au premier appel, et seulement après le garde
+//  de capacité ci-dessous : sur une plateforme sans AutoMod, discord.js n'est
+//  jamais évalué par cette route.
+// ═══════════════════════════════════════════════════════════════
+
+let LIMITS;
+let TRIGGERS;
+let ACTIONS;
+let PRESETS;
+let checkPermissions;
+let describeDiscordError;
+let syncGuildRules;
+let countByTrigger;
+let serializeRule;
+let findRow;
+let nowSeconds;
+
+function chargerMiroirAutomod() {
+    if (LIMITS) return;
+    ({
+        LIMITS, TRIGGERS, ACTIONS, PRESETS,
+        checkPermissions, describeDiscordError, syncGuildRules,
+        countByTrigger, serializeRule, findRow, nowSeconds,
+    } = require('../../bot/utils/automodSync'));
+}
+
+// Garde de capacité, devant TOUTES les routes de ce module. 404 et non 403 : la
+// fonctionnalité n'existe pas sur cette plateforme, elle n'est pas refusée à
+// cette personne. Le dashboard masque déjà l'onglet ; ce garde ferme l'API, qui
+// est le seul contrat qui compte.
+router.use((req, res, next) => {
+    if (!plateforme.capacites(req).automod) {
+        return res.status(404).json({
+            error: 'Cette plateforme n\'a pas de modération automatique native : ce module n\'y existe pas.',
+            hint: 'Les autres protections de la page (escalade des avertissements, anti-raid, salon piège) fonctionnent normalement.',
+        });
+    }
+    chargerMiroirAutomod();
+    next();
+});
 
 const SNOWFLAKE = /^\d{17,20}$/;
 
@@ -48,8 +94,10 @@ const UNSUPPORTED_SCOPE_KEYS = SCOPE_KEYS.filter(k => !MANAGED_SCOPE_KEYS.includ
  * @returns {{ guild: object|null, error: { status: number, body: object }|null }}
  */
 function resolveGuild(req) {
-    const client = req.app.get('discordClient');
-    const guild = client?.guilds?.cache?.get(req.params.guildId);
+    // Serveur NATIF, et c'est assumé : l'AutoMod de Discord n'a pas d'équivalent
+    // portable, et ce routeur est gardé par `capacites.automod`. Cf. la note de
+    // `plateforme.guildeNative`.
+    const guild = plateforme.guildeNative(req, req.params.guildId);
     if (!guild) {
         return {
             guild: null,
@@ -265,6 +313,8 @@ function parseRulePayload(body, trigger, perms) {
     if (exemptChannels.error) return { error: exemptChannels.error };
 
     // ─── Journalisation Quasar (inconnue de Discord) ───
+    // Forme seule ici. Le SCELLEMENT au serveur est fait par les deux routes
+    // d'écriture, qui connaissent la valeur déjà en base — cf. `scellerSalons`.
     const logChannel = readOptionalChannelId(body.log_channel, 'Le salon des journaux');
     if (logChannel.error) return { error: logChannel.error };
 
@@ -278,6 +328,10 @@ function parseRulePayload(body, trigger, perms) {
             exemptRoles: exemptRoles.value,
             exemptChannels: exemptChannels.value,
             logChannel: logChannel.value,
+            // Repris hors de `actions` pour être SCELLÉ au serveur (cf.
+            // `scellerSalons`). La valeur qui part chez Discord reste celle de
+            // `actions[].metadata.channel` : ce champ ne sert qu'au contrôle.
+            alertChannelId: alert.value,
             responseMessage,
         },
     };
@@ -308,6 +362,36 @@ function buildCatalog() {
         // l'explique au lieu de le passer sous silence.
         unsupported_scope: UNSUPPORTED_SCOPE_KEYS,
     };
+}
+
+/**
+ * Scelle au serveur de l'URL les deux salons que ce module stocke ou transmet.
+ *
+ * `log_channel` est la journalisation propre à Quasar : un identifiant étranger
+ * y déverserait les déclenchements de CE serveur. `alert_channel_id` part chez
+ * Discord dans la règle elle-même — Discord le refuserait, mais l'erreur
+ * remonterait en 400 opaque au lieu de nommer le champ.
+ *
+ * `actuel` porte les valeurs déjà en base, pour qu'un enregistrement qui ne
+ * change pas de salon ne dépende pas de l'état de la connexion.
+ *
+ * @returns {Promise<null|{status: number, body: object}>} `null` = rien à
+ *   redire ; sinon le refus à renvoyer tel quel.
+ */
+async function scellerSalons(req, data, actuel = {}) {
+    const champs = [
+        ['logChannel', data.logChannel, actuel.log_channel, 'Le salon des journaux'],
+        ['alertChannelId', data.alertChannelId, actuel.alert_channel_id, 'Le salon d\'alerte'],
+    ];
+    for (const [cle, valeur, reference, libelle] of champs) {
+        if (valeur === undefined) continue;
+        const scelle = await plateforme.exigerCanalDuServeur(req, valeur, { champ: libelle, actuel: reference });
+        if (scelle.error) return { status: scelle.status || 400, body: { error: scelle.error } };
+        data[cle] = scelle.value;
+    }
+    // `alertChannelId` est déjà recopié dans `data.actions` par
+    // `parseRulePayload` : il n'y a rien à réécrire, seulement à refuser.
+    return null;
 }
 
 function buildQuotas(counts) {
@@ -375,6 +459,9 @@ router.post('/', requireAuth, requireGuildAdmin, async (req, res) => {
 
     const parsed = parseRulePayload(req.body, trigger, perms);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const refus = await scellerSalons(req, parsed.data);
+    if (refus) return res.status(refus.status).json(refus.body);
 
     let discordRules;
     try {
@@ -453,6 +540,9 @@ router.put('/:id', requireAuth, requireGuildAdmin, async (req, res) => {
     const parsed = parseRulePayload(req.body, trigger, perms);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const { data } = parsed;
+
+    const refus = await scellerSalons(req, data, row);
+    if (refus) return res.status(refus.status).json(refus.body);
 
     // On repart de l'état réel de Discord : la règle a pu être supprimée depuis le
     // chargement de la page, et le miroir mis à jour ici évite d'éditer dans le vide.

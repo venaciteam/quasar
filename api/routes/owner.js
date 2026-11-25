@@ -15,6 +15,7 @@
 const express = require('express');
 const { requireAuth, requireOwner } = require('../middleware/auth');
 const { getDb } = require('../services/database');
+const plateforme = require('../services/plateforme');
 const router = express.Router();
 
 // Ligne technique de la table `guilds` (héritée de la migration atom→quasar) :
@@ -36,9 +37,9 @@ router.use(requireAuth, requireOwner);
 // greffe le statut de suspension lu en base. La ligne `__quasar_instance_id`
 // n'est jamais dans le cache Discord, donc naturellement exclue du compte ;
 // on l'exclut aussi explicitement du repli base, par sécurité.
-function buildGuildList(req) {
+async function buildGuildList(req) {
     const db = getDb();
-    const client = req.app.get('discordClient');
+    const api = plateforme.api(req);
 
     // Statuts de suspension (+ noms) connus en base, indexés par guild_id.
     // Try/catch : les colonnes suspended* peuvent manquer avant la migration lot2
@@ -62,24 +63,30 @@ function buildGuildList(req) {
         } catch { /* table absente au tout premier boot */ }
     }
 
+    // `listerGuildes()` distingue « pas encore connecté » (null) de « connecté,
+    // aucun serveur » ([]) — ce que le cache de discord.js ne savait pas dire.
+    // Seul le premier cas justifie le repli sur la base.
+    const connectees = api ? await api.listerGuildes().catch(() => null) : null;
+
     let servers;
-    if (client?.guilds?.cache) {
+    if (connectees) {
         // Cas nominal : on liste les serveurs réellement connectés.
-        servers = [...client.guilds.cache.values()].map(g => {
-            const s = dbRows.get(g.id) || {};
+        servers = await Promise.all(connectees.map(async (id) => {
+            const s = dbRows.get(id) || {};
+            const guilde = await api.obtenirGuilde(id).catch(() => null);
             return {
-                id: g.id,
-                name: g.name,
-                memberCount: g.memberCount,
+                id,
+                name: guilde?.nom ?? s.name ?? id,
+                memberCount: guilde?.membreCount ?? undefined,
                 suspended: !!s.suspended,
                 suspended_at: s.suspended_at || null,
                 suspended_reason: s.suspended_reason || null,
             };
-        });
+        }));
     } else {
-        // Repli si le client Discord n'est pas prêt : liste depuis la base, sans
-        // memberCount. Permet à l'UI owner de rester fonctionnelle (suspendre /
-        // réactiver) même pendant une brève indisponibilité du client.
+        // Repli si le bot n'est pas prêt : liste depuis la base, sans memberCount.
+        // Permet à l'UI owner de rester fonctionnelle (suspendre / réactiver)
+        // même pendant une brève indisponibilité de la connexion.
         servers = [...dbRows.values()].map(r => ({
             id: r.guild_id,
             name: r.name || r.guild_id,
@@ -102,9 +109,9 @@ function buildGuildList(req) {
 }
 
 // GET /api/owner/guilds — liste des serveurs connectés + compteur + seuil.
-router.get('/guilds', (req, res) => {
+router.get('/guilds', async (req, res) => {
     try {
-        res.json(buildGuildList(req));
+        res.json(await buildGuildList(req));
     } catch (err) {
         console.error('[Quasar] Erreur GET /api/owner/guilds:', err);
         res.status(500).json({ error: 'Erreur serveur' });
@@ -112,9 +119,9 @@ router.get('/guilds', (req, res) => {
 });
 
 // GET /api/owner/stats — projection du compteur seul (affichage léger).
-router.get('/stats', (req, res) => {
+router.get('/stats', async (req, res) => {
     try {
-        const { serverCount, vigilanceThreshold, warn } = buildGuildList(req);
+        const { serverCount, vigilanceThreshold, warn } = await buildGuildList(req);
         res.json({ serverCount, vigilanceThreshold, warn });
     } catch (err) {
         console.error('[Quasar] Erreur GET /api/owner/stats:', err);
@@ -124,7 +131,7 @@ router.get('/stats', (req, res) => {
 
 // POST /api/owner/guilds/:guildId/suspend { reason } — coupure ciblée.
 // Motif OBLIGATOIRE (traçabilité). Ne supprime rien, ne retire pas le bot.
-router.post('/guilds/:guildId/suspend', (req, res) => {
+router.post('/guilds/:guildId/suspend', async (req, res) => {
     try {
         const guildId = req.params.guildId;
         const reason = (req.body?.reason || '').trim();
@@ -144,9 +151,10 @@ router.post('/guilds/:guildId/suspend', (req, res) => {
         // Garantir l'existence de la ligne (normalement créée au guildCreate).
         // Évite qu'une course fasse échouer l'UPDATE sur un serveur pourtant connu.
         // On récupère le nom depuis le cache si disponible.
-        const cached = req.app.get('discordClient')?.guilds?.cache?.get(guildId);
+        const api = plateforme.api(req);
+        const connue = api ? await api.obtenirGuilde(guildId).catch(() => null) : null;
         db.prepare('INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)')
-            .run(guildId, cached?.name || null);
+            .run(guildId, connue?.nom || null);
 
         db.prepare(
             'UPDATE guilds SET suspended = 1, suspended_at = ?, suspended_reason = ? WHERE guild_id = ?'

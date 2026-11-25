@@ -7,7 +7,9 @@
 //    `public` : ni la vitrine seule (`site`), ni une instance auto-hébergée
 //    (`bot`) ne l'exposent ;
 //  - un robot pas encore connecté donne un 503 non mis en cache, jamais un 0 ;
-//  - le chiffre est mis en cache cinq minutes, côté serveur et navigateur.
+//  - le chiffre est mis en cache cinq minutes, côté serveur et navigateur ;
+//  - v5 : le chiffre passe par le contrat de l'adaptateur (`nombreServeurs`),
+//    et le même compteur sert une instance Fluxer.
 //
 // QUASAR_DB_PATH doit être posé AVANT le require de la chaîne base de données.
 process.env.QUASAR_DB_PATH = ':memory:';
@@ -17,12 +19,21 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 
 const { createApi, createSiteApi } = require('../api');
+const creerAdaptateurDiscord = require('../bot/platform/discord');
+const creerAdaptateurFluxer = require('../bot/platform/fluxer');
 
-/** Faux client discord.js : seuls isReady() et guilds.cache sont lus. */
+/**
+ * Faux client natif : `isReady()` et `guilds.cache` sont les seules lectures de
+ * `nombreServeurs`, le reste ne sert qu'à laisser l'adaptateur se construire.
+ * Les deux clients natifs (discord.js et celui de bot/platform/fluxer/client.js)
+ * exposent cette même forme.
+ */
 function fauxClient(ids, pret = true) {
     const client = {
         pret,
         isReady() { return this.pret; },
+        on() {}, once() {}, off() {},
+        rest: {}, channels: { cache: new Map() },
         guilds: { cache: new Map(ids.map((id) => [id, { id, name: `Serveur ${id}` }])) },
     };
     return client;
@@ -30,6 +41,8 @@ function fauxClient(ids, pret = true) {
 
 const clientPret = fauxClient(['111', '222', '333']);
 const clientDemarrage = fauxClient([], false);
+const clientFluxer = fauxClient(['555', '666']);
+const discord = (client) => creerAdaptateurDiscord({ client });
 
 const apps = {};
 const bases = {};
@@ -41,9 +54,10 @@ function ecouter(app) {
 }
 
 before(async () => {
-    apps.public = await ecouter(createApi(clientPret, 'public'));
-    apps.demarrage = await ecouter(createApi(clientDemarrage, 'public'));
-    apps.bot = await ecouter(createApi(fauxClient(['111']), 'bot'));
+    apps.public = await ecouter(createApi(discord(clientPret), 'public'));
+    apps.demarrage = await ecouter(createApi(discord(clientDemarrage), 'public'));
+    apps.bot = await ecouter(createApi(discord(fauxClient(['111'])), 'bot'));
+    apps.fluxer = await ecouter(createApi(creerAdaptateurFluxer({ client: clientFluxer }), 'public'));
     apps.site = await ecouter(createSiteApi('site'));
     for (const [nom, serveur] of Object.entries(apps)) {
         bases[nom] = `http://127.0.0.1:${serveur.address().port}`;
@@ -102,6 +116,13 @@ test('robot pas encore connecté : 503 non mis en cache, jamais un zéro', async
     } finally {
         clientDemarrage.pret = false;
     }
+});
+
+test('instance Fluxer : le même compteur, lu par le contrat de l\'adaptateur', async () => {
+    const res = await get(bases.fluxer);
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), { servers: 2 });
+    assert.doesNotMatch(res.body, /555|Serveur/);
 });
 
 test('auto-hébergement (mode bot) : la route n\'existe pas', async () => {

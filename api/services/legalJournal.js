@@ -10,7 +10,8 @@
 //  conteneur sur réquisition d'une autorité habilitée.
 //
 //  Ce qui est consigné : chaque création, modification ou suppression, par une
-//  personne, d'un contenu que le robot publie ensuite dans Discord — embeds,
+//  personne, d'un contenu que le robot publie ensuite dans Discord ou dans
+//  Fluxer (une instance = une plateforme = une base) — embeds,
 //  commandes personnalisées, messages de bienvenue et de départ, messages
 //  programmés, panneaux de rôles, textes des tickets, nom de salon vocal
 //  temporaire. Qu'elle passe par le dashboard ou par une commande du robot.
@@ -77,12 +78,21 @@ function fromRequest(req) {
 }
 
 /**
- * Auteur d'une écriture faite par une commande ou un bouton du robot. Quasar ne
- * voit pas la connexion des membres (elle s'arrête chez Discord) : ip et
- * protocol restent vides, le décret ne visant que ce qui est collecté (art. 8).
+ * Auteur d'une écriture faite par une commande ou un bouton du robot, à partir
+ * du contexte NEUTRE de bot/platform/ (`ctx.auteur`), identique sur Discord et
+ * sur Fluxer : la personne qui lance la commande, répond au formulaire ou
+ * clique le bouton du panneau. L'identifiant est celui de la plateforme de
+ * l'instance (snowflake Discord ou Fluxer) : chaque instance a sa propre base,
+ * un journal ne mélange donc jamais les deux, et l'export dit de quelle
+ * plateforme il vient (scripts/legal-export.js, champ `platform`).
+ *
+ * Quasar ne voit pas la connexion des membres (elle s'arrête chez Discord ou
+ * chez Fluxer) : ip et protocol restent vides, le décret ne visant que ce qui
+ * est collecté (art. 8).
  */
-function fromInteraction(interaction) {
-    return { ip: null, protocol: null, authorId: interaction?.user?.id || null };
+function fromCtx(ctx) {
+    const id = ctx?.auteur?.id;
+    return { ip: null, protocol: null, authorId: id ? String(id) : null };
 }
 
 /**
@@ -272,7 +282,7 @@ module.exports = {
     connectionIp,
     connectionProtocol,
     fromRequest,
-    fromInteraction,
+    fromCtx,
     onBehalfOf,
     record,
     recordChange,
