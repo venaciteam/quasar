@@ -15,6 +15,12 @@
 //  côté, c'est un `undefined` silencieux le jour de la bascule.
 // ═══════════════════════════════════════════════════════════════
 
+// Base jetable en mémoire, posée AVANT tout require. Comparer les surfaces lit
+// chaque valeur du contexte, getter `db` compris : sans cette ligne, le test
+// ouvrait la base par défaut (data/quasar.db) et échouait dans une copie du
+// dépôt qui n'a pas encore de dossier `data/`.
+process.env.QUASAR_DB_PATH = ':memory:';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
