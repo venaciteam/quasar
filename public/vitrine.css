@@ -115,14 +115,18 @@ html[data-dashboard-cta="on"] .qv-cta-off { display: none !important; }
 .qv-hero__note li + li::before { content: '·'; margin-right: 10px; }
 
 /* Fenêtres flottantes : deux messages Discord autour du dashboard */
-.qv-stack { position: relative; height: 470px; max-width: 1220px; margin: 60px auto 0; perspective: 1400px; }
-.qv-pane { position: absolute; top: 70px; width: 33%; text-align: left; will-change: transform; animation: qv-float 6.5s ease-in-out infinite; animation-play-state: paused; transition: scale .6s var(--qv-ease), box-shadow .4s; }
+/* La pile prend la hauteur du dashboard (seul volet dans le flux) : les deux
+   messages se calent sur son milieu (top 50 % + translateY(-50 %)), quelle que
+   soit leur propre hauteur. Volets latéraux à 28 % : 5 % seulement passent sous
+   le dashboard, l'avatar et le nom du message de droite restent visibles. */
+.qv-stack { position: relative; max-width: 1220px; margin: 60px auto 64px; perspective: 1400px; }
+.qv-pane { position: absolute; top: 50%; width: 28%; text-align: left; will-change: transform; animation: qv-float 6.5s ease-in-out infinite; animation-play-state: paused; transition: scale .6s var(--qv-ease), box-shadow .4s; }
 .qv-stack.is-floating .qv-pane { animation-play-state: running; }
 /* Profondeur explicite : WebKit trie par profondeur sous une perspective, sans
    tenir compte du z-index (correctif repris de Polyptyque 0.3.3). */
-.qv-pane--left { left: 0; z-index: 1; transform: translateY(40px) translateZ(-80px) rotateY(14deg) rotateZ(-4deg); }
-.qv-pane--center { left: 23%; width: 54%; top: 0; z-index: 2; transform: translateZ(0); animation-delay: -2.2s; animation-duration: 7.5s; }
-.qv-pane--right { right: 0; z-index: 1; transform: translateY(40px) translateZ(-80px) rotateY(-14deg) rotateZ(4deg); animation-delay: -4.5s; animation-duration: 7s; }
+.qv-pane--left { left: 0; z-index: 1; transform: translateY(-50%) translateZ(-80px) rotateY(14deg) rotateZ(-4deg); }
+.qv-pane--center { position: relative; top: 0; width: 54%; margin: 0 auto; z-index: 2; transform: translateZ(0); animation-delay: -2.2s; animation-duration: 7.5s; }
+.qv-pane--right { right: 0; z-index: 1; transform: translateY(-50%) translateZ(-80px) rotateY(-14deg) rotateZ(4deg); animation-delay: -4.5s; animation-duration: 7s; }
 @keyframes qv-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -10px; } }
 @media (hover: hover) and (pointer: fine) { .qv-pane:hover { scale: 1.03; z-index: 3; } }
 
@@ -411,9 +415,8 @@ html.reduce-motion { scroll-behavior: auto; }
     .qv-footer__about { grid-column: 1 / -1; }
 }
 @media (max-width: 900px) {
-    .qv-stack { height: 400px; }
-    .qv-pane { width: 40%; }
-    .qv-pane--center { left: 15%; width: 70%; }
+    .qv-pane { width: 32%; }
+    .qv-pane--center { width: 64%; }
     .qv-pane .qv-chat { font-size: 11.5px; }
     .qv-facts { grid-template-columns: 1fr; }
     .qv-scene { grid-template-columns: 1fr; gap: 18px; }
@@ -431,9 +434,9 @@ html.reduce-motion { scroll-behavior: auto; }
     .qv-hero__actions .qv-btn { width: 100%; }
     /* Sur téléphone, les deux messages flottants seraient illisibles et
        déborderaient : seule la fenêtre du dashboard reste. */
-    .qv-stack { height: auto; margin-top: 40px; perspective: none; }
+    .qv-stack { margin: 40px auto 0; perspective: none; }
     .qv-pane--left, .qv-pane--right { display: none; }
-    .qv-pane--center { position: relative; left: 0; width: 100%; top: 0; }
+    .qv-pane--center { width: 100%; }
     .qv-window__bar { height: 26px; font-size: 9px; }
     .qv-section { padding-block: 60px; }
     .qv-chapters { gap: 8px; font-size: 12px; justify-content: space-between; }
